@@ -249,8 +249,9 @@ export function App() {
 const styles: Record<string, React.CSSProperties> = {
   layout: {
     display: 'flex',
-    width: '100vw',
-    height: '100vh',
+    position: 'relative' as const,
+    width: '100%',
+    height: '100%',
     overflow: 'hidden',
     background: '#0f0f1a',
   },

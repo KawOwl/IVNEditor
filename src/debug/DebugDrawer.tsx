@@ -2,7 +2,7 @@
  * Debug Drawer - Right-side panel showing real-time core loop state.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useDebugStore } from './debug-store';
 import type { GamePhase } from './debug-store';
 
@@ -34,9 +34,20 @@ const phaseColors: Record<GamePhase, string> = {
   error: '#e64545',
 };
 
+function useIsMobile() {
+  const [mobile, setMobile] = useState(() => window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return mobile;
+}
+
 export function DebugDrawer() {
   const state = useDebugStore();
-  const [collapsed, setCollapsed] = useState(false);
+  const isMobile = useIsMobile();
+  const [collapsed, setCollapsed] = useState(isMobile);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     phase: true,
     goal: true,
@@ -64,7 +75,10 @@ export function DebugDrawer() {
     : '0.0';
 
   return (
-    <aside style={styles.drawer}>
+    <aside style={{
+      ...styles.drawer,
+      ...(isMobile ? styles.drawerMobile : {}),
+    }}>
       {/* Header */}
       <div style={styles.drawerHeader}>
         <span style={styles.drawerTitle}>Debug Panel</span>
@@ -247,6 +261,15 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#ccc',
     fontFamily: '"JetBrains Mono", "Fira Code", monospace',
     flexShrink: 0,
+  },
+  drawerMobile: {
+    position: 'absolute' as const,
+    right: 0,
+    top: 0,
+    zIndex: 100,
+    width: '85vw',
+    maxWidth: '320px',
+    boxShadow: '-4px 0 20px rgba(0,0,0,0.5)',
   },
   drawerHeader: {
     display: 'flex',
