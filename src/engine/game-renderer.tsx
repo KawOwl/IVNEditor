@@ -253,7 +253,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '32px',
     fontWeight: 'bold',
     color: 'white',
-    border: '2px solid rgba(255,255,255,0.3)',
+    borderWidth: '2px',
+    borderStyle: 'solid',
+    borderColor: 'rgba(255,255,255,0.3)',
   },
   portraitEmotion: {
     fontSize: '24px',

@@ -2,7 +2,7 @@
 # This file tracks incremental progress for long-running agent sessions.
 # Format: [timestamp] [status] description
 
-## Current State: MVP + PLAYER INTERACTION COMPLETE ✓
+## Current State: MVP + PLAYER INTERACTION + STORAGE + SETTINGS + DYNAMIC GOAP COMPLETE ✓
 ## Next Priority: Iterate on memory system based on debug observations
 
 ### Completed
@@ -40,6 +40,27 @@
 - [2026-03-11T12:30] [DONE] E2E verified: player message injected → cognition processes → narrative reflects intent
 - [2026-03-11T12:30] [DONE] E2E verified: auto-pause triggers after GOAP task completion
 - [2026-03-11T12:30] [DONE] Fixed CSS style warnings (border shorthand → separate properties)
+- [2026-03-11T13:00] [DONE] Storage layer: IScriptStorage interface + Zod schemas (ScriptBundle, ScriptMetadata, ChapterData)
+- [2026-03-11T13:05] [DONE] Storage layer: IDBScriptStorage (IndexedDB via idb library)
+- [2026-03-11T13:05] [DONE] Storage layer: Builtin script seed (liya + guard-captain + chapter1 + goap-actions)
+- [2026-03-11T13:10] [DONE] Shared utils: extractJSON() extracted to src/agents/utils.ts
+- [2026-03-11T13:15] [DONE] Settings store (Zustand): CRUD, script selection, tab switching, validation
+- [2026-03-11T13:20] [DONE] Settings UI: SettingsScreen (3-tab container + back button)
+- [2026-03-11T13:20] [DONE] Settings UI: ScriptList (card selection, source badges, delete with protection)
+- [2026-03-11T13:25] [DONE] Settings UI: ScriptUpload (JSON upload + Zod validation + preview)
+- [2026-03-11T13:30] [DONE] Settings UI: ScriptGenerator (DeepSeek AI generation + preview)
+- [2026-03-11T13:30] [DONE] Script generator agent (src/agents/script-generator.ts)
+- [2026-03-11T13:35] [DONE] App.tsx refactored: AppView 3-state (start/settings/game), dynamic script loading
+- [2026-03-11T13:40] [DONE] Dynamic GOAP: goap-generator agent (src/agents/goap-generator.ts)
+- [2026-03-11T13:40] [DONE] Dynamic GOAP: PlayerStore toggle + ChatInput checkbox
+- [2026-03-11T13:45] [DONE] Dynamic GOAP: CoreLoop integration (goap_gen phase between cognition and GOAP planning)
+- [2026-03-11T13:45] [DONE] Debug store/drawer: goap_gen phase label + color
+- [2026-03-11T13:50] [DONE] TypeScript 0 errors confirmed
+- [2026-03-11T13:50] [DONE] E2E verified: Settings screen renders with 3 tabs
+- [2026-03-11T13:50] [DONE] E2E verified: Start screen shows active script info dynamically
+- [2026-03-11T13:50] [DONE] E2E verified: Game starts from active script (dynamic loading works)
+- [2026-03-11T13:55] [DONE] E2E verified: Dynamic GOAP generates new action "跟踪目标" from player input
+- [2026-03-11T13:55] [DONE] Fixed remaining border shorthand warnings across all components
 
 ### Key Decisions & Lessons
 - DeepSeek doesn't support response_format: json_schema (only json_object)
@@ -47,6 +68,10 @@
 - @ai-sdk/openai v3 defaults to /responses endpoint (not /chat/completions)
 - Switched from generateObject to generateText + manual JSON for reliability
 - Made Goal5W1H.when optional since DeepSeek frequently omits it
+- ScriptBundle atomic model: characters + chapters + goapActions bundled together for consistency
+- idb library (v8.0.3) chosen over Dexie.js for minimal size (1.2KB) + TypeScript generics
+- Dynamic GOAP actions are runtime-only (not persisted to IndexedDB) to prevent action library bloat
+- AppView 3-state replaces binary isRunning for start/settings/game navigation
 
 ### Backlog
 - [ ] Embedding support (DeepSeek embedding-v2 for semantic recall)
@@ -56,3 +81,6 @@
 - [ ] Performance: token budget optimization in assemble()
 - [ ] Reflection agent (compact phase with persona shift detection)
 - [x] Player interaction (hybrid autonomous/intervention mode with chat UI) — DONE
+- [x] Storage layer (IndexedDB, IScriptStorage interface, idb library) — DONE
+- [x] Settings UI (3-tab: select/upload/generate scripts) — DONE
+- [x] Dynamic GOAP generation (runtime action generation from player input) — DONE

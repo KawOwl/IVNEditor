@@ -6,6 +6,7 @@
 
 import { generateText } from 'ai';
 import { deepseekChat } from './deepseek';
+import { extractJSON } from './utils';
 import { Goal5W1HSchema } from '../memory/schemas';
 import type { AssembleResult } from '../memory/context-engine';
 import type { Goal5W1H } from '../memory/schemas';
@@ -16,21 +17,6 @@ export interface CognitionResult {
   inputTokens: number;
   outputTokens: number;
   durationMs: number;
-}
-
-/**
- * Extract JSON from a text response that may contain markdown fences or extra text.
- */
-function extractJSON(text: string): string {
-  // Try to extract from markdown code fence
-  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-  if (fenceMatch) return fenceMatch[1].trim();
-
-  // Try to find a JSON object directly
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) return jsonMatch[0];
-
-  return text.trim();
 }
 
 /**

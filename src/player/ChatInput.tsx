@@ -23,9 +23,11 @@ export function ChatInput({ onSendMessage, isRunning }: ChatInputProps) {
 
   const mode = usePlayerStore((s) => s.mode);
   const autoPause = usePlayerStore((s) => s.autoPauseOnTaskDone);
+  const dynamicGoap = usePlayerStore((s) => s.dynamicGoapEnabled);
   const chatHistory = usePlayerStore((s) => s.chatHistory);
   const setMode = usePlayerStore((s) => s.setMode);
   const toggleAutoPause = usePlayerStore((s) => s.toggleAutoPause);
+  const toggleDynamicGoap = usePlayerStore((s) => s.toggleDynamicGoap);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -124,7 +126,16 @@ export function ChatInput({ onSendMessage, isRunning }: ChatInputProps) {
               onChange={toggleAutoPause}
               style={styles.checkbox}
             />
-            <span style={styles.checkboxText}>任务完成后暂停</span>
+            <span style={styles.checkboxText}>世界事件结束后等待介入</span>
+          </label>
+          <label style={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={dynamicGoap}
+              onChange={toggleDynamicGoap}
+              style={styles.checkbox}
+            />
+            <span style={styles.checkboxText}>动态动作</span>
           </label>
         </div>
       )}
@@ -193,7 +204,9 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     padding: '8px 12px',
     background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.15)',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: 'rgba(255,255,255,0.15)',
     borderRadius: '8px',
     color: '#e0e0e0',
     fontSize: '13px',
@@ -203,7 +216,8 @@ const styles: Record<string, React.CSSProperties> = {
   sendBtn: {
     padding: '8px 16px',
     background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    border: 'none',
+    borderWidth: '0',
+    borderStyle: 'none',
     borderRadius: '8px',
     color: 'white',
     fontSize: '13px',

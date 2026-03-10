@@ -18,6 +18,7 @@ import type { AssembleResult, AgentMessage } from '../memory/context-engine';
 import { useCharacterStore } from '../memory/character-store';
 import { runCognition } from '../agents/cognition';
 import { runDirector } from '../agents/director';
+import { generateGoapAction } from '../agents/goap-generator';
 import { planActions, mapGoalToGOAPState } from '../goap/planner';
 import { Timeline } from '../timeline/timeline';
 import { useDebugStore } from '../debug/debug-store';
@@ -171,6 +172,34 @@ export class CoreLoop {
         content: `[决策] ${goal.what}。原因：${goal.why}。地点：${goal.where}`,
       },
     });
+
+    // ②½ Dynamic GOAP generation (if enabled and player message exists)
+    if (playerMessage && playerStore.dynamicGoapEnabled) {
+      debug.setPhase('goap_gen');
+      try {
+        const goapGenResult = await generateGoapAction(
+          playerMessage,
+          goapActions,
+          goal,
+        );
+        if (goapGenResult.action) {
+          goapActions.push(goapGenResult.action);
+          playerStore.addSystemMessage(
+            `[动态动作] 已生成新动作：${goapGenResult.action.name}`,
+          );
+        }
+        debug.pushTrace({
+          agent: 'goap-gen',
+          duration: goapGenResult.durationMs,
+          inputTokens: 0,
+          outputTokens: 0,
+          timestamp: Date.now(),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        debug.pushError(`动态GOAP生成失败: ${msg}`);
+      }
+    }
 
     // ③ GOAP planning
     debug.setPhase('goap');

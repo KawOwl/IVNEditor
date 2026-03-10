@@ -7,6 +7,7 @@
 import { generateText } from 'ai';
 import { z } from 'zod';
 import { deepseekChat } from './deepseek';
+import { extractJSON } from './utils';
 import { SceneOutputSchema } from '../memory/schemas';
 import type { GOAPAction, Goal5W1H, CorePersona, WorldEvent, SceneOutput } from '../memory/schemas';
 
@@ -26,17 +27,6 @@ export interface DirectorResult {
 }
 
 const ScenesSchema = z.object({ scenes: z.array(SceneOutputSchema) });
-
-/**
- * Extract JSON from a text response that may contain markdown fences or extra text.
- */
-function extractJSON(text: string): string {
-  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-  if (fenceMatch) return fenceMatch[1].trim();
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) return jsonMatch[0];
-  return text.trim();
-}
 
 /**
  * Generate narrative scenes for a character action.

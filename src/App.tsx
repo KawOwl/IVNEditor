@@ -1,28 +1,28 @@
 /**
  * App - Main application component.
- * Initializes game systems and renders the game + debug drawer + player chat layout.
+ * Three views: start → settings → game.
+ * Loads game data dynamically from the selected script bundle.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { GameRenderer } from './engine/game-renderer';
 import { DebugDrawer } from './debug/DebugDrawer';
 import { ChatInput } from './player/ChatInput';
+import { SettingsScreen } from './settings/SettingsScreen';
 import { CoreLoop } from './engine/core-loop';
 import { NovelContextEngine } from './memory/context-engine';
 import { useCharacterStore } from './memory/character-store';
 import { useDebugStore } from './debug/debug-store';
 import { usePlayerStore } from './player/player-store';
+import { useSettingsStore } from './settings/settings-store';
 import { Timeline } from './timeline/timeline';
-import type { SceneOutput, CharacterState, WorldEvent, GOAPAction } from './memory/schemas';
+import type { SceneOutput, WorldEvent, GOAPAction } from './memory/schemas';
 
-// Import data
-import liyaData from './data/characters/liya.json';
-import chapter1Data from './data/world-events/chapter1.json';
-import goapActionsData from './data/goap-actions.json';
+type AppView = 'start' | 'settings' | 'game';
 
 export function App() {
+  const [view, setView] = useState<AppView>('start');
   const [scenes, setScenes] = useState<SceneOutput[]>([]);
-  const [isRunning, setIsRunning] = useState(false);
   const [gameLog, setGameLog] = useState<string[]>([]);
   const coreLoopRef = useRef<CoreLoop | null>(null);
   const timelineRef = useRef<Timeline | null>(null);
@@ -32,37 +32,51 @@ export function App() {
   const debug = useDebugStore();
   const playerMode = usePlayerStore((s) => s.mode);
 
-  // Initialize game on mount
+  // Settings store
+  const settingsInitialized = useSettingsStore((s) => s.initialized);
+  const activeScript = useSettingsStore((s) => s.activeScript);
+
+  // Initialize storage on mount
   useEffect(() => {
-    initCharacter('liya', liyaData as CharacterState);
-  }, [initCharacter]);
+    useSettingsStore.getState().initStorage();
+  }, []);
 
   const handleStart = useCallback(() => {
-    if (isRunning) return;
+    const script = useSettingsStore.getState().activeScript;
+    if (!script) return;
 
+    // Initialize all characters from the script
+    for (const character of script.characters) {
+      initCharacter(character.core.id, character);
+    }
+
+    // Use first chapter for timeline
+    const chapter = script.chapters[0];
     const timeline = new Timeline(
       480, // 08:00
-      chapter1Data.events as WorldEvent[],
-      chapter1Data.locations,
+      chapter.events as WorldEvent[],
+      chapter.locations,
     );
     timelineRef.current = timeline;
 
     const contextEngine = new NovelContextEngine(() =>
       timeline.buildWorldState(
         'home',
-        ['guard-captain'],
+        script.characters.slice(1).map((c) => c.core.id), // NPCs = all characters except first
         timeline.getActiveEvents().length > 0
           ? timeline.getActiveEvents().map((e) => e.description).join('；')
-          : `${timeline.formatTime()}，边境小镇的清晨，一切平静。`,
+          : `${timeline.formatTime()}，一切平静。`,
       ),
     );
     contextEngineRef.current = contextEngine;
 
+    const primaryCharId = script.characters[0].core.id;
+
     const loop = new CoreLoop({
-      characterId: 'liya',
+      characterId: primaryCharId,
       contextEngine,
       timeline,
-      goapActions: goapActionsData as unknown as GOAPAction[],
+      goapActions: [...script.goapActions] as GOAPAction[],
       onScenesReady: (newScenes) => {
         setScenes(newScenes);
         setGameLog((log) => [
@@ -83,19 +97,21 @@ export function App() {
     });
 
     coreLoopRef.current = loop;
-    setIsRunning(true);
+    setView('game');
+    setScenes([]);
+    setGameLog([]);
     debug.reset();
 
     // Start in background
     loop.start().catch((err) => {
       console.error('Core loop crashed:', err);
-      setIsRunning(false);
+      setView('start');
     });
-  }, [isRunning, debug]);
+  }, [initCharacter, debug]);
 
   const handleStop = useCallback(() => {
     coreLoopRef.current?.stop();
-    setIsRunning(false);
+    setView('start');
   }, []);
 
   const handlePauseResume = useCallback(() => {
@@ -108,45 +124,76 @@ export function App() {
     }
   }, []);
 
-  /**
-   * Handle player chat message.
-   * Ingests into context engine and signals the core loop to process it.
-   */
   const handlePlayerMessage = useCallback((message: string) => {
     const loop = coreLoopRef.current;
     if (!loop) return;
-
-    // PlayerStore.sendMessage already sets pendingMessage
-    // The core loop will pick it up on the next cycle via consumePendingMessage()
-
-    // If loop is paused (manual pause), resume it so the message gets processed
     if (loop.isPaused()) {
       loop.resume();
     }
   }, []);
 
+  // Derive display info from active script
+  const primaryChar = activeScript?.characters[0];
+  const charName = primaryChar?.core.name ?? '';
+  const charDesc = activeScript?.metadata.description ?? '';
+
   return (
     <div style={styles.layout}>
       {/* Game area */}
       <div style={styles.gameArea}>
-        {!isRunning ? (
+        {view === 'start' && (
           <div style={styles.startScreen}>
             <h1 style={styles.title}>AI互动视觉小说引擎</h1>
             <p style={styles.subtitle}>Agent记忆系统验证 MVP</p>
-            <div style={styles.charInfo}>
-              <p style={styles.charName}>莉娅·艾文斯</p>
-              <p style={styles.charDesc}>
-                没落贵族的末裔，在边境小镇追寻家族覆灭的真相
-              </p>
+
+            {settingsInitialized && activeScript ? (
+              <div style={styles.charInfo}>
+                <p style={styles.scriptLabel}>{activeScript.metadata.name}</p>
+                <p style={styles.charName}>{charName}</p>
+                <p style={styles.charDesc}>{charDesc}</p>
+                <p style={styles.charMeta}>
+                  {activeScript.characters.length} 角色 · {activeScript.chapters[0]?.events.length ?? 0} 事件 · {activeScript.goapActions.length} 动作
+                </p>
+              </div>
+            ) : (
+              <div style={styles.charInfo}>
+                <p style={styles.charDesc}>正在加载...</p>
+              </div>
+            )}
+
+            <div style={styles.btnGroup}>
+              <button
+                style={{
+                  ...styles.startBtn,
+                  opacity: activeScript ? 1 : 0.4,
+                }}
+                onClick={handleStart}
+                disabled={!activeScript}
+              >
+                开始游戏
+              </button>
+              <button
+                style={styles.settingsBtn}
+                onClick={() => setView('settings')}
+              >
+                ⚙ 设置
+              </button>
             </div>
-            <button style={styles.startBtn} onClick={handleStart}>
-              开始游戏
-            </button>
+
             <p style={styles.hint}>
               底部输入框可切换"自主运行"和"介入模式"
             </p>
           </div>
-        ) : (
+        )}
+
+        {view === 'settings' && (
+          <SettingsScreen
+            onBack={() => setView('start')}
+            onStartGame={handleStart}
+          />
+        )}
+
+        {view === 'game' && (
           <div style={styles.gameContent}>
             {/* Control bar */}
             <div style={styles.controlBar}>
@@ -165,12 +212,12 @@ export function App() {
             <div style={styles.rendererWrap}>
               <GameRenderer
                 scenes={scenes}
-                characterName="莉娅·艾文斯"
+                characterName={charName}
                 currentTime={debug.timeline.currentTime || '08:00'}
                 currentLocation={
                   timelineRef.current?.getLocationName(
                     debug.currentGoal?.where ?? 'home',
-                  ) ?? '赫尔曼的小屋'
+                  ) ?? activeScript?.chapters[0]?.locations[0]?.name ?? ''
                 }
               />
             </div>
@@ -181,7 +228,7 @@ export function App() {
                 usePlayerStore.getState().sendMessage(msg);
                 handlePlayerMessage(msg);
               }}
-              isRunning={isRunning}
+              isRunning={view === 'game'}
             />
           </div>
         )}
@@ -231,11 +278,21 @@ const styles: Record<string, React.CSSProperties> = {
   },
   charInfo: {
     background: 'rgba(255,255,255,0.05)',
-    border: '1px solid rgba(255,255,255,0.1)',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: 'rgba(255,255,255,0.1)',
     borderRadius: '8px',
     padding: '16px 24px',
     textAlign: 'center',
     marginTop: '16px',
+    minWidth: '280px',
+  },
+  scriptLabel: {
+    color: '#7ec8e3',
+    fontSize: '11px',
+    margin: '0 0 6px',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '1px',
   },
   charName: {
     color: '#e6c3a1',
@@ -248,16 +305,37 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '13px',
     margin: 0,
   },
-  startBtn: {
+  charMeta: {
+    color: '#666',
+    fontSize: '11px',
+    marginTop: '8px',
+  },
+  btnGroup: {
+    display: 'flex',
+    gap: '12px',
     marginTop: '24px',
+  },
+  startBtn: {
     padding: '12px 48px',
     background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
     color: 'white',
-    border: 'none',
+    borderWidth: '0',
+    borderStyle: 'none',
     borderRadius: '24px',
     fontSize: '16px',
     cursor: 'pointer',
     fontFamily: '"Noto Serif SC", serif',
+  },
+  settingsBtn: {
+    padding: '12px 24px',
+    background: 'rgba(255,255,255,0.06)',
+    color: '#aaa',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: 'rgba(255,255,255,0.15)',
+    borderRadius: '24px',
+    fontSize: '14px',
+    cursor: 'pointer',
   },
   hint: {
     color: '#555',
@@ -282,7 +360,9 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '4px 12px',
     background: '#2a2a3a',
     color: '#ccc',
-    border: '1px solid #444',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#444',
     borderRadius: '4px',
     cursor: 'pointer',
     fontSize: '12px',

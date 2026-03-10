@@ -11,6 +11,7 @@ export type GamePhase =
   | 'assemble'
   | 'cognition'
   | 'goap'
+  | 'goap_gen'
   | 'timeline'
   | 'director'
   | 'render'

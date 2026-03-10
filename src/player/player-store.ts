@@ -24,6 +24,7 @@ export interface PlayerState {
   // Mode control
   mode: 'autonomous' | 'intervention';
   autoPauseOnTaskDone: boolean;
+  dynamicGoapEnabled: boolean;
 
   // Message queue
   pendingMessage: string | null;
@@ -34,6 +35,7 @@ export interface PlayerState {
   // Actions
   setMode: (mode: 'autonomous' | 'intervention') => void;
   toggleAutoPause: () => void;
+  toggleDynamicGoap: () => void;
   sendMessage: (content: string) => void;
   consumePendingMessage: () => string | null;
   addNarratorMessage: (content: string) => void;
@@ -48,6 +50,7 @@ function genId(): string {
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   mode: 'autonomous',
   autoPauseOnTaskDone: false,
+  dynamicGoapEnabled: false,
   pendingMessage: null,
   chatHistory: [],
 
@@ -61,7 +64,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   toggleAutoPause: () => {
     const next = !get().autoPauseOnTaskDone;
     set({ autoPauseOnTaskDone: next });
-    get().addSystemMessage(next ? 'GOAP任务完成后将自动暂停' : 'GOAP任务完成后将继续运行');
+    get().addSystemMessage(next ? '世界事件结束后将等待介入' : '世界事件结束后将继续运行');
+  },
+
+  toggleDynamicGoap: () => {
+    const next = !get().dynamicGoapEnabled;
+    set({ dynamicGoapEnabled: next });
+    get().addSystemMessage(next ? '动态动作生成已开启' : '动态动作生成已关闭');
   },
 
   sendMessage: (content) => {
