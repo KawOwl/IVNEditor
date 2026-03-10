@@ -6,6 +6,92 @@ import { useState, useCallback } from 'react';
 import { useSettingsStore } from './settings-store';
 import { ScriptBundleSchema, type ScriptBundle } from '../storage/storage-interface';
 
+const TEMPLATE: object = {
+  metadata: {
+    id: "my-script-01",
+    name: "剧本名称",
+    description: "剧本简介",
+    author: "作者名",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    version: 1,
+    source: "uploaded",
+  },
+  characters: [
+    {
+      core: {
+        id: "protagonist",
+        name: "主角名",
+        background: "角色背景故事（100-200字）",
+        personality: [
+          { trait: "勇敢", intensity: 0.8 },
+          { trait: "谨慎", intensity: 0.6 },
+          { trait: "善良", intensity: 0.7 },
+        ],
+        values: ["正义", "自由"],
+        speechStyle: "说话风格描述",
+        appearance: "外貌描述",
+      },
+      longTermGoals: [
+        { id: "main-goal", description: "主要长期目标", priority: 10 },
+      ],
+      shortTermGoals: [],
+      personaShifts: [],
+    },
+  ],
+  chapters: [
+    {
+      chapter: "第一章：章节名",
+      events: [
+        {
+          id: "event-01",
+          time: 600,
+          name: "事件名称",
+          description: "事件详细描述",
+          location: "location-01",
+          affectedCharacters: ["protagonist"],
+          severity: "minor",
+        },
+      ],
+      locations: [
+        { id: "location-01", name: "地点名称" },
+        { id: "location-02", name: "另一个地点" },
+      ],
+    },
+  ],
+  goapActions: [
+    {
+      id: "go-to",
+      name: "前往目的地",
+      preconditions: {},
+      effects: { atDestination: true },
+      cost: 1,
+      timeCost: 30,
+      description: "前往指定地点",
+    },
+    {
+      id: "investigate",
+      name: "调查线索",
+      preconditions: { atDestination: true },
+      effects: { hasClue: true },
+      cost: 2,
+      timeCost: 40,
+      description: "在当前地点寻找线索",
+    },
+  ],
+};
+
+function downloadTemplate() {
+  const json = JSON.stringify(TEMPLATE, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'script-template.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function ScriptUpload() {
   const [jsonText, setJsonText] = useState('');
   const [preview, setPreview] = useState<ScriptBundle | null>(null);
@@ -74,6 +160,14 @@ export function ScriptUpload() {
 
   return (
     <div style={styles.container}>
+      {/* Template download hint */}
+      <div style={styles.templateBar}>
+        <span style={styles.templateText}>不确定格式？</span>
+        <button style={styles.templateBtn} onClick={downloadTemplate}>
+          下载 JSON 模板
+        </button>
+      </div>
+
       {/* File upload */}
       <label style={styles.dropZone}>
         <input
@@ -150,6 +244,32 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: '12px',
+  },
+  templateBar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 12px',
+    background: 'rgba(102, 126, 234, 0.08)',
+    borderRadius: '6px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: 'rgba(102, 126, 234, 0.2)',
+  },
+  templateText: {
+    color: '#888',
+    fontSize: '12px',
+  },
+  templateBtn: {
+    padding: '4px 12px',
+    background: 'rgba(102, 126, 234, 0.2)',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#667eea',
+    borderRadius: '4px',
+    color: '#7ec8e3',
+    fontSize: '12px',
+    cursor: 'pointer',
   },
   dropZone: {
     display: 'flex',

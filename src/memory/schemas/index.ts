@@ -86,7 +86,7 @@ export const GOAPActionSchema = z.object({
 
 export const SceneOutputSchema = z.object({
   speaker: z.string().nullable().describe('说话角色ID，null表示旁白'),
-  dialogue: z.string().describe('对话或旁白文本'),
+  dialogue: z.string().nullable().default('').transform((v) => v ?? '').describe('对话或旁白文本'),
   emotion: z.string().optional().describe('角色情绪标签'),
   narration: z.string().optional().describe('环境描写/动作描述'),
   bgEffect: z.string().optional().describe('背景特效指令'),

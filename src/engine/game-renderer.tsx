@@ -4,7 +4,7 @@
  * Implements typewriter text effect, character display, and dialogue box.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { SceneOutput } from '../memory/schemas';
 
 interface GameRendererProps {
@@ -12,7 +12,6 @@ interface GameRendererProps {
   characterName: string;
   currentTime: string;
   currentLocation: string;
-  onSceneComplete?: () => void;
 }
 
 function useTypewriter(text: string, speed: number = 50) {
@@ -37,12 +36,7 @@ function useTypewriter(text: string, speed: number = 50) {
     return () => clearInterval(timer);
   }, [text, speed]);
 
-  const complete = useCallback(() => {
-    setDisplayed(text);
-    setIsComplete(true);
-  }, [text]);
-
-  return { displayed, isComplete, complete };
+  return { displayed, isComplete };
 }
 
 export function GameRenderer({
@@ -50,49 +44,45 @@ export function GameRenderer({
   characterName,
   currentTime,
   currentLocation,
-  onSceneComplete,
 }: GameRendererProps) {
-  const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
   const [history, setHistory] = useState<SceneOutput[]>([]);
   const historyRef = useRef<HTMLDivElement>(null);
+  const prevScenesRef = useRef<SceneOutput[]>([]);
 
-  const scene = scenes[currentSceneIndex];
-  const { displayed, isComplete, complete } = useTypewriter(
-    scene?.dialogue ?? '',
-    40,
-  );
+  // The latest scene is always the last one in the current batch
+  const currentScene = scenes.length > 0 ? scenes[scenes.length - 1] : null;
+  // Fallback: if dialogue is empty, use narration as display text
+  const displayText = currentScene
+    ? (currentScene.dialogue || currentScene.narration || '')
+    : '';
+  const { displayed, isComplete } = useTypewriter(displayText, 40);
 
-  // Auto-scroll history
+  // When new scenes arrive, flush previous batch + all-but-last of new batch into history
+  useEffect(() => {
+    if (scenes.length === 0) return;
+
+    setHistory((h) => {
+      const additions: SceneOutput[] = [];
+      // Flush all previous scenes into history
+      if (prevScenesRef.current.length > 0) {
+        additions.push(...prevScenesRef.current);
+      }
+      // Add all but the last scene of the new batch (last one gets typewriter)
+      if (scenes.length > 1) {
+        additions.push(...scenes.slice(0, -1));
+      }
+      return additions.length > 0 ? [...h, ...additions] : h;
+    });
+
+    prevScenesRef.current = scenes.length > 0 ? [scenes[scenes.length - 1]] : [];
+  }, [scenes]);
+
+  // Auto-scroll history when it changes or typewriter progresses
   useEffect(() => {
     if (historyRef.current) {
       historyRef.current.scrollTop = historyRef.current.scrollHeight;
     }
-  }, [history]);
-
-  // Reset scene index when new scenes arrive
-  useEffect(() => {
-    if (scenes.length > 0) {
-      setCurrentSceneIndex(0);
-    }
-  }, [scenes]);
-
-  const handleClick = () => {
-    if (!isComplete) {
-      complete();
-      return;
-    }
-
-    // Add to history
-    if (scene) {
-      setHistory((h) => [...h, scene]);
-    }
-
-    if (currentSceneIndex < scenes.length - 1) {
-      setCurrentSceneIndex((i) => i + 1);
-    } else {
-      onSceneComplete?.();
-    }
-  };
+  }, [history, displayed]);
 
   const emotionToEmoji: Record<string, string> = {
     neutral: '',
@@ -106,7 +96,7 @@ export function GameRenderer({
   };
 
   return (
-    <div style={styles.container} onClick={handleClick}>
+    <div style={styles.container}>
       {/* Header bar */}
       <div style={styles.header}>
         <span style={styles.headerTime}>{currentTime}</span>
@@ -118,63 +108,51 @@ export function GameRenderer({
       <div style={styles.sceneArea}>
         {/* History scroll */}
         <div ref={historyRef} style={styles.history}>
-          {history.map((h, i) => (
-            <div key={i} style={styles.historyEntry}>
-              {h.narration && (
-                <p style={styles.historyNarration}>{h.narration}</p>
-              )}
-              {h.speaker ? (
-                <p style={styles.historyDialogue}>
-                  <span style={styles.speakerName}>{h.speaker}</span>
-                  ：{h.dialogue}
-                </p>
-              ) : (
-                <p style={styles.historyNarration}>{h.dialogue}</p>
-              )}
-            </div>
-          ))}
+          {history.map((h, i) => {
+            const text = h.dialogue || h.narration || '';
+            return (
+              <div key={i} style={styles.historyEntry}>
+                {h.narration && h.dialogue && (
+                  <p style={styles.historyNarration}>{h.narration}</p>
+                )}
+                {h.speaker ? (
+                  <p style={styles.historyDialogue}>
+                    <span style={styles.speakerName}>{h.speaker}</span>
+                    ：{text}
+                  </p>
+                ) : (
+                  <p style={styles.historyNarration}>{text}</p>
+                )}
+              </div>
+            );
+          })}
         </div>
-
-        {/* Character portrait placeholder */}
-        {scene?.speaker && (
-          <div style={styles.portrait}>
-            <div style={styles.portraitCircle}>
-              {scene.speaker.charAt(0)}
-            </div>
-            <span style={styles.portraitEmotion}>
-              {emotionToEmoji[scene.emotion ?? 'neutral']}
-            </span>
-          </div>
-        )}
       </div>
 
-      {/* Dialogue box */}
-      <div style={styles.dialogueBox}>
-        {scene?.narration && (
-          <p style={styles.narration}>{scene.narration}</p>
-        )}
-        <div style={styles.dialogueContent}>
-          {scene?.speaker && (
-            <div style={styles.speakerTag}>
-              {scene.speaker}
-              {scene.emotion && (
-                <span style={styles.emotionBadge}>
-                  {emotionToEmoji[scene.emotion] ?? ''} {scene.emotion}
-                </span>
-              )}
-            </div>
+      {/* Dialogue box — current scene with typewriter */}
+      {currentScene && (
+        <div style={styles.dialogueBox}>
+          {currentScene.narration && currentScene.dialogue && (
+            <p style={styles.narration}>{currentScene.narration}</p>
           )}
-          <p style={styles.dialogueText}>
-            {displayed}
-            {!isComplete && <span style={styles.cursor}>▊</span>}
-          </p>
-        </div>
-        {isComplete && (
-          <div style={styles.continueHint}>
-            ▼ 点击继续
+          <div style={styles.dialogueContent}>
+            {currentScene.speaker && (
+              <div style={styles.speakerTag}>
+                {currentScene.speaker}
+                {currentScene.emotion && (
+                  <span style={styles.emotionBadge}>
+                    {emotionToEmoji[currentScene.emotion] ?? ''} {currentScene.emotion}
+                  </span>
+                )}
+              </div>
+            )}
+            <p style={styles.dialogueText}>
+              {displayed}
+              {!isComplete && <span style={styles.cursor}>▊</span>}
+            </p>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -189,8 +167,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
     color: '#e0e0e0',
     fontFamily: '"Noto Serif SC", "Source Han Serif CN", serif',
-    cursor: 'pointer',
-    userSelect: 'none',
     overflow: 'hidden',
   },
   header: {
@@ -233,33 +209,6 @@ const styles: Record<string, React.CSSProperties> = {
   historyDialogue: {
     margin: '4px 0',
     color: '#c0c0c0',
-  },
-  portrait: {
-    position: 'absolute',
-    right: '40px',
-    bottom: '20px',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-  },
-  portraitCircle: {
-    width: '80px',
-    height: '80px',
-    borderRadius: '50%',
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '32px',
-    fontWeight: 'bold',
-    color: 'white',
-    borderWidth: '2px',
-    borderStyle: 'solid',
-    borderColor: 'rgba(255,255,255,0.3)',
-  },
-  portraitEmotion: {
-    fontSize: '24px',
-    marginTop: '4px',
   },
   dialogueBox: {
     background: 'rgba(0, 0, 0, 0.75)',
@@ -305,12 +254,5 @@ const styles: Record<string, React.CSSProperties> = {
   cursor: {
     animation: 'blink 1s infinite',
     color: '#7ec8e3',
-  },
-  continueHint: {
-    textAlign: 'center',
-    color: '#666',
-    fontSize: '12px',
-    marginTop: '8px',
-    animation: 'pulse 2s infinite',
   },
 };
