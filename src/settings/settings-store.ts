@@ -8,7 +8,7 @@ import { ScriptBundleSchema } from '../storage/storage-interface';
 import { IDBScriptStorage } from '../storage/idb-storage';
 import { createBuiltinScript, BUILTIN_SCRIPT_ID } from '../storage/seed';
 
-export type SettingsTab = 'select' | 'upload' | 'generate';
+export type SettingsTab = 'select' | 'upload' | 'generate' | 'model';
 
 interface SettingsState {
   // Storage service

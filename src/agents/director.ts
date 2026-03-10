@@ -6,7 +6,7 @@
 
 import { generateText } from 'ai';
 import { z } from 'zod';
-import { deepseekChat } from './deepseek';
+import { getChatModel } from './deepseek';
 import { extractJSON } from './utils';
 import { SceneOutputSchema } from '../memory/schemas';
 import type { GOAPAction, Goal5W1H, CorePersona, WorldEvent, SceneOutput } from '../memory/schemas';
@@ -53,7 +53,7 @@ export async function runDirector(input: DirectorInput): Promise<DirectorResult>
 原因：${input.currentGoal.why}${eventContext}${interruptContext}`;
 
   const { text, usage } = await generateText({
-    model: deepseekChat,
+    model: getChatModel(),
     system,
     prompt: `角色正在执行动作："${input.action.name}" - ${input.action.description}
 

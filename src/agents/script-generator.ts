@@ -4,7 +4,7 @@
  */
 
 import { generateText } from 'ai';
-import { deepseekChat } from './deepseek';
+import { getChatModel } from './deepseek';
 import { extractJSON } from './utils';
 import { ScriptBundleSchema, type ScriptBundle } from '../storage/storage-interface';
 
@@ -91,7 +91,7 @@ export async function generateScript(
   const startTime = Date.now();
 
   const { text } = await generateText({
-    model: deepseekChat,
+    model: getChatModel(),
     system: SYSTEM_PROMPT,
     prompt: `请根据以下描述生成完整的互动小说剧本数据：
 

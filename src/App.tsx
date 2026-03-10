@@ -8,6 +8,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { GameRenderer } from './engine/game-renderer';
 import { DebugDrawer } from './debug/DebugDrawer';
 import { ChatInput } from './player/ChatInput';
+import { CharacterPanel } from './player/CharacterPanel';
 import { SettingsScreen } from './settings/SettingsScreen';
 import { CoreLoop } from './engine/core-loop';
 import { NovelContextEngine } from './memory/context-engine';
@@ -15,6 +16,7 @@ import { useCharacterStore } from './memory/character-store';
 import { useDebugStore } from './debug/debug-store';
 import { usePlayerStore } from './player/player-store';
 import { useSettingsStore } from './settings/settings-store';
+import { useModelConfigStore } from './settings/model-config-store';
 import { Timeline } from './timeline/timeline';
 import type { SceneOutput, WorldEvent, GOAPAction } from './memory/schemas';
 
@@ -24,6 +26,8 @@ export function App() {
   const [view, setView] = useState<AppView>('start');
   const [scenes, setScenes] = useState<SceneOutput[]>([]);
   const [gameLog, setGameLog] = useState<string[]>([]);
+  const [activeCharId, setActiveCharId] = useState('');
+  const [activeGoapActions, setActiveGoapActions] = useState<GOAPAction[]>([]);
   const coreLoopRef = useRef<CoreLoop | null>(null);
   const timelineRef = useRef<Timeline | null>(null);
   const contextEngineRef = useRef<NovelContextEngine | null>(null);
@@ -36,9 +40,10 @@ export function App() {
   const settingsInitialized = useSettingsStore((s) => s.initialized);
   const activeScript = useSettingsStore((s) => s.activeScript);
 
-  // Initialize storage on mount
+  // Initialize storage + model config on mount
   useEffect(() => {
     useSettingsStore.getState().initStorage();
+    useModelConfigStore.getState().init();
   }, []);
 
   const handleStart = useCallback(() => {
@@ -71,12 +76,15 @@ export function App() {
     contextEngineRef.current = contextEngine;
 
     const primaryCharId = script.characters[0].core.id;
+    const runtimeActions = [...script.goapActions] as GOAPAction[];
+    setActiveCharId(primaryCharId);
+    setActiveGoapActions(runtimeActions);
 
     const loop = new CoreLoop({
       characterId: primaryCharId,
       contextEngine,
       timeline,
-      goapActions: [...script.goapActions] as GOAPAction[],
+      goapActions: runtimeActions,
       onScenesReady: (newScenes) => {
         setScenes(newScenes);
         setGameLog((log) => [
@@ -208,18 +216,24 @@ export function App() {
               </span>
             </div>
 
-            {/* Game renderer */}
-            <div style={styles.rendererWrap}>
-              <GameRenderer
-                scenes={scenes}
-                characterName={charName}
-                currentTime={debug.timeline.currentTime || '08:00'}
-                currentLocation={
-                  timelineRef.current?.getLocationName(
-                    debug.currentGoal?.where ?? 'home',
-                  ) ?? activeScript?.chapters[0]?.locations[0]?.name ?? ''
-                }
+            {/* Main area: character panel + game renderer */}
+            <div style={styles.mainArea}>
+              <CharacterPanel
+                characterId={activeCharId}
+                goapActions={activeGoapActions}
               />
+              <div style={styles.rendererWrap}>
+                <GameRenderer
+                  scenes={scenes}
+                  characterName={charName}
+                  currentTime={debug.timeline.currentTime || '08:00'}
+                  currentLocation={
+                    timelineRef.current?.getLocationName(
+                      debug.currentGoal?.where ?? 'home',
+                    ) ?? activeScript?.chapters[0]?.locations[0]?.name ?? ''
+                  }
+                />
+              </div>
             </div>
 
             {/* Player chat input */}
@@ -371,6 +385,11 @@ const styles: Record<string, React.CSSProperties> = {
     marginLeft: 'auto',
     color: '#888',
     fontSize: '12px',
+  },
+  mainArea: {
+    flex: 1,
+    display: 'flex',
+    overflow: 'hidden',
   },
   rendererWrap: {
     flex: 1,

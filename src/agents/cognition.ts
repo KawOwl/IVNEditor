@@ -5,7 +5,7 @@
  */
 
 import { generateText } from 'ai';
-import { deepseekChat } from './deepseek';
+import { getChatModel } from './deepseek';
 import { extractJSON } from './utils';
 import { Goal5W1HSchema } from '../memory/schemas';
 import type { AssembleResult } from '../memory/context-engine';
@@ -34,7 +34,7 @@ export async function runCognition(
   const contextContent = systemMessage?.content ?? '';
 
   const { text, usage } = await generateText({
-    model: deepseekChat,
+    model: getChatModel(),
     system: contextContent,
     prompt: `基于你当前的记忆、人格、目标和世界状态，运用5W1H分析法决定你的下一个短期行动目标。
 

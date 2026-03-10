@@ -135,7 +135,7 @@ export function ChatInput({ onSendMessage, isRunning }: ChatInputProps) {
               onChange={toggleDynamicGoap}
               style={styles.checkbox}
             />
-            <span style={styles.checkboxText}>动态动作</span>
+            <span style={styles.checkboxText}>允许根据角色行动习得新动作</span>
           </label>
         </div>
       )}

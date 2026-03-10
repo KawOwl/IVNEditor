@@ -70,7 +70,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   toggleDynamicGoap: () => {
     const next = !get().dynamicGoapEnabled;
     set({ dynamicGoapEnabled: next });
-    get().addSystemMessage(next ? '动态动作生成已开启' : '动态动作生成已关闭');
+    get().addSystemMessage(next ? '已允许根据角色行动习得新动作' : '已禁止根据角色行动习得新动作');
   },
 
   sendMessage: (content) => {

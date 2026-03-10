@@ -7,6 +7,7 @@ import { useSettingsStore, type SettingsTab } from './settings-store';
 import { ScriptList } from './ScriptList';
 import { ScriptUpload } from './ScriptUpload';
 import { ScriptGenerator } from './ScriptGenerator';
+import { ModelConfigPanel } from './ModelConfig';
 
 interface SettingsScreenProps {
   onBack: () => void;
@@ -17,6 +18,7 @@ const tabs: { key: SettingsTab; label: string }[] = [
   { key: 'select', label: '📚 选择剧本' },
   { key: 'upload', label: '📤 上传剧本' },
   { key: 'generate', label: '✨ 生成剧本' },
+  { key: 'model', label: '🔧 模型配置' },
 ];
 
 export function SettingsScreen({ onBack, onStartGame }: SettingsScreenProps) {
@@ -65,6 +67,7 @@ export function SettingsScreen({ onBack, onStartGame }: SettingsScreenProps) {
         )}
         {currentTab === 'upload' && <ScriptUpload />}
         {currentTab === 'generate' && <ScriptGenerator />}
+        {currentTab === 'model' && <ModelConfigPanel />}
       </div>
     </div>
   );

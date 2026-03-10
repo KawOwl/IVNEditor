@@ -4,7 +4,7 @@
  */
 
 import { generateText } from 'ai';
-import { deepseekChat } from './deepseek';
+import { getChatModel } from './deepseek';
 import { extractJSON } from './utils';
 import { GOAPActionSchema } from '../memory/schemas';
 import type { GOAPAction, Goal5W1H } from '../memory/schemas';
@@ -65,7 +65,7 @@ ${goalContext}
 - 只输出JSON，请以json格式输出`;
 
   const { text } = await generateText({
-    model: deepseekChat,
+    model: getChatModel(),
     system,
     prompt: `玩家输入："${playerMessage}"
 
