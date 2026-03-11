@@ -11,6 +11,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { usePlayerStore } from './player-store';
 import type { ChatMessage } from './player-store';
+import { T } from '../theme';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
@@ -147,10 +148,10 @@ export function ChatInput({ onSendMessage, isRunning }: ChatInputProps) {
 
 function ChatBubble({ message }: { message: ChatMessage }) {
   const roleStyles: Record<string, React.CSSProperties> = {
-    player: { color: '#7ec8e3', fontWeight: 'bold' },
-    narrator: { color: '#b8b8b8', fontStyle: 'italic' },
-    character: { color: '#e6c3a1' },
-    system: { color: '#666', fontSize: '11px' },
+    player: { color: T.accent, fontWeight: 'bold' },
+    narrator: { color: T.narration, fontStyle: 'italic' },
+    character: { color: T.gold },
+    system: { color: T.textMuted, fontSize: '11px' },
   };
 
   const roleLabels: Record<string, string> = {
@@ -178,8 +179,8 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     display: 'flex',
     flexDirection: 'column',
-    background: 'rgba(15, 15, 26, 0.95)',
-    borderTop: '1px solid rgba(255,255,255,0.1)',
+    background: T.bg,
+    borderTop: `1px solid ${T.border}`,
     padding: '0',
   },
   chatHistory: {
@@ -203,25 +204,26 @@ const styles: Record<string, React.CSSProperties> = {
   input: {
     flex: 1,
     padding: '8px 12px',
-    background: 'rgba(255,255,255,0.06)',
+    background: T.bgSurface,
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderColor: 'rgba(255,255,255,0.15)',
-    borderRadius: '8px',
-    color: '#e0e0e0',
+    borderColor: T.borderStrong,
+    borderRadius: T.radius,
+    color: T.textPrimary,
     fontSize: '13px',
     outline: 'none',
-    fontFamily: 'inherit',
+    fontFamily: T.fontSans,
   },
   sendBtn: {
     padding: '8px 16px',
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    background: T.accent,
     borderWidth: '0',
     borderStyle: 'none',
-    borderRadius: '8px',
+    borderRadius: T.radius,
     color: 'white',
     fontSize: '13px',
     cursor: 'pointer',
+    fontFamily: T.fontSans,
     whiteSpace: 'nowrap' as const,
   },
   controlsRow: {
@@ -237,24 +239,25 @@ const styles: Record<string, React.CSSProperties> = {
   },
   modeBtn: {
     padding: '3px 10px',
-    background: 'rgba(255,255,255,0.06)',
+    background: T.bgSurface,
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderColor: 'rgba(255,255,255,0.1)',
-    borderRadius: '4px',
-    color: '#888',
+    borderColor: T.border,
+    borderRadius: T.radius,
+    color: T.textTertiary,
     fontSize: '11px',
     cursor: 'pointer',
+    fontFamily: T.fontSans,
   },
   modeBtnActive: {
-    background: 'rgba(102, 126, 234, 0.25)',
-    borderColor: '#667eea',
-    color: '#7ec8e3',
+    background: T.accentMuted,
+    borderColor: T.accent,
+    color: T.accent,
   },
   modeBtnIntervention: {
-    background: 'rgba(230, 195, 161, 0.2)',
-    borderColor: '#e6c3a1',
-    color: '#e6c3a1',
+    background: T.accentMuted,
+    borderColor: T.accent,
+    color: T.accent,
   },
   checkboxLabel: {
     display: 'flex',
@@ -263,10 +266,11 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
   },
   checkbox: {
-    accentColor: '#667eea',
+    accentColor: T.accent,
   },
   checkboxText: {
-    color: '#888',
+    color: T.textTertiary,
     fontSize: '11px',
+    fontFamily: T.fontSans,
   },
 };

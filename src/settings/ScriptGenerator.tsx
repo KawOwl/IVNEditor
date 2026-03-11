@@ -7,6 +7,7 @@ import { useState, useCallback } from 'react';
 import { useSettingsStore } from './settings-store';
 import { generateScript } from '../agents/script-generator';
 import type { ScriptBundle } from '../storage/storage-interface';
+import { T } from '../theme';
 
 export function ScriptGenerator() {
   const [description, setDescription] = useState('');
@@ -148,7 +149,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '12px',
   },
   hint: {
-    color: '#999',
+    color: T.textTertiary,
     fontSize: '12px',
     margin: 0,
     lineHeight: '1.5',
@@ -156,12 +157,12 @@ const styles: Record<string, React.CSSProperties> = {
   textarea: {
     width: '100%',
     padding: '12px',
-    background: 'rgba(0,0,0,0.3)',
+    background: T.bg,
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderColor: 'rgba(255,255,255,0.1)',
-    borderRadius: '8px',
-    color: '#ccc',
+    borderColor: T.border,
+    borderRadius: T.radiusLg,
+    color: T.textSecondary,
     fontSize: '13px',
     fontFamily: 'inherit',
     resize: 'vertical' as const,
@@ -170,11 +171,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   generateBtn: {
     padding: '10px 24px',
-    background: 'linear-gradient(135deg, #e6c3a1 0%, #d4a574 100%)',
+    background: T.accent,
     borderWidth: '0',
     borderStyle: 'none',
-    borderRadius: '8px',
-    color: '#1a1a2e',
+    borderRadius: T.radiusLg,
+    color: 'white',
     fontSize: '14px',
     fontWeight: 'bold',
     cursor: 'pointer',
@@ -182,36 +183,36 @@ const styles: Record<string, React.CSSProperties> = {
   },
   errorBox: {
     padding: '10px 14px',
-    background: 'rgba(255, 80, 80, 0.1)',
+    background: T.errorMuted,
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderColor: 'rgba(255, 80, 80, 0.3)',
-    borderRadius: '6px',
-    color: '#ff8888',
+    borderColor: T.error,
+    borderRadius: T.radius,
+    color: T.error,
     fontSize: '12px',
   },
   retryBtn: {
     marginTop: '8px',
     padding: '4px 12px',
-    background: 'rgba(255,255,255,0.06)',
+    background: T.bgSurface,
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderColor: T.borderStrong,
     borderRadius: '4px',
-    color: '#ccc',
+    color: T.textSecondary,
     fontSize: '11px',
     cursor: 'pointer',
   },
   previewBox: {
     padding: '14px 16px',
-    background: 'rgba(78, 205, 196, 0.08)',
+    background: T.successMuted,
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderColor: 'rgba(78, 205, 196, 0.3)',
-    borderRadius: '8px',
+    borderColor: T.success,
+    borderRadius: T.radiusLg,
   },
   previewTitle: {
-    color: '#4ecdc4',
+    color: T.success,
     fontSize: '14px',
     margin: '0 0 10px',
     display: 'flex',
@@ -220,11 +221,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   durationTag: {
     fontSize: '11px',
-    color: '#888',
+    color: T.textTertiary,
     fontWeight: 'normal',
   },
   previewLine: {
-    color: '#ccc',
+    color: T.textSecondary,
     fontSize: '13px',
     margin: '4px 0',
   },
@@ -232,13 +233,13 @@ const styles: Record<string, React.CSSProperties> = {
     margin: '10px 0',
   },
   sectionTitle: {
-    color: '#aaa',
+    color: T.textSecondary,
     fontSize: '12px',
     display: 'block',
     marginBottom: '4px',
   },
   previewDetail: {
-    color: '#999',
+    color: T.textTertiary,
     fontSize: '11px',
     margin: '2px 0 2px 12px',
     lineHeight: '1.4',
@@ -246,16 +247,16 @@ const styles: Record<string, React.CSSProperties> = {
   saveBtn: {
     marginTop: '12px',
     padding: '8px 20px',
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    background: T.accent,
     borderWidth: '0',
     borderStyle: 'none',
-    borderRadius: '6px',
+    borderRadius: T.radius,
     color: 'white',
     fontSize: '13px',
     cursor: 'pointer',
   },
   saveBtnDone: {
-    background: '#2d8659',
+    background: T.success,
     cursor: 'default',
   },
 };

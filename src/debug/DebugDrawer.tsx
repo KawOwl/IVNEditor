@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import { useDebugStore } from './debug-store';
 import type { GamePhase } from './debug-store';
+import { T } from '../theme';
 
 const phaseLabels: Record<GamePhase, string> = {
   idle: '⏸ 空闲',
@@ -166,7 +167,7 @@ export function DebugDrawer() {
                   key={i}
                   style={{
                     ...styles.eventItem,
-                    color: e.conflict ? '#e64545' : '#aaa',
+                    color: e.conflict ? T.error : T.textSecondary,
                   }}
                 >
                   {e.conflict ? '⚠' : '•'} {e.time} {e.event}
@@ -253,13 +254,13 @@ const styles: Record<string, React.CSSProperties> = {
   drawer: {
     width: '320px',
     height: '100%',
-    background: '#1e1e2e',
-    borderLeft: '1px solid #333',
+    background: T.bgSurface,
+    borderLeft: `1px solid ${T.border}`,
     display: 'flex',
     flexDirection: 'column',
     fontSize: '12px',
-    color: '#ccc',
-    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+    color: T.textSecondary,
+    fontFamily: T.fontMono,
     flexShrink: 0,
   },
   drawerMobile: {
@@ -276,16 +277,16 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '8px 12px',
-    background: '#181825',
-    borderBottom: '1px solid #333',
+    background: T.bg,
+    borderBottom: `1px solid ${T.border}`,
   },
-  drawerTitle: { fontWeight: 'bold', color: '#cdd6f4' },
-  loopCount: { color: '#7ec8e3', fontSize: '11px' },
+  drawerTitle: { fontWeight: 'bold', color: T.textPrimary },
+  loopCount: { color: T.accent, fontSize: '11px' },
   collapseBtn: {
     background: 'none',
     borderWidth: '0',
     borderStyle: 'none',
-    color: '#888',
+    color: T.textTertiary,
     cursor: 'pointer',
     fontSize: '14px',
     padding: '2px 6px',
@@ -297,8 +298,8 @@ const styles: Record<string, React.CSSProperties> = {
   collapsedBar: {
     width: '32px',
     height: '100%',
-    background: '#1e1e2e',
-    borderLeft: '1px solid #333',
+    background: T.bgSurface,
+    borderLeft: `1px solid ${T.border}`,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
@@ -309,16 +310,16 @@ const styles: Record<string, React.CSSProperties> = {
   collapsedLabel: {
     writingMode: 'vertical-rl',
     fontSize: '11px',
-    color: '#888',
+    color: T.textTertiary,
   },
   section: {
-    borderBottom: '1px solid #2a2a3a',
+    borderBottom: `1px solid ${T.border}`,
   },
   sectionHeader: {
     padding: '6px 12px',
-    background: '#181825',
+    background: T.bg,
     cursor: 'pointer',
-    color: '#bac2de',
+    color: T.textSecondary,
     fontSize: '11px',
     fontWeight: 'bold',
   },
@@ -338,7 +339,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   phaseLabel: { flex: 1 },
-  elapsed: { color: '#7ec8e3' },
+  elapsed: { color: T.accent },
   goalBox: {},
   row: {
     display: 'flex',
@@ -346,9 +347,9 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '2px 0',
     gap: '8px',
   },
-  rowLabel: { color: '#888', flexShrink: 0 },
+  rowLabel: { color: T.textTertiary, flexShrink: 0 },
   rowValue: { textAlign: 'right', wordBreak: 'break-all' },
-  empty: { color: '#555', fontStyle: 'italic', padding: '4px 0' },
+  empty: { color: T.textMuted, fontStyle: 'italic', padding: '4px 0' },
   goapItem: {
     display: 'flex',
     alignItems: 'center',
@@ -357,16 +358,16 @@ const styles: Record<string, React.CSSProperties> = {
   },
   goapIcon: { fontSize: '12px', width: '18px', textAlign: 'center' },
   goapName: { flex: 1 },
-  goapTime: { color: '#888' },
-  goapTotal: { color: '#7ec8e3', marginTop: '4px', fontSize: '11px' },
+  goapTime: { color: T.textTertiary },
+  goapTotal: { color: T.accent, marginTop: '4px', fontSize: '11px' },
   memoryList: { marginTop: '4px' },
   memoryItem: {
     padding: '2px 0',
     fontSize: '11px',
     lineHeight: '1.4',
   },
-  memoryType: { color: '#c3a76e', marginRight: '4px' },
-  memoryContent: { color: '#999' },
+  memoryType: { color: T.gold, marginRight: '4px' },
+  memoryContent: { color: T.textTertiary },
   eventList: { marginTop: '4px' },
   eventItem: {
     padding: '2px 0',
@@ -377,12 +378,12 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '8px',
     padding: '2px 0',
   },
-  traceAgent: { color: '#c3a1e6', flex: 1 },
-  traceDuration: { color: '#a1e6c3' },
-  traceTokens: { color: '#888' },
-  traceTotal: { color: '#7ec8e3', marginTop: '4px', fontSize: '11px' },
+  traceAgent: { color: T.gold, flex: 1 },
+  traceDuration: { color: T.success },
+  traceTokens: { color: T.textTertiary },
+  traceTotal: { color: T.accent, marginTop: '4px', fontSize: '11px' },
   errorItem: {
-    color: '#e64545',
+    color: T.error,
     padding: '2px 0',
     fontSize: '11px',
     lineHeight: '1.4',

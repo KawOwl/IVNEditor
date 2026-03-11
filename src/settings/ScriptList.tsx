@@ -7,15 +7,16 @@ import { useState } from 'react';
 import { useSettingsStore } from './settings-store';
 import { BUILTIN_SCRIPT_ID } from '../storage/seed';
 import type { ScriptMetadata } from '../storage/storage-interface';
+import { T } from '../theme';
 
 interface ScriptListProps {
   onStartGame: () => void;
 }
 
 const sourceBadges: Record<string, { label: string; color: string }> = {
-  builtin: { label: '内置', color: '#667eea' },
-  uploaded: { label: '上传', color: '#4ecdc4' },
-  generated: { label: '生成', color: '#e6c3a1' },
+  builtin: { label: '内置', color: T.info },
+  uploaded: { label: '上传', color: T.success },
+  generated: { label: '生成', color: T.gold },
 };
 
 export function ScriptList({ onStartGame }: ScriptListProps) {
@@ -161,24 +162,24 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'auto',
   },
   emptyText: {
-    color: '#666',
+    color: T.textMuted,
     fontSize: '13px',
     textAlign: 'center',
     marginTop: '40px',
   },
   card: {
     padding: '12px 16px',
-    background: 'rgba(255,255,255,0.04)',
+    background: T.bgSurface,
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderColor: 'rgba(255,255,255,0.08)',
-    borderRadius: '8px',
+    borderColor: T.border,
+    borderRadius: T.radiusLg,
     cursor: 'pointer',
     transition: 'border-color 0.2s',
   },
   cardSelected: {
-    borderColor: '#e6c3a1',
-    background: 'rgba(230, 195, 161, 0.08)',
+    borderColor: T.accent,
+    background: T.accentMuted,
   },
   cardHeader: {
     display: 'flex',
@@ -187,7 +188,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '8px',
   },
   cardName: {
-    color: '#e0e0e0',
+    color: T.textPrimary,
     fontSize: '14px',
     fontWeight: 'bold',
   },
@@ -195,12 +196,12 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '2px 8px',
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderRadius: '10px',
+    borderRadius: T.radiusLg,
     fontSize: '10px',
     whiteSpace: 'nowrap' as const,
   },
   cardDesc: {
-    color: '#999',
+    color: T.textTertiary,
     fontSize: '12px',
     margin: '6px 0 0',
     lineHeight: '1.4',
@@ -212,7 +213,7 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: '8px',
   },
   cardMeta: {
-    color: '#666',
+    color: T.textMuted,
     fontSize: '11px',
   },
   deleteBtn: {
@@ -220,27 +221,27 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent',
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: T.border,
     borderRadius: '4px',
-    color: '#888',
+    color: T.textTertiary,
     fontSize: '11px',
     cursor: 'pointer',
   },
   deleteBtnConfirm: {
-    borderColor: '#ff5050',
-    color: '#ff5050',
-    background: 'rgba(255, 80, 80, 0.1)',
+    borderColor: T.error,
+    color: T.error,
+    background: T.errorMuted,
   },
   startBtn: {
     padding: '14px 24px',
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    background: T.accent,
     color: 'white',
     borderWidth: '0',
     borderStyle: 'none',
-    borderRadius: '12px',
+    borderRadius: T.radiusLg,
     fontSize: '16px',
     cursor: 'pointer',
-    fontFamily: '"Noto Serif SC", serif',
+    fontFamily: T.fontSerif,
     textAlign: 'center' as const,
     marginTop: '12px',
   },
