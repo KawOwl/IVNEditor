@@ -63,11 +63,9 @@ Phase 1 完成。所有 10 个步骤（1.0–1.9）已实现并通过 typecheck 
 | 4.5 | MODULE_7 端到端验证 | pending | - |
 
 ## 当前任务
-**补验证: Step 1.8 UI 浏览器渲染检查**
-- 类型：回归验证
-- 来源：Step 1.8 完成时未做浏览器验证（只做了 typecheck + build）
-- 目标：启动 dev server，在浏览器中确认 NarrativeView / InputPanel / DebugPanel 三个组件渲染正常
-- 进展：待开始
+**无活跃任务**
+- Phase 1 全部完成并验证（含浏览器 UI 验证）
+- 下一步可选：用 MODULE_7 剧本手写 IR 进行端到端验证 / 进入 Phase 2
 
 ## 关键决策记录
 
