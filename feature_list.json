@@ -210,7 +210,7 @@
     "id": "4.1",
     "title": "存档/读档",
     "description": "IndexedDB 持久化：保存/加载游戏状态，含 segment ID 列表 + 剧本版本号",
-    "status": "pending",
+    "status": "done",
     "type": "e2e",
     "ref": "v2.0.md#四、Runtime Layer",
     "verify": "存档后刷新页面，读档恢复到存档时的完整状态（进度、记忆、变量）"
