@@ -5,30 +5,34 @@
  *   - NarrativeView: 叙事区域（可滚动，占满剩余空间）
  *   - InputPanel: 输入区域（底部固定）
  *   - DebugPanel: 调试面板（底部可折叠）
+ *
+ * 通过 GameSession 实例连接引擎核心。
  */
 
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { NarrativeView } from './NarrativeView';
 import { InputPanel } from './InputPanel';
 import { DebugPanel } from './DebugPanel';
 import { useGameStore } from '../stores/game-store';
+import { GameSession } from '../core/game-session';
+import type { GameSessionConfig } from '../core/game-session';
 
 export function App() {
-  const appendEntry = useGameStore((s) => s.appendEntry);
+  const status = useGameStore((s) => s.status);
+  const error = useGameStore((s) => s.error);
+  const sessionRef = useRef<GameSession | null>(null);
 
   const handlePlayerInput = useCallback(
     (text: string) => {
-      // Append player input to narrative
-      appendEntry({ role: 'pc', content: text });
-
-      // TODO: In Step 1.9, this will trigger the game loop:
-      // 1. Store input in memory
-      // 2. Assemble context
-      // 3. Call LLM
-      // 4. Advance flow
+      sessionRef.current?.submitInput(text);
     },
-    [appendEntry],
+    [],
   );
+
+  const handleStop = useCallback(() => {
+    sessionRef.current?.stop();
+    sessionRef.current = null;
+  }, []);
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
@@ -37,8 +41,25 @@ export function App() {
         <h1 className="text-sm font-medium text-zinc-400">
           Interactive Novel Engine
         </h1>
-        <div className="text-xs text-zinc-600">v2.0</div>
+        <div className="flex items-center gap-3">
+          {status !== 'idle' && status !== 'error' && (
+            <button
+              onClick={handleStop}
+              className="text-xs text-zinc-500 hover:text-red-400 transition-colors"
+            >
+              Stop
+            </button>
+          )}
+          <div className="text-xs text-zinc-600">v2.0</div>
+        </div>
       </header>
+
+      {/* Error banner */}
+      {error && (
+        <div className="flex-none px-6 py-2 bg-red-950/50 border-b border-red-900/50 text-red-300 text-sm">
+          {error}
+        </div>
+      )}
 
       {/* Narrative area */}
       <NarrativeView />
@@ -50,4 +71,30 @@ export function App() {
       <DebugPanel />
     </div>
   );
+}
+
+export { type GameSessionConfig };
+export { App as default };
+
+/**
+ * Helper to start a game session from outside React.
+ * Usage: startGame(config) from a script loader or test harness.
+ */
+export function createGameStarter() {
+  let session: GameSession | null = null;
+
+  return {
+    start: (config: GameSessionConfig) => {
+      session = new GameSession();
+      session.start(config);
+      return session;
+    },
+    submitInput: (text: string) => {
+      session?.submitInput(text);
+    },
+    stop: () => {
+      session?.stop();
+      session = null;
+    },
+  };
 }
