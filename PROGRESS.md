@@ -62,10 +62,12 @@ Phase 1 完成。所有 10 个步骤（1.0–1.9）已实现并通过 typecheck 
 | 4.4 | Debug 面板增强 | pending | changelog viewer + token viz |
 | 4.5 | MODULE_7 端到端验证 | pending | - |
 
-## 当前正在做的功能
-**Phase 1 完成，待验证**
-- Phase 1 所有模块已实现：types, schemas, StateStore, MemoryManager, ContextAssembler, ToolExecutor, LLMClient, FlowExecutor, GameSession, UI (NarrativeView + InputPanel + DebugPanel + GameStore)
-- 下一步可以用 MODULE_7 剧本手写 IR 进行端到端验证，或进入 Phase 2
+## 当前任务
+**补验证: Step 1.8 UI 浏览器渲染检查**
+- 类型：回归验证
+- 来源：Step 1.8 完成时未做浏览器验证（只做了 typecheck + build）
+- 目标：启动 dev server，在浏览器中确认 NarrativeView / InputPanel / DebugPanel 三个组件渲染正常
+- 进展：待开始
 
 ## 关键决策记录
 
