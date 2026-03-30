@@ -16,11 +16,37 @@ import { DebugPanel } from './DebugPanel';
 import { useGameStore } from '../stores/game-store';
 import { GameSession } from '../core/game-session';
 import type { GameSessionConfig } from '../core/game-session';
+import { module7TestManifest } from '../fixtures/module7-test';
 
 export function App() {
   const status = useGameStore((s) => s.status);
   const error = useGameStore((s) => s.error);
   const sessionRef = useRef<GameSession | null>(null);
+
+  const handleStart = useCallback(() => {
+    if (sessionRef.current) return;
+
+    const chapter = module7TestManifest.chapters[0]!;
+    const config: GameSessionConfig = {
+      chapterId: chapter.id,
+      flowGraph: chapter.flowGraph,
+      segments: chapter.segments,
+      stateSchema: module7TestManifest.stateSchema,
+      memoryConfig: module7TestManifest.memoryConfig,
+      enabledTools: module7TestManifest.enabledTools,
+      llmConfig: {
+        provider: 'openai-compatible',
+        baseURL: import.meta.env.VITE_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1',
+        apiKey: import.meta.env.VITE_DEEPSEEK_API_KEY ?? '',
+        model: import.meta.env.VITE_DEEPSEEK_MODEL ?? 'deepseek-chat',
+        name: 'deepseek',
+      },
+    };
+
+    const session = new GameSession();
+    sessionRef.current = session;
+    session.start(config);
+  }, []);
 
   const handlePlayerInput = useCallback(
     (text: string) => {
@@ -42,6 +68,14 @@ export function App() {
           Interactive Novel Engine
         </h1>
         <div className="flex items-center gap-3">
+          {status === 'idle' && !sessionRef.current && (
+            <button
+              onClick={handleStart}
+              className="text-xs px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white transition-colors"
+            >
+              Start MODULE_7
+            </button>
+          )}
           {status !== 'idle' && status !== 'error' && (
             <button
               onClick={handleStop}

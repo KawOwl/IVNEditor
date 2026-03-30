@@ -193,6 +193,14 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
 
   const systemPrompt = systemPromptSections.join('\n\n');
 
+  // AI SDK requires at least one message — add seed on first turn
+  if (historyMessages.length === 0) {
+    historyMessages.push({
+      role: 'user',
+      content: '[Game session started. Begin narration.]',
+    });
+  }
+
   return {
     systemPrompt,
     messages: historyMessages,

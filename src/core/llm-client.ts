@@ -7,7 +7,7 @@
  * AI SDK v6 uses `stopWhen` + `stepCountIs` instead of `maxSteps`.
  */
 
-import { streamText, stepCountIs, tool, type ToolSet } from 'ai';
+import { streamText, stepCountIs, tool, zodSchema, type ToolSet } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ToolHandler } from './tool-executor';
 import type { ChatMessage } from './context-assembler';
@@ -53,12 +53,13 @@ function buildAISDKTools(
   const result: ToolSet = {};
 
   for (const [name, handler] of Object.entries(handlers)) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // AI SDK v6: `parameters` → `inputSchema`
+    // Zod v4: must wrap with `zodSchema()` for correct JSON Schema conversion
     result[name] = tool({
       description: handler.description,
-      parameters: handler.parameters,
-      execute: async (args: any) => handler.execute(args),
-    } as any); // AI SDK's tool() has complex generics; cast for compatibility
+      inputSchema: zodSchema(handler.parameters),
+      execute: async (args) => handler.execute(args),
+    });
   }
 
   return result;

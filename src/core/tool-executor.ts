@@ -11,6 +11,10 @@
  * 可选工具（编剧决定是否启用）：
  *   - read_state, query_changelog, pin_memory, query_memory,
  *     inject_context, list_context, advance_flow, set_mood, show_image
+ *
+ * NOTE: Zod v4 schemas must be wrapped with `zodSchema()` in llm-client.ts
+ * before passing to AI SDK's `tool()`. The AI SDK's internal converter
+ * doesn't auto-detect Zod v4's `_zod` structure.
  */
 
 import { z } from 'zod/v4';
@@ -49,15 +53,20 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
   // --- 必选工具 ---
 
   tools['update_state'] = {
-    description: 'Update game state variables. Pass a partial object with only the fields to update.',
+    description: 'Update game state variables. Pass a JSON string of key-value pairs to update.',
     parameters: z.object({
-      patch: z.record(z.string(), z.unknown())
-        .describe('Key-value pairs to update in the game state'),
+      updates_json: z.string()
+        .describe('JSON string of key-value pairs to update, e.g. {"stage": 2, "turn_count_in_stage": 0}'),
     }),
     execute: (args) => {
-      const { patch } = args as { patch: Record<string, unknown> };
-      ctx.stateStore.update(patch, 'llm');
-      return { success: true, updated: Object.keys(patch) };
+      const { updates_json } = args as { updates_json: string };
+      try {
+        const patch = JSON.parse(updates_json) as Record<string, unknown>;
+        ctx.stateStore.update(patch, 'llm');
+        return { success: true, updated: Object.keys(patch) };
+      } catch {
+        return { success: false, error: 'Invalid JSON' };
+      }
     },
     required: true,
   };
