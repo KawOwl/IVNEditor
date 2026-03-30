@@ -1,13 +1,13 @@
 # 项目进度
 
 ## 当前状态
-架构设计完成，准备开始 Phase 1 实现。项目已清空 v1 代码，只保留设计文档。
+Phase 1 进行中。Step 1.0 脚手架 + Step 1.1 类型定义已完成。下一步：Step 1.2 StateStore + Changelog。
 
 ## 整体计划
 
 | Phase | 内容 | 状态 | 进度 |
 |-------|------|------|------|
-| Phase 1 | 执行引擎核心 | pending | 0% |
+| Phase 1 | 执行引擎核心 | in-progress | 20% |
 | Phase 2 | Architect Agent | pending | 0% |
 | Phase 3 | Visual Flow Editor | pending | 0% |
 | Phase 4 | 完善 | pending | 0% |
@@ -18,8 +18,8 @@
 
 | Step | 功能 | 状态 | 备注 |
 |------|------|------|------|
-| 1.0 | 项目脚手架 | pending | pnpm + vite + ts + tailwind + shadcn |
-| 1.1 | 类型定义 (core/types.ts) | pending | 所有 IR 接口 + 四层状态 + Zod schema |
+| 1.0 | 项目脚手架 | done | React 19 + TS 6 + Vite 8 + Tailwind 4 + shadcn/ui |
+| 1.1 | 类型定义 (core/types.ts) | done | types.ts + schemas.ts (Zod v4) |
 | 1.2 | StateStore + Changelog | pending | Changelog 独立存储，CRUD 查询 |
 | 1.3 | MemoryManager | pending | append / compress / pin / query |
 | 1.4 | ContextAssembler | pending | token 预算 + segment 注入 |
@@ -63,7 +63,9 @@
 | 4.5 | MODULE_7 端到端验证 | pending | - |
 
 ## 当前正在做的功能
-尚未开始实现。下一步：Step 1.0 项目脚手架。
+**Step 1.2: StateStore + Changelog**
+- 目标：实现 ScriptState KV 存储 + Changelog 独立存储
+- 接口：get / set / update(patch) / serialize(toYAML) + changelog append / query(filter)
 
 ## 关键决策记录
 
