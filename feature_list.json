@@ -174,7 +174,7 @@
     "id": "3.2",
     "title": "节点编辑面板",
     "description": "点击节点弹出编辑面板，可修改节点配置（prompt segments、auto 标记等）",
-    "status": "pending",
+    "status": "done",
     "type": "ui",
     "ref": "v2.0.md#二、Authoring Layer",
     "verify": "点击节点显示侧边编辑面板；修改后节点配置更新；新配置可导出"
