@@ -183,7 +183,7 @@
     "id": "3.3",
     "title": "边/条件编辑器",
     "description": "可视化编辑边的条件表达式（状态变量 + 比较运算符 + 值）",
-    "status": "pending",
+    "status": "done",
     "type": "ui",
     "ref": "v2.0.md#二、Authoring Layer",
     "verify": "点击边显示条件编辑器；下拉选择变量/运算符/值；编辑后条件表达式更新"
