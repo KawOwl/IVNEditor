@@ -138,7 +138,7 @@
     "id": "2.6",
     "title": "工具启用 + Schema 生成",
     "description": "从文档提取需启用的可选工具列表，为 update_state 自动生成参数 Schema",
-    "status": "pending",
+    "status": "done",
     "type": "logic",
     "ref": "v2.0.md#五、Agentic 工具系统",
     "verify": "tsc 通过；输出 enabledOptionalTools 列表 + update_state 的 Zod schema；schema 匹配 StateSchema 定义"
