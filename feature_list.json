@@ -1,0 +1,254 @@
+[
+  {
+    "id": "1.0",
+    "title": "项目脚手架",
+    "description": "React 19 + TypeScript + Vite + Tailwind + shadcn/ui 初始化",
+    "status": "done",
+    "type": "e2e",
+    "ref": "v2.0.md#七、实现计划",
+    "verify": "pnpm dev 启动无报错，浏览器显示初始页面"
+  },
+  {
+    "id": "1.1",
+    "title": "类型定义",
+    "description": "core/types.ts 全部 IR 接口 + 四层运行时状态 + core/schemas.ts Zod 验证",
+    "status": "done",
+    "type": "logic",
+    "ref": "v2.0.md#三、Data Layer",
+    "verify": "tsc --noEmit 通过，所有类型可被其他模块正确 import"
+  },
+  {
+    "id": "1.2",
+    "title": "StateStore + Changelog",
+    "description": "ScriptState KV 存储 + Changelog 独立存储，支持 CRUD 查询",
+    "status": "done",
+    "type": "logic",
+    "ref": "v2.0.md#四、Runtime Layer",
+    "verify": "tsc 通过；get/set/update/serialize 正确工作；changelog 支持 filter 查询"
+  },
+  {
+    "id": "1.3",
+    "title": "MemoryManager",
+    "description": "对话记忆管理：append / compress / pin / query / 跨章继承摘要",
+    "status": "done",
+    "type": "logic",
+    "ref": "v2.0.md#四、Runtime Layer",
+    "verify": "tsc 通过；append 后 getRecent 返回正确条目；compress 调用 compressFn 回调；pin/query 工作正常"
+  },
+  {
+    "id": "1.4",
+    "title": "ContextAssembler",
+    "description": "token 预算管理 + 优先级填充 + segment 条件注入",
+    "status": "done",
+    "type": "logic",
+    "ref": "v2.0.md#四、Runtime Layer",
+    "verify": "tsc 通过；输出 systemPrompt + messages + tokenBreakdown；不超 token 预算"
+  },
+  {
+    "id": "1.5",
+    "title": "ToolExecutor",
+    "description": "11 个 GM 工具注册 + 执行 + AI SDK 格式转换",
+    "status": "done",
+    "type": "logic",
+    "ref": "v2.0.md#五、Agentic 工具系统",
+    "verify": "tsc 通过；createTools 返回 11 个工具；getEnabledTools 正确过滤；toAISDKTools 输出兼容格式"
+  },
+  {
+    "id": "1.6",
+    "title": "LLM Client",
+    "description": "AI SDK v6 streamText 封装，支持 agentic tool loop",
+    "status": "done",
+    "type": "logic",
+    "ref": "v2.0.md#四、Runtime Layer",
+    "verify": "tsc 通过；generate 方法接收 tools/messages，返回 text + toolCalls + inputSignaled"
+  },
+  {
+    "id": "1.7",
+    "title": "FlowExecutor",
+    "description": "FlowGraph 状态机遍历 + 条件分支 + 节点执行委托",
+    "status": "done",
+    "type": "logic",
+    "ref": "v2.0.md#四、Runtime Layer",
+    "verify": "tsc 通过；按 edge condition 正确遍历节点；支持 pause/stop/jumpTo"
+  },
+  {
+    "id": "1.8",
+    "title": "基础 UI",
+    "description": "NarrativeView（流式叙事）+ InputPanel（玩家输入）+ DebugPanel（调试面板）+ GameStore",
+    "status": "done",
+    "type": "ui",
+    "ref": "v2.0.md#四、Runtime Layer",
+    "verify": "tsc 通过；浏览器中三个组件正常渲染；输入框可提交文字；Debug 面板可展开/折叠/切换 tab"
+  },
+  {
+    "id": "1.9",
+    "title": "GameSession 端到端集成",
+    "description": "连接 FlowExecutor + LLMClient + ContextAssembler + ToolExecutor + UI 的集成层",
+    "status": "done",
+    "type": "e2e",
+    "ref": "v2.0.md#四、Runtime Layer",
+    "verify": "tsc + build 通过；createGameStarter 可创建会话实例；submitInput 触发完整引擎循环"
+  },
+  {
+    "id": "2.1",
+    "title": "文档上传 + 分类",
+    "description": "上传编剧 Markdown 文档，自动分类为 GM prompt / 世界观 / 角色设定等",
+    "status": "pending",
+    "type": "ui",
+    "ref": "v2.0.md#二、Authoring Layer",
+    "verify": "上传 .md 文件后 UI 显示文档列表及分类标签；对 MODULE_7 测试文档输出正确类别"
+  },
+  {
+    "id": "2.2",
+    "title": "状态变量提取 Agent",
+    "description": "分析编剧文档，自动提取 StateSchema（变量名、类型、初始值、描述）",
+    "status": "pending",
+    "type": "logic",
+    "ref": "v2.0.md#二、Authoring Layer",
+    "verify": "tsc 通过；输入 GM prompt 文档，输出符合 StateSchema 类型的 JSON；对 MODULE_7 提取出预期变量"
+  },
+  {
+    "id": "2.3",
+    "title": "流程结构提取 Agent",
+    "description": "分析编剧文档，自动提取 FlowGraph（节点、边、条件分支）",
+    "status": "pending",
+    "type": "logic",
+    "ref": "v2.0.md#二、Authoring Layer",
+    "verify": "tsc 通过；输入文档输出合法 FlowGraph JSON；节点类型和边条件与文档描述匹配"
+  },
+  {
+    "id": "2.4",
+    "title": "Prompt 拆分 Agent",
+    "description": "将大文档智能拆分为 PromptSegment[]，标记 content/logic 类型，生成 contentHash",
+    "status": "pending",
+    "type": "logic",
+    "ref": "v2.0.md#三、Data Layer",
+    "verify": "tsc 通过；输出 PromptSegment[] 覆盖原文档全部内容；contentHash 对相同内容稳定；type 标记准确"
+  },
+  {
+    "id": "2.5",
+    "title": "注入规则生成 Agent",
+    "description": "根据文档中的条件逻辑，自动生成 InjectionRule（条件表达式 + 关联 segment）",
+    "status": "pending",
+    "type": "logic",
+    "ref": "v2.0.md#三、Data Layer",
+    "verify": "tsc 通过；输出 InjectionRule[] 中的条件表达式可被 evaluateCondition 正确执行"
+  },
+  {
+    "id": "2.6",
+    "title": "工具启用 + Schema 生成",
+    "description": "从文档提取需启用的可选工具列表，为 update_state 自动生成参数 Schema",
+    "status": "pending",
+    "type": "logic",
+    "ref": "v2.0.md#五、Agentic 工具系统",
+    "verify": "tsc 通过；输出 enabledOptionalTools 列表 + update_state 的 Zod schema；schema 匹配 StateSchema 定义"
+  },
+  {
+    "id": "2.7",
+    "title": "记忆策略生成 Agent",
+    "description": "从文档提取记忆策略建议：压缩提示、pin 关键词、跨章继承配置",
+    "status": "pending",
+    "type": "logic",
+    "ref": "v2.0.md#四、Runtime Layer",
+    "verify": "tsc 通过；输出合法 MemoryConfig JSON；压缩提示和继承建议与文档语义一致"
+  },
+  {
+    "id": "2.8",
+    "title": "Agent 结果预览 + 确认 UI",
+    "description": "展示所有 Agent 提取结果（状态变量、流程图、segments、工具、记忆策略），编剧确认或修改后导出 IR",
+    "status": "pending",
+    "type": "ui",
+    "ref": "v2.0.md#二、Authoring Layer",
+    "verify": "浏览器中显示提取结果；各项可编辑修改；确认后输出完整 ScriptManifest JSON"
+  },
+  {
+    "id": "3.1",
+    "title": "ReactFlow 集成",
+    "description": "安装 ReactFlow，渲染 FlowGraph 为可视化流程图",
+    "status": "pending",
+    "type": "ui",
+    "ref": "v2.0.md#二、Authoring Layer",
+    "verify": "浏览器中显示 FlowGraph 节点和边；节点按类型显示不同样式；可拖拽移动"
+  },
+  {
+    "id": "3.2",
+    "title": "节点编辑面板",
+    "description": "点击节点弹出编辑面板，可修改节点配置（prompt segments、auto 标记等）",
+    "status": "pending",
+    "type": "ui",
+    "ref": "v2.0.md#二、Authoring Layer",
+    "verify": "点击节点显示侧边编辑面板；修改后节点配置更新；新配置可导出"
+  },
+  {
+    "id": "3.3",
+    "title": "边/条件编辑器",
+    "description": "可视化编辑边的条件表达式（状态变量 + 比较运算符 + 值）",
+    "status": "pending",
+    "type": "ui",
+    "ref": "v2.0.md#二、Authoring Layer",
+    "verify": "点击边显示条件编辑器；下拉选择变量/运算符/值；编辑后条件表达式更新"
+  },
+  {
+    "id": "3.4",
+    "title": "Prompt 片段编辑器",
+    "description": "查看和编辑 PromptSegment 内容，支持 '/' 菜单引用工具",
+    "status": "pending",
+    "type": "ui",
+    "ref": "v2.0.md#三、Data Layer",
+    "verify": "可编辑 segment 内容；'/' 菜单显示可用工具列表；选择后插入工具引用标记"
+  },
+  {
+    "id": "3.5",
+    "title": "跨章继承确认界面",
+    "description": "展示三层 fallback 继承配置，编剧确认哪些字段继承/排除",
+    "status": "pending",
+    "type": "ui",
+    "ref": "v2.0.md#三、Data Layer",
+    "verify": "显示显式声明和自动推断的继承字段列表；可勾选/取消继承；输出 CrossChapterConfig"
+  },
+  {
+    "id": "4.1",
+    "title": "存档/读档",
+    "description": "IndexedDB 持久化：保存/加载游戏状态，含 segment ID 列表 + 剧本版本号",
+    "status": "pending",
+    "type": "e2e",
+    "ref": "v2.0.md#四、Runtime Layer",
+    "verify": "存档后刷新页面，读档恢复到存档时的完整状态（进度、记忆、变量）"
+  },
+  {
+    "id": "4.2",
+    "title": "剧本版本检测",
+    "description": "segment contentHash 比对，检测剧本更新；logic 变化触发重算激活列表",
+    "status": "pending",
+    "type": "logic",
+    "ref": "v2.0.md#三、Data Layer",
+    "verify": "修改 logic segment 后检测到变化并重算激活列表；修改 content segment 后仅更新内容不重算"
+  },
+  {
+    "id": "4.3",
+    "title": "跨章继承",
+    "description": "三层 fallback 机制 + 继承快照保存",
+    "status": "pending",
+    "type": "e2e",
+    "ref": "v2.0.md#三、Data Layer",
+    "verify": "切换章节时，显式声明的字段正确继承；未声明字段按 Agent 推断继承；快照可回溯"
+  },
+  {
+    "id": "4.4",
+    "title": "Debug 面板增强",
+    "description": "新增 changelog viewer + token 可视化 + 记忆条目浏览",
+    "status": "pending",
+    "type": "ui",
+    "ref": "v2.0.md#四、Runtime Layer",
+    "verify": "浏览器中 Debug 面板显示 changelog 列表、token 分配饼图/条形图、记忆条目可展开查看"
+  },
+  {
+    "id": "4.5",
+    "title": "MODULE_7 端到端验证",
+    "description": "用 MODULE_7 剧本手写 IR 进行完整流程验证",
+    "status": "pending",
+    "type": "e2e",
+    "ref": "v2.0.md#七、实现计划",
+    "verify": "MODULE_7 剧本可完整跑通：上传文档 → Agent 提取 → 编辑确认 → 运行游戏 → 存档读档"
+  }
+]

@@ -9,7 +9,7 @@
 以下原则综合自 Anthropic 和 OpenAI 的 Harness Engineering 实践：
 
 1. **会话间无记忆，靠文件传递上下文**：每次新会话/context reset 后，通过读取项目文件恢复完整认知，而非依赖对话记忆。
-2. **增量推进，一次一个功能**：每次只聚焦一个 feature，完成并验证后再开始下一个，防止上下文耗尽。
+2. **增量推进，一次一个 Step**：每次只聚焦 feature_list.json 中的一个 Step，完成并验证后再开始下一个。收到跨多个 Step 的大指令时，仍逐个 Step 执行开发循环，不批量实现。
 3. **结构化交接**：每次会话结束前，将进展、决策、遗留问题写入追踪文件，确保下次会话无缝衔接。
 4. **约束优于自由**：通过类型定义、目录结构、lint 规则限制实现空间，提高一致性。
 5. **用人类工程实践要求自己**：提交纪律（小而频繁的 commit）、文档更新、验证后再推进。
@@ -20,25 +20,37 @@
 
 项目通过以下文件维护跨会话的"记忆"：
 
-### `PROGRESS.md` — 项目进度追踪（核心记忆文件）
+### `feature_list.json` — 功能清单（JSON，不易被意外改写）
 
-结构：
+每个 feature 是一个离散的、可验证的单元：
+
+```json
+{
+  "id": "2.1",
+  "title": "文档上传 + 分类",
+  "description": "上传编剧文档，自动分类为 GM prompt / 世界观 / 角色设定等",
+  "status": "pending",
+  "type": "ui",
+  "ref": "v2.0.md#二、Authoring Layer",
+  "verify": "上传 .md 文件后，UI 正确显示分类结果；分类逻辑对 MODULE_7 测试文档输出正确类别"
+}
+```
+
+字段说明：
+- `status`: `"done"` / `"in-progress"` / `"pending"`
+- `type`: `"logic"` / `"ui"` / `"e2e"` — 决定验证方式的底线
+- `ref`: 指向 v2.0.md 中的详细设计章节（实现细节只在 v2.0.md 维护，不在此重复）
+- `verify`: 该 feature 特有的验收条件（通用底线 + 此条件都满足才能标记 done）
+
+### `PROGRESS.md` — 当前任务 + 决策记录
+
+不再包含功能清单（已移至 feature_list.json），只保留叙述性内容：
 
 ```markdown
 # 项目进度
 
 ## 当前状态
 [一句话描述当前进展到哪里]
-
-## 整体计划
-[Phase 列表 + 每个 Phase 的完成百分比]
-
-## 功能清单
-| 功能 | 状态 | 所属 Phase | 备注 |
-|------|------|-----------|------|
-| types.ts 类型定义 | done | 1.1 | - |
-| StateStore | in-progress | 1.2 | Changelog 独立存储 |
-| MemoryManager | pending | 1.3 | - |
 
 ## 当前任务
 **[任务标题]**
@@ -50,7 +62,6 @@
 ## 关键决策记录
 | 日期 | 决策 | 原因 | 影响 |
 |------|------|------|------|
-| 2026-03-31 | Changelog 独立存储 | GM 大多数轮次不需要看 changelog | 新增 query_changelog 工具 |
 
 ## 遗留问题 / 待讨论
 - [ ] 问题描述...
@@ -73,25 +84,28 @@
 每次新会话（包括 context reset 后），按以下顺序恢复上下文：
 
 1. **读 CLAUDE.md**（本文件）— 了解工作流规范
-2. **读 PROGRESS.md** — 了解当前进度、正在做什么、关键决策
-3. **读 git log（最近 10 条）** — 了解最近的代码变更
-4. **读 v2.0.md 的相关章节**（如果需要确认架构细节）
-5. **确认当前任务** — 从 PROGRESS.md 中的"当前任务"继续
+2. **读 PROGRESS.md** — 了解当前任务、关键决策
+3. **读 feature_list.json** — 了解所有 feature 的状态，定位下一个 pending
+4. **读 git log（最近 10 条）** — 了解最近的代码变更
+5. **读 v2.0.md 的相关章节**（按当前 feature 的 ref 字段定位）
+6. **确认当前任务** — 从 PROGRESS.md 中的"当前任务"继续，或从 feature_list.json 选取下一个 pending
 
 ### 开发循环（每个 feature）
 
 ```
-1. 确定下一个任务（来源：功能清单中最高优先级的 pending / 用户临时指派 / 自查发现）
-2. 更新 PROGRESS.md "当前任务"：写明类型、来源、目标
-3. 实现功能（小步提交，每个有意义的进展都 commit）
-4. 验证功能（根据功能类型选择对应的验证方式）：
-   - **纯逻辑模块**：类型检查通过（`tsc --noEmit`）+ 单元测试
-   - **UI 组件**：类型检查 + 启动 dev server 在浏览器中确认渲染正常
-   - **端到端集成**：实际走通完整流程（含浏览器交互）
-   - **通用底线**：至少 `tsc --noEmit` 通过
-5. 更新 PROGRESS.md：标记为 done，记录任何关键决策
-6. 如果有设计调整，同步更新 v2.0.md
-7. 选取下一个功能，重复
+1. 确定下一个 Step（来源：feature_list.json 中最高优先级的 pending / 用户临时指派 / 自查发现）
+2. 更新：feature_list.json 该 Step 状态设为 "in-progress"，PROGRESS.md "当前任务"写明类型、来源、目标
+3. 读取 v2.0.md 中该 feature 的 ref 章节，获取实现细节
+4. 实现功能（小步提交，每个有意义的进展都 commit）
+5. 验证功能（两层验证，都通过才能标记 done）：
+   a. 通用底线（按 feature 的 type 字段）：
+      - logic：类型检查通过（`tsc --noEmit`）+ 单元测试
+      - ui：类型检查 + 启动 dev server 在浏览器中确认渲染正常
+      - e2e：实际走通完整流程（含浏览器交互）
+   b. 专属验收条件（feature 的 verify 字段）
+6. 更新：feature_list.json 该 Step 状态设为 "done"，PROGRESS.md 记录关键决策
+7. 如果有设计调整，同步更新 v2.0.md
+8. 选取下一个 Step，重复
 ```
 
 ### 关键决策记录规则
