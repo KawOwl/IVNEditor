@@ -147,7 +147,7 @@
     "id": "2.7",
     "title": "记忆策略生成 Agent",
     "description": "从文档提取记忆策略建议：压缩提示、pin 关键词、跨章继承配置",
-    "status": "pending",
+    "status": "done",
     "type": "logic",
     "ref": "v2.0.md#四、Runtime Layer",
     "verify": "tsc 通过；输出合法 MemoryConfig JSON；压缩提示和继承建议与文档语义一致"
