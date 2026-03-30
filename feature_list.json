@@ -228,7 +228,7 @@
     "id": "4.3",
     "title": "跨章继承",
     "description": "三层 fallback 机制 + 继承快照保存",
-    "status": "pending",
+    "status": "done",
     "type": "e2e",
     "ref": "v2.0.md#三、Data Layer",
     "verify": "切换章节时，显式声明的字段正确继承；未声明字段按 Agent 推断继承；快照可回溯"
