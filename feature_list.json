@@ -246,10 +246,10 @@
     "id": "4.5",
     "title": "MODULE_7 端到端验证",
     "description": "用 MODULE_7 剧本手写 IR 进行完整流程验证",
-    "status": "in-progress",
+    "status": "done",
     "type": "e2e",
     "ref": "v2.0.md#七、实现计划",
     "verify": "MODULE_7 剧本可完整跑通：上传文档 → Agent 提取 → 编辑确认 → 运行游戏 → 存档读档",
-    "note": "IR fixture 已基于真实文档完成（652行），端到端浏览器验证需 LLM API key 配置"
+    "note": "IR fixture 基于真实文档完成；手写 IR → DeepSeek API → 叙事生成 → 玩家输入 已在浏览器中验证通过"
   }
 ]
