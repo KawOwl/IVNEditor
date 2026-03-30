@@ -237,7 +237,7 @@
     "id": "4.4",
     "title": "Debug 面板增强",
     "description": "新增 changelog viewer + token 可视化 + 记忆条目浏览",
-    "status": "pending",
+    "status": "done",
     "type": "ui",
     "ref": "v2.0.md#四、Runtime Layer",
     "verify": "浏览器中 Debug 面板显示 changelog 列表、token 分配饼图/条形图、记忆条目可展开查看"

@@ -59,6 +59,9 @@ export interface GameState {
   tokenBreakdown: TokenBreakdownInfo | null;
   memoryEntryCount: number;
   memorySummaryCount: number;
+  memoryEntries: Array<{ role: string; content: string; pinned?: boolean }>;
+  memorySummaries: string[];
+  changelogEntries: Array<{ turn: number; key: string; oldValue: unknown; newValue: unknown; source: string }>;
 
   // --- Actions ---
   appendEntry: (entry: Omit<NarrativeEntry, 'id' | 'timestamp'>) => void;
@@ -82,6 +85,9 @@ interface DebugUpdate {
   tokenBreakdown: TokenBreakdownInfo | null;
   memoryEntryCount: number;
   memorySummaryCount: number;
+  memoryEntries: Array<{ role: string; content: string; pinned?: boolean }>;
+  memorySummaries: string[];
+  changelogEntries: Array<{ turn: number; key: string; oldValue: unknown; newValue: unknown; source: string }>;
 }
 
 // ============================================================================
@@ -114,6 +120,9 @@ const initialState = {
   tokenBreakdown: null,
   memoryEntryCount: 0,
   memorySummaryCount: 0,
+  memoryEntries: [],
+  memorySummaries: [],
+  changelogEntries: [],
 };
 
 export const useGameStore = create<GameState>((set) => ({
