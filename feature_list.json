@@ -102,7 +102,7 @@
     "id": "2.2",
     "title": "状态变量提取 Agent",
     "description": "分析编剧文档，自动提取 StateSchema（变量名、类型、初始值、描述）",
-    "status": "pending",
+    "status": "done",
     "type": "logic",
     "ref": "v2.0.md#二、Authoring Layer",
     "verify": "tsc 通过；输入 GM prompt 文档，输出符合 StateSchema 类型的 JSON；对 MODULE_7 提取出预期变量"
