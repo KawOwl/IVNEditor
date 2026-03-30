@@ -111,7 +111,7 @@
     "id": "2.3",
     "title": "流程结构提取 Agent",
     "description": "分析编剧文档，自动提取 FlowGraph（节点、边、条件分支）",
-    "status": "pending",
+    "status": "done",
     "type": "logic",
     "ref": "v2.0.md#二、Authoring Layer",
     "verify": "tsc 通过；输入文档输出合法 FlowGraph JSON；节点类型和边条件与文档描述匹配"
