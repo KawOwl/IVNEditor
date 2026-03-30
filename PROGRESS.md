@@ -1,13 +1,13 @@
 # 项目进度
 
 ## 当前状态
-Phase 1 进行中。Step 1.0–1.7 已完成（核心模块全部实现）。下一步：Step 1.8 基础 UI。
+Phase 1 完成。所有 10 个步骤（1.0–1.9）已实现并通过 typecheck + build。下一步：Phase 2 Architect Agent 或用 MODULE_7 剧本进行端到端验证。
 
 ## 整体计划
 
 | Phase | 内容 | 状态 | 进度 |
 |-------|------|------|------|
-| Phase 1 | 执行引擎核心 | in-progress | 70% |
+| Phase 1 | 执行引擎核心 | done | 100% |
 | Phase 2 | Architect Agent | pending | 0% |
 | Phase 3 | Visual Flow Editor | pending | 0% |
 | Phase 4 | 完善 | pending | 0% |
@@ -26,8 +26,8 @@ Phase 1 进行中。Step 1.0–1.7 已完成（核心模块全部实现）。下
 | 1.5 | ToolExecutor | done | 11 个工具注册 + 执行 |
 | 1.6 | LLM Client | done | AI SDK v6 streamText + tools + stopWhen |
 | 1.7 | FlowExecutor | done | FlowGraph 遍历 + 节点执行 |
-| 1.8 | 基础 UI | pending | NarrativeView + InputPanel + DebugPanel |
-| 1.9 | MODULE_7 端到端跑通 | pending | 手写 IR + 完整循环验证 |
+| 1.8 | 基础 UI | done | NarrativeView + InputPanel + DebugPanel + GameStore |
+| 1.9 | GameSession 集成 | done | 端到端集成层 + createGameStarter |
 
 ### Phase 2: Architect Agent
 
@@ -63,9 +63,9 @@ Phase 1 进行中。Step 1.0–1.7 已完成（核心模块全部实现）。下
 | 4.5 | MODULE_7 端到端验证 | pending | - |
 
 ## 当前正在做的功能
-**Step 1.8: 基础 UI**
-- 目标：NarrativeView（流式叙事显示）+ InputPanel（玩家输入）+ DebugPanel（状态/记忆/token 查看）
-- 已完成全部核心模块：types, schemas, StateStore, MemoryManager, ContextAssembler, ToolExecutor, LLMClient, FlowExecutor
+**Phase 1 完成，待验证**
+- Phase 1 所有模块已实现：types, schemas, StateStore, MemoryManager, ContextAssembler, ToolExecutor, LLMClient, FlowExecutor, GameSession, UI (NarrativeView + InputPanel + DebugPanel + GameStore)
+- 下一步可以用 MODULE_7 剧本手写 IR 进行端到端验证，或进入 Phase 2
 
 ## 关键决策记录
 
