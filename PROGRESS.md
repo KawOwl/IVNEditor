@@ -1,14 +1,14 @@
 # 项目进度
 
 ## 当前状态
-Phase 1-4 全部完成，Step 4.5 端到端验证通过。所有 25 个 feature 已完成。
+v2.0.md 已重写，忠实还原设计讨论决策。旧代码需要重写以匹配新架构。
 
 ## 当前任务
-**无 — 所有计划 feature 已完成**
-- Phase 1 (1.0-1.9): 引擎核心 ✅
-- Phase 2 (2.1-2.8): Architect Agent ✅
-- Phase 3 (3.1-3.5): Visual Flow Editor ✅
-- Phase 4 (4.1-4.5): 持久化 + 验证 ✅
+**重写核心循环代码**
+- 类型：重构 / 重写
+- 来源：发现实现与设计讨论存在根本性偏离（FlowExecutor 节点驱动 vs LLM Agentic 驱动）
+- 目标：删除旧的 FlowExecutor / GameSession / FlowGraph 运行时逻辑，按重写后的 v2.0.md 重新实现核心循环
+- 进展：v2.0.md 已重写完成并提交
 
 ## 关键决策记录
 
@@ -23,6 +23,8 @@ Phase 1-4 全部完成，Step 4.5 端到端验证通过。所有 25 个 feature 
 | 2026-03-31 | 功能清单迁移至 feature_list.json | JSON 比 Markdown 更不易被意外改写，跨会话更可靠 | PROGRESS.md 只保留当前任务和决策记录 |
 | 2026-03-31 | tool-executor 使用 zod/v4，llm-client 用 zodSchema() 包装 | AI SDK v6 内置转换器不支持 Zod v4 的 _zod 结构，需显式 zodSchema() | 所有工具参数定义保持 zod/v4，仅转换层加包装 |
 | 2026-03-31 | update_state 工具参数改为 JSON string | z.record() 在 Zod v4 → JSON Schema 转换中生成 type:null | LLM 传 JSON 字符串，tool-executor 内部 parse |
+| 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策：Turn 6 被拒绝的 YAML Flow 概念（5 种节点类型、边条件求值）被错误引入 v2.0.md | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
+| 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | GM/PC 是桌游术语，引擎不应绑定特定交互模式。引擎只关心 Generate（LLM 产出内容）和 Receive（接收外部输入） | 记忆条目 role 改为 'generate'/'receive'，编剧在 Prompt 中自由命名角色 |
 
 ## 遗留问题 / 待讨论
 - [ ] 编辑器"/"菜单工具引用的渲染优化（当前为纯文本 {{tool:xxx}}）
