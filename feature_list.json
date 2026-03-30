@@ -219,7 +219,7 @@
     "id": "4.2",
     "title": "剧本版本检测",
     "description": "segment contentHash 比对，检测剧本更新；logic 变化触发重算激活列表",
-    "status": "pending",
+    "status": "done",
     "type": "logic",
     "ref": "v2.0.md#三、Data Layer",
     "verify": "修改 logic segment 后检测到变化并重算激活列表；修改 content segment 后仅更新内容不重算"
