@@ -93,7 +93,7 @@
     "id": "2.1",
     "title": "文档上传 + 分类",
     "description": "上传编剧 Markdown 文档，自动分类为 GM prompt / 世界观 / 角色设定等",
-    "status": "pending",
+    "status": "done",
     "type": "ui",
     "ref": "v2.0.md#二、Authoring Layer",
     "verify": "上传 .md 文件后 UI 显示文档列表及分类标签；对 MODULE_7 测试文档输出正确类别"
