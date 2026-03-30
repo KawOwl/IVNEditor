@@ -192,7 +192,7 @@
     "id": "3.4",
     "title": "Prompt 片段编辑器",
     "description": "查看和编辑 PromptSegment 内容，支持 '/' 菜单引用工具",
-    "status": "pending",
+    "status": "done",
     "type": "ui",
     "ref": "v2.0.md#三、Data Layer",
     "verify": "可编辑 segment 内容；'/' 菜单显示可用工具列表；选择后插入工具引用标记"
