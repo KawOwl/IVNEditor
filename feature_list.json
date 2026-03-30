@@ -129,7 +129,7 @@
     "id": "2.5",
     "title": "注入规则生成 Agent",
     "description": "根据文档中的条件逻辑，自动生成 InjectionRule（条件表达式 + 关联 segment）",
-    "status": "pending",
+    "status": "done",
     "type": "logic",
     "ref": "v2.0.md#三、Data Layer",
     "verify": "tsc 通过；输出 InjectionRule[] 中的条件表达式可被 evaluateCondition 正确执行"
