@@ -1,13 +1,13 @@
 # 项目进度
 
 ## 当前状态
-Phase 1 进行中。Step 1.0 脚手架 + Step 1.1 类型定义已完成。下一步：Step 1.2 StateStore + Changelog。
+Phase 1 进行中。Step 1.0–1.7 已完成（核心模块全部实现）。下一步：Step 1.8 基础 UI。
 
 ## 整体计划
 
 | Phase | 内容 | 状态 | 进度 |
 |-------|------|------|------|
-| Phase 1 | 执行引擎核心 | in-progress | 20% |
+| Phase 1 | 执行引擎核心 | in-progress | 70% |
 | Phase 2 | Architect Agent | pending | 0% |
 | Phase 3 | Visual Flow Editor | pending | 0% |
 | Phase 4 | 完善 | pending | 0% |
@@ -20,12 +20,12 @@ Phase 1 进行中。Step 1.0 脚手架 + Step 1.1 类型定义已完成。下一
 |------|------|------|------|
 | 1.0 | 项目脚手架 | done | React 19 + TS 6 + Vite 8 + Tailwind 4 + shadcn/ui |
 | 1.1 | 类型定义 (core/types.ts) | done | types.ts + schemas.ts (Zod v4) |
-| 1.2 | StateStore + Changelog | pending | Changelog 独立存储，CRUD 查询 |
-| 1.3 | MemoryManager | pending | append / compress / pin / query |
-| 1.4 | ContextAssembler | pending | token 预算 + segment 注入 |
-| 1.5 | ToolExecutor | pending | 11 个工具注册 + 执行 |
-| 1.6 | LLM Client | pending | AI SDK streamText + tools + maxSteps |
-| 1.7 | FlowExecutor | pending | FlowGraph 遍历 + 节点执行 |
+| 1.2 | StateStore + Changelog | done | Changelog 独立存储，CRUD 查询 |
+| 1.3 | MemoryManager | done | append / compress / pin / query |
+| 1.4 | ContextAssembler | done | token 预算 + segment 注入 |
+| 1.5 | ToolExecutor | done | 11 个工具注册 + 执行 |
+| 1.6 | LLM Client | done | AI SDK v6 streamText + tools + stopWhen |
+| 1.7 | FlowExecutor | done | FlowGraph 遍历 + 节点执行 |
 | 1.8 | 基础 UI | pending | NarrativeView + InputPanel + DebugPanel |
 | 1.9 | MODULE_7 端到端跑通 | pending | 手写 IR + 完整循环验证 |
 
@@ -63,9 +63,9 @@ Phase 1 进行中。Step 1.0 脚手架 + Step 1.1 类型定义已完成。下一
 | 4.5 | MODULE_7 端到端验证 | pending | - |
 
 ## 当前正在做的功能
-**Step 1.2: StateStore + Changelog**
-- 目标：实现 ScriptState KV 存储 + Changelog 独立存储
-- 接口：get / set / update(patch) / serialize(toYAML) + changelog append / query(filter)
+**Step 1.8: 基础 UI**
+- 目标：NarrativeView（流式叙事显示）+ InputPanel（玩家输入）+ DebugPanel（状态/记忆/token 查看）
+- 已完成全部核心模块：types, schemas, StateStore, MemoryManager, ContextAssembler, ToolExecutor, LLMClient, FlowExecutor
 
 ## 关键决策记录
 
