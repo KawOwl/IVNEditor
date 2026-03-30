@@ -165,7 +165,7 @@
     "id": "3.1",
     "title": "ReactFlow 集成",
     "description": "安装 ReactFlow，渲染 FlowGraph 为可视化流程图",
-    "status": "pending",
+    "status": "done",
     "type": "ui",
     "ref": "v2.0.md#二、Authoring Layer",
     "verify": "浏览器中显示 FlowGraph 节点和边；节点按类型显示不同样式；可拖拽移动"
