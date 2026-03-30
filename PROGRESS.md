@@ -1,14 +1,14 @@
 # 项目进度
 
 ## 当前状态
-Phase 1 完成（1.0–1.9）。功能清单已迁移至 feature_list.json。下一步：Step 2.1。
+Phase 1-3 全部完成，Phase 4 的 4.1-4.4 完成。剩余 Step 4.5（MODULE_7 端到端验证），等待用户提供真实文档。
 
 ## 当前任务
-**Step 2.1: 文档上传 + 分类**
-- 类型：实现
-- 来源：feature_list.json Step 2.1
-- 目标：上传编剧 Markdown 文档，自动分类为 GM prompt / 世界观 / 角色设定等
-- 进展：尚未开始
+**Step 4.5: MODULE_7 端到端验证**
+- 类型：端到端验证
+- 来源：feature_list.json Step 4.5
+- 目标：用真实 MODULE_7 剧本走通完整流程
+- 进展：已创建简化版 fixture 占位，等待用户复制真实 MODULE_7 文档
 
 ## 关键决策记录
 
@@ -23,5 +23,5 @@ Phase 1 完成（1.0–1.9）。功能清单已迁移至 feature_list.json。下
 | 2026-03-31 | 功能清单迁移至 feature_list.json | JSON 比 Markdown 更不易被意外改写，跨会话更可靠 | PROGRESS.md 只保留当前任务和决策记录 |
 
 ## 遗留问题 / 待讨论
-- [ ] Phase 3 的 Visual Flow Editor 详细交互设计（之前暂缓）
-- [ ] 编辑器"/"菜单工具引用的具体实现方案
+- [ ] Step 4.5 等待真实 MODULE_7 文档进行端到端验证
+- [ ] 编辑器"/"菜单工具引用的渲染优化（当前为纯文本 {{tool:xxx}}）
