@@ -201,7 +201,7 @@
     "id": "3.5",
     "title": "跨章继承确认界面",
     "description": "展示三层 fallback 继承配置，编剧确认哪些字段继承/排除",
-    "status": "pending",
+    "status": "done",
     "type": "ui",
     "ref": "v2.0.md#三、Data Layer",
     "verify": "显示显式声明和自动推断的继承字段列表；可勾选/取消继承；输出 CrossChapterConfig"
