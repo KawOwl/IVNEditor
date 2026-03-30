@@ -120,7 +120,7 @@
     "id": "2.4",
     "title": "Prompt 拆分 Agent",
     "description": "将大文档智能拆分为 PromptSegment[]，标记 content/logic 类型，生成 contentHash",
-    "status": "pending",
+    "status": "done",
     "type": "logic",
     "ref": "v2.0.md#三、Data Layer",
     "verify": "tsc 通过；输出 PromptSegment[] 覆盖原文档全部内容；contentHash 对相同内容稳定；type 标记准确"
