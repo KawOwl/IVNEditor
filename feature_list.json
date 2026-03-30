@@ -156,7 +156,7 @@
     "id": "2.8",
     "title": "Agent 结果预览 + 确认 UI",
     "description": "展示所有 Agent 提取结果（状态变量、流程图、segments、工具、记忆策略），编剧确认或修改后导出 IR",
-    "status": "pending",
+    "status": "done",
     "type": "ui",
     "ref": "v2.0.md#二、Authoring Layer",
     "verify": "浏览器中显示提取结果；各项可编辑修改；确认后输出完整 ScriptManifest JSON"
