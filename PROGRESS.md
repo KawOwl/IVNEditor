@@ -1,14 +1,14 @@
 # 项目进度
 
 ## 当前状态
-Phase 1-3 全部完成，Phase 4 的 4.1-4.4 完成。剩余 Step 4.5（MODULE_7 端到端验证），等待用户提供真实文档。
+Phase 1-4 全部完成。Step 4.5 IR fixture 已基于真实 MODULE_7 文档完成（652行），端到端浏览器验证需配置 LLM API key。
 
 ## 当前任务
 **Step 4.5: MODULE_7 端到端验证**
 - 类型：端到端验证
 - 来源：feature_list.json Step 4.5
 - 目标：用真实 MODULE_7 剧本走通完整流程
-- 进展：已创建简化版 fixture 占位，等待用户复制真实 MODULE_7 文档
+- 进展：IR fixture 已完成（13 状态变量、2 FlowGraph、12 PromptSegment、完整 MemoryConfig + CrossChapterConfig），typecheck 通过。剩余：配置 API key 后做浏览器端到端验证。
 
 ## 关键决策记录
 
