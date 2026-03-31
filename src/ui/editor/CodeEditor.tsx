@@ -14,20 +14,26 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching } from '@codemirror/language';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { autocompletion } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { scriptTagDecorations } from '../../core/editor/decorations';
+import { toolCompletionSource, createStateCompletionSource } from '../../core/editor/completion-sources';
+import type { StateVarInfo } from '../../core/editor/completion-sources';
 
 export interface CodeEditorProps {
   value: string;
   onChange: (value: string) => void;
   className?: string;
+  stateVars?: StateVarInfo[];
 }
 
-export function CodeEditor({ value, onChange, className }: CodeEditorProps) {
+export function CodeEditor({ value, onChange, className, stateVars = [] }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const stateVarsRef = useRef(stateVars);
+  stateVarsRef.current = stateVars;
 
   // Create editor on mount
   useEffect(() => {
@@ -57,6 +63,13 @@ export function CodeEditor({ value, onChange, className }: CodeEditorProps) {
           ...searchKeymap,
         ]),
         updateListener,
+        autocompletion({
+          override: [
+            toolCompletionSource,
+            createStateCompletionSource(() => stateVarsRef.current),
+          ],
+          activateOnTyping: true,
+        }),
         scriptTagDecorations(),
         // Editor styling
         EditorView.theme({

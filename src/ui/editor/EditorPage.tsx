@@ -6,9 +6,10 @@
  *   - 右侧：预览面板（大纲、工具引用、Token 统计）
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useAppStore } from '../../stores/app-store';
 import { CodeEditor } from './CodeEditor';
+import type { StateVarInfo } from '../../core/editor/completion-sources';
 
 const SAMPLE_CONTENT = `# GM Prompt — 序章第一章
 
@@ -44,6 +45,20 @@ export function EditorPage() {
     setContent(newContent);
   }, []);
 
+  // Sample state vars for autocomplete (will be dynamic in future)
+  const stateVars = useMemo<StateVarInfo[]>(() => [
+    { name: 'chapter', type: 'number', description: '当前章节' },
+    { name: 'stage', type: 'number', description: '当前阶段序号' },
+    { name: 'stage_core_experience', type: 'boolean', description: '核心体验是否已建立' },
+    { name: 'turn_count_in_stage', type: 'number', description: '当前阶段轮次计数' },
+    { name: 'deviation_layers', type: 'number', description: '连续偏离层数' },
+    { name: 'relationship_stage', type: 'number', description: '关系阶段' },
+    { name: 'girl_communication_level', type: 'number', description: '女孩交流能力' },
+    { name: 'current_location', type: 'string', description: '当前位置' },
+    { name: 'explored_locations', type: 'array', description: '已探索区域' },
+    { name: 'sleep_count', type: 'number', description: '入睡次数' },
+  ], []);
+
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
       {/* Header */}
@@ -71,6 +86,7 @@ export function EditorPage() {
           <CodeEditor
             value={content}
             onChange={handleContentChange}
+            stateVars={stateVars}
           />
         </div>
 
