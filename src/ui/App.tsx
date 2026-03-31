@@ -13,6 +13,7 @@ import { useEffect } from 'react';
 import { useAppStore } from '../stores/app-store';
 import { HomePage } from './home/HomePage';
 import { PlayPage } from './play/PlayPage';
+import { EditorPage } from './editor/EditorPage';
 import { getCatalog, getManifestById } from '../fixtures/registry';
 
 export function App() {
@@ -49,24 +50,7 @@ export function App() {
     }
 
     case 'editor':
-      return (
-        <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-          <header className="flex-none px-8 py-5 border-b border-zinc-800">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => useAppStore.getState().goHome()}
-                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                ← 返回
-              </button>
-              <h1 className="text-sm font-medium text-zinc-300">编辑器</h1>
-            </div>
-          </header>
-          <div className="flex-1 flex items-center justify-center text-zinc-600">
-            编辑器功能开发中...
-          </div>
-        </div>
-      );
+      return <EditorPage />;
   }
 }
 
