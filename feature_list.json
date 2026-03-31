@@ -255,5 +255,50 @@
     "ref": "v2.0.md#七、实现计划",
     "verify": "MODULE_7 剧本可完整跑通：上传文档 → Agent 提取 → 编辑确认 → 运行游戏 → 存档读档",
     "note": "IR fixture 基于真实文档完成；手写 IR → DeepSeek API → 叙事生成 → 玩家输入 已在浏览器中验证通过"
+  },
+  {
+    "id": "5.0",
+    "title": "UI 路由重构",
+    "description": "首页卡片网格 + 对话页 + 编辑器页占位，Zustand 状态路由",
+    "status": "done",
+    "type": "ui",
+    "ref": "v2.0.md#七、实现计划",
+    "verify": "首页显示卡片，点击进入对话页，返回正常；openingMessages 显示"
+  },
+  {
+    "id": "5.1",
+    "title": "编剧编辑器：CodeMirror 6 基础集成",
+    "description": "安装 CodeMirror 6 依赖，创建 CodeEditor 组件，编辑器模式可切换",
+    "status": "pending",
+    "type": "ui",
+    "ref": "v2.0.md#二、Authoring Layer",
+    "verify": "浏览器中可切换到编辑器模式，输入文字有 Markdown 语法高亮"
+  },
+  {
+    "id": "5.2",
+    "title": "编剧编辑器：自定义语法高亮",
+    "description": "{{tool:xxx}}、{{state:xxx}} 等标记的语法高亮和内联标签渲染",
+    "status": "pending",
+    "type": "ui",
+    "ref": "v2.0.md#二、Authoring Layer",
+    "verify": "输入 {{tool:update_state}} 显示为蓝色标签"
+  },
+  {
+    "id": "5.3",
+    "title": "编剧编辑器：自动补全",
+    "description": "/ 触发工具补全、{{state: 触发状态变量补全",
+    "status": "pending",
+    "type": "ui",
+    "ref": "v2.0.md#二、Authoring Layer",
+    "verify": "输入 / 弹出工具补全菜单，选中后插入 {{tool:xxx}}"
+  },
+  {
+    "id": "5.4",
+    "title": "编剧编辑器：左右分栏 + 预览面板",
+    "description": "左编辑器右预览，实时显示大纲、工具引用、Token 统计",
+    "status": "pending",
+    "type": "ui",
+    "ref": "v2.0.md#二、Authoring Layer",
+    "verify": "左侧编辑文档，右侧实时显示大纲、工具引用列表、token 统计"
   }
 ]
