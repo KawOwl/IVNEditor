@@ -148,16 +148,23 @@ const segments: PromptSegment[] = [
     },
     tokenCount: estimateTokens(gmPromptCh2),
   },
-  // --- PC Prompt（system role，始终注入）---
+  // --- PC Prompt（context role，仅自动模拟模式使用）---
+  // PC Prompt 是给"双 LLM 自动模拟"场景用的（一个 GM，一个 PC），
+  // 在真人玩家互动模式下不应注入——否则 LLM 会同时扮演 GM 和 PC。
+  // 设为 never-inject，保留供未来自动模拟功能使用。
   {
     id: 'doc-pc',
-    label: 'PC Prompt v1.0',
+    label: 'PC Prompt v1.0（自动模拟用）',
     content: pcPrompt,
     contentHash: simpleHash(pcPrompt),
     type: 'logic',
     sourceDoc: 'MODULE7_PC_Prompt_v1_0.md',
-    role: 'system',
+    role: 'context',
     priority: 1,
+    injectionRule: {
+      description: 'PC 模拟器指令（仅自动模拟模式注入，互动模式不注入）',
+      condition: "mode === 'auto-simulation'",
+    },
     tokenCount: estimateTokens(pcPrompt),
   },
   // --- 项目策划案（context role，背景参考）---
@@ -241,7 +248,7 @@ export const module7TestManifest: ScriptManifest = {
   stateSchema,
   memoryConfig,
   enabledTools: ['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood'],
-  initialPrompt: '开始序章第一章。生成苏醒过程（自动事件），到睁眼瞬间停止。你是GM，不是玩家——不要替玩家行动、观察或思考。苏醒描写结束后，立刻调用 signal_input_needed 等待玩家的第一次输入。',
+  initialPrompt: '开始测试',
   chapters: [
     {
       id: 'chapter-1',
