@@ -60,6 +60,10 @@ export interface GameState {
   memoryEntries: Array<{ role: string; content: string; pinned?: boolean }>;
   memorySummaries: string[];
   changelogEntries: Array<{ turn: number; key: string; oldValue: unknown; newValue: unknown; source: string }>;
+  // --- Assembled Context (for editor debug) ---
+  assembledSystemPrompt: string | null;
+  assembledMessages: Array<{ role: string; content: string }>;
+  activeSegmentIds: string[];
 
   // --- Actions ---
   appendEntry: (entry: Omit<NarrativeEntry, 'id' | 'timestamp'>) => void;
@@ -84,6 +88,9 @@ interface DebugUpdate {
   memoryEntries: Array<{ role: string; content: string; pinned?: boolean }>;
   memorySummaries: string[];
   changelogEntries: Array<{ turn: number; key: string; oldValue: unknown; newValue: unknown; source: string }>;
+  assembledSystemPrompt: string | null;
+  assembledMessages: Array<{ role: string; content: string }>;
+  activeSegmentIds: string[];
 }
 
 // ============================================================================
@@ -117,6 +124,9 @@ const initialState = {
   memoryEntries: [],
   memorySummaries: [],
   changelogEntries: [],
+  assembledSystemPrompt: null,
+  assembledMessages: [],
+  activeSegmentIds: [],
 };
 
 export const useGameStore = create<GameState>((set) => ({

@@ -161,9 +161,21 @@ export class GameSession {
         initialPrompt: this.initialPrompt,
       });
 
-      // Update token breakdown in debug
+      // Update assembled context + token breakdown in debug
       store.updateDebug({
         tokenBreakdown: context.tokenBreakdown,
+        assembledSystemPrompt: context.systemPrompt,
+        assembledMessages: context.messages.map((m) => ({ role: m.role, content: m.content })),
+        activeSegmentIds: this.segments
+          .filter((s) => {
+            if (!s.injectionRule) return true;
+            // Simple check — mirror the assembler logic
+            try {
+              const fn = new Function('state', `try { return !!(${s.injectionRule.condition}); } catch { return false; }`);
+              return fn(this.stateStore.getAll());
+            } catch { return false; }
+          })
+          .map((s) => s.id),
       });
 
       // Call LLM (agentic tool loop)

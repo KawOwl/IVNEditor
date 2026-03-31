@@ -9,6 +9,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useAppStore } from '../../stores/app-store';
 import { CodeEditor } from './CodeEditor';
+import { EditorDebugPanel } from './EditorDebugPanel';
 import { PlayPanel } from '../play/PlayPanel';
 import { useGameStore } from '../../stores/game-store';
 import { estimateTokens } from '../../core/memory';
@@ -50,7 +51,7 @@ const SAMPLE_CONTENT = `# GM Prompt — 序章第一章
 // Right panel tab type
 // ============================================================================
 
-type RightTab = 'preview' | 'play';
+type RightTab = 'preview' | 'play' | 'debug';
 
 // ============================================================================
 // EditorPage
@@ -125,28 +126,22 @@ export function EditorPage() {
         <div className="w-96 flex-none flex flex-col min-h-0 bg-zinc-950">
           {/* Tab bar */}
           <div className="flex-none flex border-b border-zinc-800">
-            <button
-              onClick={() => handleTabSwitch('preview')}
-              className={cn(
-                'flex-1 px-3 py-2 text-xs font-medium transition-colors',
-                rightTab === 'preview'
-                  ? 'text-zinc-200 border-b-2 border-zinc-400'
-                  : 'text-zinc-500 hover:text-zinc-400',
-              )}
-            >
-              预览
-            </button>
-            <button
-              onClick={() => handleTabSwitch('play')}
-              className={cn(
-                'flex-1 px-3 py-2 text-xs font-medium transition-colors',
-                rightTab === 'play'
-                  ? 'text-emerald-400 border-b-2 border-emerald-500'
-                  : 'text-zinc-500 hover:text-zinc-400',
-              )}
-            >
-              试玩
-            </button>
+            {([
+              { id: 'preview' as const, label: '预览', activeClass: 'text-zinc-200 border-b-2 border-zinc-400' },
+              { id: 'play' as const, label: '试玩', activeClass: 'text-emerald-400 border-b-2 border-emerald-500' },
+              { id: 'debug' as const, label: '调试', activeClass: 'text-amber-400 border-b-2 border-amber-500' },
+            ]).map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => handleTabSwitch(tab.id)}
+                className={cn(
+                  'flex-1 px-3 py-2 text-xs font-medium transition-colors',
+                  rightTab === tab.id ? tab.activeClass : 'text-zinc-500 hover:text-zinc-400',
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
 
           {/* Tab content */}
@@ -162,6 +157,9 @@ export function EditorPage() {
                 compact
                 showDebug={false}
               />
+            )}
+            {rightTab === 'debug' && (
+              <EditorDebugPanel />
             )}
           </div>
         </div>
