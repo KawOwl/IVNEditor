@@ -15,6 +15,7 @@ export interface NarrativeEntry {
   id: string;
   role: 'generate' | 'receive' | 'system';
   content: string;
+  reasoning?: string;          // LLM reasoning/thinking (hidden in normal mode)
   timestamp: number;
 }
 
@@ -43,6 +44,7 @@ export interface GameState {
   // --- Narrative ---
   entries: NarrativeEntry[];
   streamingText: string;       // current LLM streaming output (partial)
+  streamingReasoning: string;  // current LLM reasoning output (partial)
   isStreaming: boolean;
 
   // --- Input ---
@@ -69,6 +71,7 @@ export interface GameState {
   appendEntry: (entry: Omit<NarrativeEntry, 'id' | 'timestamp'>) => void;
   setStreamingText: (text: string) => void;
   appendStreamingChunk: (chunk: string) => void;
+  appendReasoningChunk: (chunk: string) => void;
   finalizeStreaming: () => void;
   setStatus: (status: GameState['status']) => void;
   setError: (error: string | null) => void;
@@ -111,6 +114,7 @@ const initialState = {
   error: null,
   entries: [],
   streamingText: '',
+  streamingReasoning: '',
   isStreaming: false,
   inputHint: null,
   inputType: 'freetext' as const,
@@ -149,20 +153,28 @@ export const useGameStore = create<GameState>((set) => ({
       isStreaming: true,
     })),
 
+  appendReasoningChunk: (chunk) =>
+    set((state) => ({
+      streamingReasoning: state.streamingReasoning + chunk,
+      isStreaming: true,
+    })),
+
   finalizeStreaming: () =>
     set((state) => {
-      if (!state.streamingText) return { isStreaming: false };
+      if (!state.streamingText && !state.streamingReasoning) return { isStreaming: false };
       return {
         entries: [
           ...state.entries,
-          {
+          ...(state.streamingText || state.streamingReasoning ? [{
             id: generateId(),
             role: 'generate' as const,
             content: state.streamingText,
+            reasoning: state.streamingReasoning || undefined,
             timestamp: Date.now(),
-          },
+          }] : []),
         ],
         streamingText: '',
+        streamingReasoning: '',
         isStreaming: false,
       };
     }),

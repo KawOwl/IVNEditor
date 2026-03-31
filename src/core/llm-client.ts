@@ -31,6 +31,7 @@ export interface GenerateOptions {
   maxSteps?: number;         // max tool call rounds (default: 10)
   maxOutputTokens?: number;   // max output tokens
   onTextChunk?: (text: string) => void;
+  onReasoningChunk?: (text: string) => void;
   onToolCall?: (name: string, args: unknown) => void;
   onToolResult?: (name: string, result: unknown) => void;
 }
@@ -93,6 +94,7 @@ export class LLMClient {
       maxSteps = 10,
       maxOutputTokens,
       onTextChunk,
+      onReasoningChunk,
       onToolCall: onToolCallCb,
       onToolResult: onToolResultCb,
     } = options;
@@ -150,11 +152,18 @@ export class LLMClient {
       },
     });
 
-    // Stream text chunks
+    // Stream via fullStream to separate reasoning from text
     let fullText = '';
-    for await (const chunk of result.textStream) {
-      fullText += chunk;
-      onTextChunk?.(chunk);
+    let fullReasoning = '';
+    for await (const part of result.fullStream) {
+      if (part.type === 'text-delta') {
+        fullText += part.text;
+        onTextChunk?.(part.text);
+      } else if (part.type === 'reasoning-delta') {
+        fullReasoning += part.text;
+        onReasoningChunk?.(part.text);
+      }
+      // tool-call and tool-result are handled by experimental_onToolCall* callbacks
     }
 
     const finalResult = await result;

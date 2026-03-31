@@ -30,6 +30,8 @@ export interface PlayPanelProps {
   compact?: boolean;
   /** 是否显示 debug 面板 */
   showDebug?: boolean;
+  /** 是否显示 LLM 推理过程（debug 模式） */
+  showReasoning?: boolean;
 }
 
 // ============================================================================
@@ -50,7 +52,7 @@ function getLLMConfig() {
 // Component
 // ============================================================================
 
-export function PlayPanel({ manifest, compact = false, showDebug = true }: PlayPanelProps) {
+export function PlayPanel({ manifest, compact = false, showDebug = true, showReasoning = false }: PlayPanelProps) {
   const status = useGameStore((s) => s.status);
   const error = useGameStore((s) => s.error);
   const sessionRef = useRef<GameSession | null>(null);
@@ -174,7 +176,7 @@ export function PlayPanel({ manifest, compact = false, showDebug = true }: PlayP
       )}
 
       {/* Narrative area */}
-      <NarrativeView />
+      <NarrativeView showReasoning={showReasoning} />
 
       {/* Input area */}
       <InputPanel onSubmit={handlePlayerInput} />

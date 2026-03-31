@@ -155,6 +155,7 @@ export function EditorPage() {
                 manifest={playManifest}
                 compact
                 showDebug={false}
+                showReasoning
               />
             )}
             {rightTab === 'debug' && (

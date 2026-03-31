@@ -187,6 +187,9 @@ export class GameSession {
         onTextChunk: (chunk) => {
           store.appendStreamingChunk(chunk);
         },
+        onReasoningChunk: (chunk) => {
+          store.appendReasoningChunk(chunk);
+        },
         onToolCall: (name, args) => {
           store.addToolCall({ name, args, result: undefined });
         },
