@@ -102,6 +102,7 @@ export interface ScriptManifest {
   stateSchema: StateSchema;
   memoryConfig: MemoryConfig;
   enabledTools: string[];         // 启用的可选工具 ID 列表
+  initialPrompt?: string;         // 首轮 user message（等效于 prompt.txt）
 }
 
 export interface ChapterManifest {

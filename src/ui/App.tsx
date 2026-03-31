@@ -33,6 +33,7 @@ export function App() {
       stateSchema: module7TestManifest.stateSchema,
       memoryConfig: module7TestManifest.memoryConfig,
       enabledTools: module7TestManifest.enabledTools,
+      initialPrompt: module7TestManifest.initialPrompt,
       llmConfig: {
         provider: 'openai-compatible',
         baseURL: import.meta.env.VITE_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1',

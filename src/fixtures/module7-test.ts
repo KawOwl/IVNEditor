@@ -19,6 +19,7 @@ import pcPrompt from '../../scenario/MODULE_7/MODULE7_PC_Prompt_v1_0.md?raw';
 import worldTimeline from '../../scenario/MODULE_7/世界观——时间线（大事年表）_草案v3.md?raw';
 import resonancePool from '../../scenario/MODULE_7/共鸣池（地点C）—— 场景完整设定.md?raw';
 import projectPlan from '../../scenario/MODULE_7/MODULE7_项目策划案_v1.1.txt?raw';
+import initialPromptText from '../../scenario/MODULE_7/prompt.txt?raw';
 
 import type {
   ScriptManifest,
@@ -226,6 +227,7 @@ export const module7TestManifest: ScriptManifest = {
   stateSchema,
   memoryConfig,
   enabledTools: ['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood'],
+  initialPrompt: initialPromptText,
   chapters: [
     {
       id: 'chapter-1',

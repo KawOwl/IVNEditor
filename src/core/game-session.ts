@@ -42,6 +42,7 @@ export interface GameSessionConfig {
   enabledTools?: string[];       // optional tool names to enable
   tokenBudget?: number;          // context window budget (default: 120000)
   inheritedSummary?: string;     // from previous chapter
+  initialPrompt?: string;        // 首轮 user message（等效于 prompt.txt）
 }
 
 // ============================================================================
@@ -55,6 +56,7 @@ export class GameSession {
   private segments!: PromptSegment[];
   private enabledTools!: string[];
   private tokenBudget!: number;
+  private initialPrompt?: string;
   // Session lifecycle
   private active = false;
 
@@ -83,6 +85,7 @@ export class GameSession {
       this.segments = config.segments;
       this.enabledTools = config.enabledTools ?? [];
       this.tokenBudget = config.tokenBudget ?? 120000;
+      this.initialPrompt = config.initialPrompt;
 
       if (config.inheritedSummary) {
         this.memory.setInheritedSummary(config.inheritedSummary);
@@ -155,6 +158,7 @@ export class GameSession {
         stateStore: this.stateStore,
         memory: this.memory,
         tokenBudget: this.tokenBudget,
+        initialPrompt: this.initialPrompt,
       });
 
       // Update token breakdown in debug

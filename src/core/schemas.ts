@@ -108,6 +108,7 @@ export const scriptManifestSchema = z.object({
   stateSchema: stateSchemaSchema,
   memoryConfig: memoryConfigSchema,
   enabledTools: z.array(z.string()),
+  initialPrompt: z.string().optional(),
 });
 
 // ============================================================================

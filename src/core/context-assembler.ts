@@ -50,6 +50,7 @@ export interface AssembleOptions {
   memory: MemoryManager;
   tokenBudget: number;
   outputReserve?: number;   // tokens reserved for LLM output (default: 4096)
+  initialPrompt?: string;   // 首轮 user message（等效于 prompt.txt）
 }
 
 // ============================================================================
@@ -193,11 +194,11 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
 
   const systemPrompt = systemPromptSections.join('\n\n');
 
-  // AI SDK requires at least one message — add seed on first turn
+  // AI SDK requires at least one message — use initialPrompt or fallback
   if (historyMessages.length === 0) {
     historyMessages.push({
       role: 'user',
-      content: '[Game session started. Begin narration.]',
+      content: options.initialPrompt ?? '[Game session started. Begin narration.]',
     });
   }
 
