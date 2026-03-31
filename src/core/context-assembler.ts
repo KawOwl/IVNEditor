@@ -69,11 +69,15 @@ function evaluateCondition(
   try {
     // Create a simple evaluator with state vars in scope
     // Supports: ==, !=, >, <, >=, <=, &&, ||, !
+    // Destructure state vars into local scope so conditions like
+    // "chapter === 1" work without needing "state.chapter === 1"
+    const keys = Object.keys(vars);
+    const values = keys.map((k) => vars[k]);
     const fn = new Function(
-      'state',
+      ...keys,
       `try { return !!(${condition}); } catch { return false; }`,
     );
-    return fn(vars) as boolean;
+    return fn(...values) as boolean;
   } catch {
     // If evaluation fails, treat as false (don't inject)
     return false;

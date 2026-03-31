@@ -1,56 +1,114 @@
 /**
- * EditorPage — 编剧编辑器页面
+ * EditorPage — 多文档编剧编辑器
  *
- * 左右分栏布局：
- *   - 左侧：CodeMirror 6 编辑器
- *   - 右侧：tab 切换 —「预览」（大纲/引用/统计）/「试玩」（嵌入 PlayPanel）
+ * 布局：
+ *   - 左侧：文件侧栏（上传、文件列表）+ CodeMirror 编辑器
+ *   - 右侧：tab 切换 —「Prompt 预览」/「试玩」/「调试」
+ *
+ * 每个上传的 .md 文件作为一个 PromptSegment，编剧可配置：
+ *   - role (system / context)
+ *   - priority
+ *   - injectionRule（条件表达式）
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { useAppStore } from '../../stores/app-store';
 import { CodeEditor } from './CodeEditor';
 import { EditorDebugPanel } from './EditorDebugPanel';
+import { PromptPreviewPanel } from './PromptPreviewPanel';
 import { PlayPanel } from '../play/PlayPanel';
 import { estimateTokens } from '../../core/memory';
 import { cn } from '../../lib/utils';
-import type { ScriptManifest, PromptSegment, StateSchema, MemoryConfig, FlowGraph } from '../../core/types';
+import type {
+  ScriptManifest,
+  PromptSegment,
+  StateSchema,
+  MemoryConfig,
+  FlowGraph,
+  SegmentRole,
+} from '../../core/types';
 import type { StateVarInfo } from '../../core/editor/completion-sources';
 
 // ============================================================================
-// Sample content
+// Document model
 // ============================================================================
 
-const SAMPLE_CONTENT = `# GM Prompt — 序章第一章
+interface EditorDocument {
+  id: string;
+  filename: string;
+  content: string;
+  role: SegmentRole;
+  priority: number;
+  injectionCondition: string;   // empty = always inject
+  injectionDescription: string;
+}
 
-## 阶段1：苏醒
+function createDocId(): string {
+  return 'doc-' + Math.random().toString(36).slice(2, 8);
+}
 
-### 场景设定
-玩家在一个昏暗的地下设施中苏醒。空气中弥漫着消毒水的气味。
+function simpleHash(text: string): string {
+  let hash = 0;
+  for (let i = 0; i < Math.min(text.length, 1000); i++) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash).toString(36);
+}
 
-### GM 行为指令
-- 描述环境时使用感官细节（视觉、听觉、触觉、嗅觉）
-- 不要直接告诉玩家该做什么，让玩家自主探索
-- 使用 {{tool:update_state}} 更新玩家位置
-- 使用 {{tool:signal_input_needed}} 在关键决策点等待玩家输入
+function docToSegment(doc: EditorDocument): PromptSegment {
+  return {
+    id: doc.id,
+    label: doc.filename,
+    content: doc.content,
+    contentHash: simpleHash(doc.content),
+    type: 'logic',
+    sourceDoc: doc.filename,
+    role: doc.role,
+    priority: doc.priority,
+    injectionRule: doc.injectionCondition
+      ? { description: doc.injectionDescription || doc.injectionCondition, condition: doc.injectionCondition }
+      : undefined,
+    tokenCount: estimateTokens(doc.content),
+  };
+}
 
-### 状态变量
-当前阶段：{{state:stage}}
-当前位置：{{state:current_location}}
+// ============================================================================
+// Default state schema (MODULE_7 aligned)
+// ============================================================================
 
-## 阶段2：行走
+const defaultStateSchema: StateSchema = {
+  variables: [
+    { name: 'chapter', type: 'number', initial: 1, description: '当前章节' },
+    { name: 'stage', type: 'number', initial: 1, description: '当前阶段序号' },
+    { name: 'route', type: 'string', initial: 'main', description: '路线状态' },
+    { name: 'player_type', type: 'string', initial: 'unknown', description: '分流类型' },
+    { name: 'player_knowledge', type: 'string', initial: 'unknown', description: '知识背景' },
+    { name: 'girl_language_level', type: 'number', initial: 0, description: '女孩语言状态' },
+    { name: 'player_tendency', type: 'string', initial: 'unknown', description: '行为倾向' },
+    { name: 'player_preference', type: 'string', initial: 'unknown', description: '偏好类型' },
+    { name: 'deviation_count', type: 'number', initial: 0, description: '连续偏离次数' },
+    { name: 'current_location', type: 'string', initial: 'wasteland', description: '当前位置' },
+  ],
+};
 
-### 核心体验
-玩家开始探索设施，发现环境中的线索。
+const defaultMemoryConfig: MemoryConfig = {
+  contextBudget: 200000,
+  compressionThreshold: 160000,
+  recencyWindow: 10,
+};
 
-### 收束协议
-当偏离度达到阈值时，使用 {{tool:update_state}} 触发收束。
-`;
+// State vars for autocomplete
+const defaultStateVars: StateVarInfo[] = defaultStateSchema.variables.map((v) => ({
+  name: v.name,
+  type: v.type,
+  description: v.description,
+}));
 
 // ============================================================================
 // Right panel tab type
 // ============================================================================
 
-type RightTab = 'preview' | 'play' | 'debug';
+type RightTab = 'prompt' | 'play' | 'debug';
 
 // ============================================================================
 // EditorPage
@@ -58,42 +116,144 @@ type RightTab = 'preview' | 'play' | 'debug';
 
 export function EditorPage() {
   const goHome = useAppStore((s) => s.goHome);
-  const [content, setContent] = useState(SAMPLE_CONTENT);
-  const [rightTab, setRightTab] = useState<RightTab>('preview');
+
+  // --- Multi-document state ---
+  const [documents, setDocuments] = useState<EditorDocument[]>([]);
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [rightTab, setRightTab] = useState<RightTab>('prompt');
+  const [initialPrompt, setInitialPrompt] = useState('开始测试');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;
+
+  // --- Segments derived from documents ---
+  const segments = useMemo(
+    () => documents.map(docToSegment),
+    [documents],
+  );
+
+  // --- Handlers ---
+  const handleFilesUpload = useCallback(async (files: FileList) => {
+    const newDocs: EditorDocument[] = [];
+    for (const file of Array.from(files)) {
+      if (!file.name.endsWith('.md') && !file.name.endsWith('.txt')) continue;
+      const content = await file.text();
+
+      // Heuristic role assignment
+      const nameLower = file.name.toLowerCase();
+      let role: SegmentRole = 'context';
+      let priority = 5;
+      let injectionCondition = '';
+      let injectionDescription = '';
+
+      if (nameLower.includes('gm_prompt') || nameLower.includes('gm prompt')) {
+        role = 'system';
+        priority = 0;
+        // Try to detect chapter-specific condition
+        if (nameLower.includes('第一章') || nameLower.includes('序章')) {
+          injectionCondition = 'chapter === 1';
+          injectionDescription = '第一章 GM 指令';
+        } else if (nameLower.includes('第二章')) {
+          injectionCondition = 'chapter === 2';
+          injectionDescription = '第二章 GM 指令';
+        }
+      } else if (nameLower.includes('pc_prompt') || nameLower.includes('pc prompt')) {
+        role = 'context';
+        priority = 1;
+        injectionCondition = "mode === 'auto-simulation'";
+        injectionDescription = 'PC 模拟器指令（仅自动模拟模式）';
+      }
+
+      newDocs.push({
+        id: createDocId(),
+        filename: file.name,
+        content,
+        role,
+        priority,
+        injectionCondition,
+        injectionDescription,
+      });
+    }
+
+    if (newDocs.length > 0) {
+      setDocuments((prev) => [...prev, ...newDocs]);
+      // Select first new doc if nothing selected
+      setSelectedDocId((prev) => prev ?? newDocs[0]!.id);
+    }
+  }, []);
+
+  const handleUploadClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      handleFilesUpload(e.target.files);
+      e.target.value = ''; // reset for re-upload of same file
+    }
+  }, [handleFilesUpload]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length > 0) {
+      handleFilesUpload(e.dataTransfer.files);
+    }
+  }, [handleFilesUpload]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+  }, []);
 
   const handleContentChange = useCallback((newContent: string) => {
-    setContent(newContent);
+    if (!selectedDocId) return;
+    setDocuments((prev) =>
+      prev.map((d) => d.id === selectedDocId ? { ...d, content: newContent } : d),
+    );
+  }, [selectedDocId]);
+
+  const handleDeleteDoc = useCallback((id: string) => {
+    setDocuments((prev) => prev.filter((d) => d.id !== id));
+    setSelectedDocId((prev) => {
+      if (prev !== id) return prev;
+      const remaining = documents.filter((d) => d.id !== id);
+      return remaining.length > 0 ? remaining[0]!.id : null;
+    });
+  }, [documents]);
+
+  const handleDocMetaChange = useCallback((
+    id: string,
+    field: 'role' | 'priority' | 'injectionCondition' | 'injectionDescription',
+    value: string | number,
+  ) => {
+    setDocuments((prev) =>
+      prev.map((d) => d.id === id ? { ...d, [field]: value } : d),
+    );
   }, []);
 
-  // State vars for autocomplete
-  const stateVars = useMemo<StateVarInfo[]>(() => [
-    { name: 'chapter', type: 'number', description: '当前章节' },
-    { name: 'stage', type: 'number', description: '当前阶段序号' },
-    { name: 'route', type: 'string', description: '路线状态' },
-    { name: 'player_type', type: 'string', description: '分流类型' },
-    { name: 'player_knowledge', type: 'string', description: '知识背景' },
-    { name: 'girl_language_level', type: 'number', description: '女孩语言状态' },
-    { name: 'player_tendency', type: 'string', description: '行为倾向' },
-    { name: 'player_preference', type: 'string', description: '偏好类型' },
-    { name: 'deviation_count', type: 'number', description: '连续偏离次数' },
-    { name: 'fall_choice', type: 'string', description: '坠落选择' },
-    { name: 'companion_confirmed', type: 'string', description: '同行意图' },
-    { name: 'current_location', type: 'string', description: '当前位置' },
-  ], []);
-
-  // Build a temporary manifest from editor content for the play panel
-  const playManifest = useMemo<ScriptManifest>(() => buildManifestFromContent(content), [content]);
-
-  const handleTabSwitch = useCallback((tab: RightTab) => {
-    // Don't auto-reset — debug tab needs play session data.
-    // User can manually reset via PlayPanel's 重置 button.
-    setRightTab(tab);
-  }, []);
+  // --- Build manifest for play panel ---
+  const playManifest = useMemo<ScriptManifest>(() => {
+    const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
+    return {
+      id: 'editor-draft',
+      version: '0.0.0',
+      label: '编辑器试玩',
+      stateSchema: defaultStateSchema,
+      memoryConfig: defaultMemoryConfig,
+      enabledTools: ['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood'],
+      initialPrompt: initialPrompt || undefined,
+      chapters: [{
+        id: 'draft-ch1',
+        label: '草稿章节',
+        flowGraph,
+        segments,
+      }],
+    };
+  }, [segments, initialPrompt]);
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
       {/* Header */}
-      <header className="flex-none px-6 py-3 border-b border-zinc-800 flex items-center justify-between">
+      <header className="flex-none px-4 py-2.5 border-b border-zinc-800 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
             onClick={goHome}
@@ -103,36 +263,119 @@ export function EditorPage() {
           </button>
           <h1 className="text-sm font-medium text-zinc-300">编剧编辑器</h1>
         </div>
-        <div className="flex items-center gap-2 text-xs text-zinc-500">
-          <span>{content.length} 字符</span>
+        <div className="flex items-center gap-3 text-xs text-zinc-500">
+          <span>{documents.length} 个文件</span>
           <span className="text-zinc-700">|</span>
-          <span>~{Math.round(content.length / 4).toLocaleString()} tokens</span>
+          <span>~{segments.reduce((sum, s) => sum + s.tokenCount, 0).toLocaleString()} tokens</span>
         </div>
       </header>
 
-      {/* Main content — left/right split */}
-      <div className="flex-1 flex min-h-0">
-        {/* Left: Editor */}
-        <div className="flex-1 min-w-0 border-r border-zinc-800">
-          <CodeEditor
-            value={content}
-            onChange={handleContentChange}
-            stateVars={stateVars}
-          />
+      {/* Main content */}
+      <div
+        className="flex-1 flex min-h-0"
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+      >
+        {/* Left: File sidebar + Editor */}
+        <div className="flex-1 flex min-w-0">
+          {/* File sidebar */}
+          <div className="w-56 flex-none border-r border-zinc-800 flex flex-col">
+            {/* Upload button */}
+            <div className="flex-none px-3 py-2 border-b border-zinc-800">
+              <button
+                onClick={handleUploadClick}
+                className="w-full text-xs px-2 py-1.5 rounded border border-dashed border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-300 transition-colors"
+              >
+                + 上传 .md 文件
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".md,.txt"
+                multiple
+                className="hidden"
+                onChange={handleFileInputChange}
+              />
+            </div>
+
+            {/* File list */}
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              {documents.length === 0 ? (
+                <div className="px-3 py-8 text-center text-xs text-zinc-600">
+                  拖拽 .md 文件到此处
+                  <br />
+                  或点击上方按钮上传
+                </div>
+              ) : (
+                <div className="py-1">
+                  {documents.map((doc) => (
+                    <FileListItem
+                      key={doc.id}
+                      doc={doc}
+                      selected={doc.id === selectedDocId}
+                      onSelect={() => setSelectedDocId(doc.id)}
+                      onDelete={() => handleDeleteDoc(doc.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Initial prompt config */}
+            <div className="flex-none px-3 py-2 border-t border-zinc-800 space-y-1">
+              <label className="text-[10px] text-zinc-500 uppercase tracking-wider">
+                Initial Prompt
+              </label>
+              <input
+                type="text"
+                value={initialPrompt}
+                onChange={(e) => setInitialPrompt(e.target.value)}
+                placeholder="首轮 user message"
+                className="w-full text-xs px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600"
+              />
+            </div>
+          </div>
+
+          {/* Editor area */}
+          <div className="flex-1 min-w-0 flex flex-col">
+            {selectedDoc ? (
+              <>
+                {/* Doc meta bar */}
+                <DocMetaBar
+                  doc={selectedDoc}
+                  onMetaChange={(field, value) => handleDocMetaChange(selectedDoc.id, field, value)}
+                />
+                {/* Code editor */}
+                <div className="flex-1 min-h-0">
+                  <CodeEditor
+                    value={selectedDoc.content}
+                    onChange={handleContentChange}
+                    stateVars={defaultStateVars}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-zinc-600 text-sm">
+                {documents.length === 0
+                  ? '上传 Markdown 文件开始编辑'
+                  : '选择左侧文件开始编辑'}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right: Tabbed panel */}
-        <div className="w-96 flex-none flex flex-col min-h-0 bg-zinc-950">
+        <div className="w-[420px] flex-none flex flex-col min-h-0 bg-zinc-950 border-l border-zinc-800">
           {/* Tab bar */}
           <div className="flex-none flex border-b border-zinc-800">
             {([
-              { id: 'preview' as const, label: '预览', activeClass: 'text-zinc-200 border-b-2 border-zinc-400' },
+              { id: 'prompt' as const, label: 'Prompt 预览', activeClass: 'text-zinc-200 border-b-2 border-zinc-400' },
               { id: 'play' as const, label: '试玩', activeClass: 'text-emerald-400 border-b-2 border-emerald-500' },
               { id: 'debug' as const, label: '调试', activeClass: 'text-amber-400 border-b-2 border-amber-500' },
             ]).map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => handleTabSwitch(tab.id)}
+                onClick={() => setRightTab(tab.id)}
                 className={cn(
                   'flex-1 px-3 py-2 text-xs font-medium transition-colors',
                   rightTab === tab.id ? tab.activeClass : 'text-zinc-500 hover:text-zinc-400',
@@ -145,10 +388,12 @@ export function EditorPage() {
 
           {/* Tab content */}
           <div className="flex-1 min-h-0 overflow-hidden">
-            {rightTab === 'preview' && (
-              <div className="h-full overflow-y-auto">
-                <PreviewPanel content={content} />
-              </div>
+            {rightTab === 'prompt' && (
+              <PromptPreviewPanel
+                segments={segments}
+                stateSchema={defaultStateSchema}
+                initialPrompt={initialPrompt}
+              />
             )}
             {rightTab === 'play' && (
               <PlayPanel
@@ -169,219 +414,132 @@ export function EditorPage() {
 }
 
 // ============================================================================
-// Build manifest from raw editor content
+// FileListItem — 文件列表项
 // ============================================================================
 
-function simpleHash(text: string): string {
-  let hash = 0;
-  for (let i = 0; i < Math.min(text.length, 1000); i++) {
-    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash).toString(36);
-}
-
-function buildManifestFromContent(content: string): ScriptManifest {
-  // Treat the entire editor content as a single system segment
-  const segment: PromptSegment = {
-    id: 'editor-draft',
-    label: '编辑器草稿',
-    content,
-    contentHash: simpleHash(content),
-    type: 'logic',
-    sourceDoc: 'editor',
-    role: 'system',
-    priority: 0,
-    tokenCount: estimateTokens(content),
-  };
-
-  const stateSchema: StateSchema = {
-    variables: [
-      { name: 'chapter', type: 'number', initial: 1, description: '当前章节' },
-      { name: 'stage', type: 'number', initial: 1, description: '当前阶段序号' },
-      { name: 'current_location', type: 'string', initial: 'unknown', description: '当前位置' },
-    ],
-  };
-
-  const memoryConfig: MemoryConfig = {
-    contextBudget: 200000,
-    compressionThreshold: 160000,
-    recencyWindow: 10,
-  };
-
-  const flowGraph: FlowGraph = {
-    id: 'draft-flow',
-    label: '草稿',
-    nodes: [],
-    edges: [],
-  };
-
-  return {
-    id: 'editor-draft',
-    version: '0.0.0',
-    label: '编辑器试玩',
-    stateSchema,
-    memoryConfig,
-    enabledTools: ['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood'],
-    chapters: [
-      {
-        id: 'draft-ch1',
-        label: '草稿章节',
-        flowGraph,
-        segments: [segment],
-      },
-    ],
-  };
-}
-
-// ============================================================================
-// Preview Panel — 右侧预览
-// ============================================================================
-
-function PreviewPanel({ content }: { content: string }) {
-  const outline = extractOutline(content);
-  const toolRefs = extractToolRefs(content);
-  const stateRefs = extractStateRefs(content);
+function FileListItem({
+  doc,
+  selected,
+  onSelect,
+  onDelete,
+}: {
+  doc: EditorDocument;
+  selected: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+}) {
+  const tokenCount = estimateTokens(doc.content);
 
   return (
-    <div className="p-4 space-y-6">
-      {/* Outline */}
-      <section>
-        <h3 className="text-xs font-medium text-zinc-400 mb-2 uppercase tracking-wider">
-          文档大纲
-        </h3>
-        {outline.length === 0 ? (
-          <p className="text-xs text-zinc-600">无标题</p>
-        ) : (
-          <ul className="space-y-1">
-            {outline.map((item, i) => (
-              <li
-                key={i}
-                className="text-xs text-zinc-400 hover:text-zinc-200 cursor-default"
-                style={{ paddingLeft: `${(item.level - 1) * 12}px` }}
-              >
-                <span className="text-zinc-600 mr-1">{'#'.repeat(item.level)}</span>
-                {item.text}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+    <div
+      onClick={onSelect}
+      className={cn(
+        'group px-3 py-1.5 cursor-pointer flex items-start gap-2 transition-colors',
+        selected ? 'bg-zinc-800/60' : 'hover:bg-zinc-900/50',
+      )}
+    >
+      {/* Role indicator dot */}
+      <span className={cn(
+        'flex-none mt-1.5 w-2 h-2 rounded-full',
+        doc.role === 'system' ? 'bg-purple-500' : 'bg-cyan-500',
+      )} />
 
-      {/* Tool References */}
-      <section>
-        <h3 className="text-xs font-medium text-zinc-400 mb-2 uppercase tracking-wider">
-          工具引用
-        </h3>
-        {toolRefs.length === 0 ? (
-          <p className="text-xs text-zinc-600">无工具引用</p>
-        ) : (
-          <ul className="space-y-1">
-            {toolRefs.map((ref) => (
-              <li key={ref.name} className="flex items-center justify-between text-xs">
-                <span className="text-blue-400 font-mono">{ref.name}</span>
-                <span className="text-zinc-600">{ref.count}x</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* State References */}
-      <section>
-        <h3 className="text-xs font-medium text-zinc-400 mb-2 uppercase tracking-wider">
-          状态变量引用
-        </h3>
-        {stateRefs.length === 0 ? (
-          <p className="text-xs text-zinc-600">无状态变量引用</p>
-        ) : (
-          <ul className="space-y-1">
-            {stateRefs.map((ref) => (
-              <li key={ref.name} className="flex items-center justify-between text-xs">
-                <span className="text-green-400 font-mono">{ref.name}</span>
-                <span className="text-zinc-600">{ref.count}x</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* Token Stats */}
-      <section>
-        <h3 className="text-xs font-medium text-zinc-400 mb-2 uppercase tracking-wider">
-          Token 统计
-        </h3>
-        <div className="text-xs text-zinc-400 space-y-1">
-          <div className="flex justify-between">
-            <span>字符数</span>
-            <span className="text-zinc-300">{content.length.toLocaleString()}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>估算 Tokens</span>
-            <span className="text-zinc-300">~{Math.round(content.length / 4).toLocaleString()}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>行数</span>
-            <span className="text-zinc-300">{content.split('\n').length}</span>
-          </div>
+      <div className="flex-1 min-w-0">
+        <div className={cn(
+          'text-xs truncate',
+          selected ? 'text-zinc-200' : 'text-zinc-400',
+        )}>
+          {doc.filename}
         </div>
-      </section>
+        <div className="flex items-center gap-1.5 text-[10px] text-zinc-600">
+          <span>{doc.role}</span>
+          <span>P{doc.priority}</span>
+          <span>~{tokenCount.toLocaleString()} tok</span>
+        </div>
+        {doc.injectionCondition && (
+          <div className="text-[10px] text-amber-700 truncate">
+            if: {doc.injectionCondition}
+          </div>
+        )}
+      </div>
+
+      {/* Delete button */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+        className="flex-none mt-0.5 text-zinc-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all text-xs"
+        title="删除"
+      >
+        ×
+      </button>
     </div>
   );
 }
 
 // ============================================================================
-// Parsing helpers
+// DocMetaBar — 文档元信息编辑栏
 // ============================================================================
 
-interface OutlineItem {
-  level: number;
-  text: string;
-  line: number;
-}
+function DocMetaBar({
+  doc,
+  onMetaChange,
+}: {
+  doc: EditorDocument;
+  onMetaChange: (
+    field: 'role' | 'priority' | 'injectionCondition' | 'injectionDescription',
+    value: string | number,
+  ) => void;
+}) {
+  const tokenCount = estimateTokens(doc.content);
 
-function extractOutline(content: string): OutlineItem[] {
-  const items: OutlineItem[] = [];
-  const lines = content.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const match = lines[i]!.match(/^(#{1,6})\s+(.+)/);
-    if (match) {
-      items.push({
-        level: match[1]!.length,
-        text: match[2]!.trim(),
-        line: i + 1,
-      });
-    }
-  }
-  return items;
-}
+  return (
+    <div className="flex-none px-3 py-2 border-b border-zinc-800 flex items-center gap-3 text-xs flex-wrap">
+      {/* Filename */}
+      <span className="text-zinc-300 font-medium">{doc.filename}</span>
 
-interface RefCount {
-  name: string;
-  count: number;
-}
+      <span className="text-zinc-700">|</span>
 
-function extractToolRefs(content: string): RefCount[] {
-  const counts = new Map<string, number>();
-  const re = /\{\{tool:(\w+)\}\}/g;
-  let m;
-  while ((m = re.exec(content)) !== null) {
-    const name = m[1]!;
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-  }
-  return Array.from(counts.entries())
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
-}
+      {/* Role selector */}
+      <label className="flex items-center gap-1 text-zinc-500">
+        Role:
+        <select
+          value={doc.role}
+          onChange={(e) => onMetaChange('role', e.target.value)}
+          className="bg-zinc-900 border border-zinc-700 rounded px-1 py-0.5 text-zinc-300 text-xs focus:outline-none"
+        >
+          <option value="system">system</option>
+          <option value="context">context</option>
+        </select>
+      </label>
 
-function extractStateRefs(content: string): RefCount[] {
-  const counts = new Map<string, number>();
-  const re = /\{\{state:(\w+)\}\}/g;
-  let m;
-  while ((m = re.exec(content)) !== null) {
-    const name = m[1]!;
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-  }
-  return Array.from(counts.entries())
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
+      {/* Priority */}
+      <label className="flex items-center gap-1 text-zinc-500">
+        Priority:
+        <input
+          type="number"
+          value={doc.priority}
+          onChange={(e) => onMetaChange('priority', parseInt(e.target.value) || 0)}
+          className="w-12 bg-zinc-900 border border-zinc-700 rounded px-1 py-0.5 text-zinc-300 text-xs text-center focus:outline-none"
+          min={0}
+          max={99}
+        />
+      </label>
+
+      {/* Injection condition */}
+      <label className="flex items-center gap-1 text-zinc-500 flex-1 min-w-0">
+        Condition:
+        <input
+          type="text"
+          value={doc.injectionCondition}
+          onChange={(e) => onMetaChange('injectionCondition', e.target.value)}
+          placeholder="空 = 始终注入"
+          className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-zinc-300 text-xs font-mono placeholder:text-zinc-600 focus:outline-none"
+        />
+      </label>
+
+      <span className="text-zinc-600">~{tokenCount.toLocaleString()} tok</span>
+    </div>
+  );
 }

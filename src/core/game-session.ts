@@ -240,8 +240,11 @@ export class GameSession {
             if (!s.injectionRule) return true;
             // Simple check — mirror the assembler logic
             try {
-              const fn = new Function('state', `try { return !!(${s.injectionRule.condition}); } catch { return false; }`);
-              return fn(this.stateStore.getAll());
+              const vars = this.stateStore.getAll();
+              const keys = Object.keys(vars);
+              const values = keys.map((k) => vars[k]);
+              const fn = new Function(...keys, `try { return !!(${s.injectionRule.condition}); } catch { return false; }`);
+              return fn(...values);
             } catch { return false; }
           })
           .map((s) => s.id),
