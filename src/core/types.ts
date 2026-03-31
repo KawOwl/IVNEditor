@@ -6,7 +6,7 @@
  */
 
 // ============================================================================
-// Flow Graph — 场景流程图
+// Flow Graph — 场景流程图（可视化参考，不做运行时路由）
 // ============================================================================
 
 export interface FlowGraph {
@@ -16,58 +16,16 @@ export interface FlowGraph {
   edges: FlowEdge[];
 }
 
-export type NodeType = 'scene' | 'input' | 'compress' | 'state-update' | 'checkpoint';
-
 export interface FlowNode {
   id: string;
-  type: NodeType;
   label: string;
-  config: NodeConfig;
-}
-
-export type NodeConfig =
-  | SceneNodeConfig
-  | InputNodeConfig
-  | CompressNodeConfig
-  | StateUpdateNodeConfig
-  | CheckpointNodeConfig;
-
-export interface SceneNodeConfig {
-  type: 'scene';
+  description?: string;
   promptSegments: string[];   // 引用的 PromptSegment ID 列表
-  auto: boolean;              // true = GM 自动生成，不等玩家输入
-  model?: string;
-  maxTokens?: number;
-}
-
-export interface InputNodeConfig {
-  type: 'input';
-  inputType: 'freetext' | 'choice';
-  choices?: string[] | { fromState: string };
-  saveToState?: string;
-  promptHint?: string;        // UI 显示的引导文字
-}
-
-export interface CompressNodeConfig {
-  type: 'compress';
-  hintPrompt?: string;        // 自定义压缩提示
-  pinItems?: string[];        // 压缩时必须保留的信息
-}
-
-export interface StateUpdateNodeConfig {
-  type: 'state-update';
-  updates: Record<string, unknown>;
-}
-
-export interface CheckpointNodeConfig {
-  type: 'checkpoint';
-  label?: string;
 }
 
 export interface FlowEdge {
   from: string;
   to: string;
-  condition?: string;         // 条件表达式（无条件 = 默认路径）
   label?: string;
 }
 
@@ -102,7 +60,6 @@ export interface InjectionRule {
 // ============================================================================
 
 export type StateVariableType = 'number' | 'string' | 'boolean' | 'array' | 'object';
-export type StateUpdater = 'llm' | 'flow' | 'player';
 
 export interface StateSchema {
   variables: StateVariable[];
@@ -113,7 +70,6 @@ export interface StateVariable {
   type: StateVariableType;
   initial: unknown;
   description: string;
-  updatedBy: StateUpdater;
   range?: { min?: number; max?: number };
 }
 
@@ -163,11 +119,10 @@ export interface ChapterManifest {
 // Layer 1: Progress — 流程进度
 export interface ProgressState {
   currentChapterId: string;
-  currentNodeId: string;
-  nodePhase: 'pending' | 'generating' | 'waiting-input' | 'completed';
-  loopCounters: Record<string, number>;
-  visitedNodes: string[];
   totalTurns: number;
+  inputNeeded: boolean;
+  activeSegmentIds: string[];
+  scriptVersion: string;
 }
 
 // Layer 2: ScriptState — 编剧定义的游戏变量
@@ -179,7 +134,7 @@ export interface ScriptState {
 export interface MemoryEntry {
   id: string;
   turn: number;
-  role: 'gm' | 'pc' | 'system';
+  role: 'generate' | 'receive' | 'system';
   content: string;
   tokenCount: number;
   timestamp: number;
@@ -227,7 +182,7 @@ export interface ChangelogEntry {
   key: string;
   previousValue: unknown;
   newValue: unknown;
-  source: 'llm' | 'flow' | 'player' | 'system';
+  source: 'llm' | 'system';
 }
 
 export interface ChangelogFilter {

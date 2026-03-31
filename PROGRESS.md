@@ -1,14 +1,26 @@
 # 项目进度
 
 ## 当前状态
-v2.0.md 已重写，忠实还原设计讨论决策。旧代码需要重写以匹配新架构。
+v2.0.md 已重写并验证。正在执行 10 步代码修正计划，对齐代码与设计决策。
 
 ## 当前任务
-**重写核心循环代码**
+**代码修正：对齐 v2.0.md 设计决策（10 步计划）**
 - 类型：重构 / 重写
-- 来源：发现实现与设计讨论存在根本性偏离（FlowExecutor 节点驱动 vs LLM Agentic 驱动）
-- 目标：删除旧的 FlowExecutor / GameSession / FlowGraph 运行时逻辑，按重写后的 v2.0.md 重新实现核心循环
-- 进展：v2.0.md 已重写完成并提交
+- 来源：v2.0.md 重写后发现代码仍基于旧设计
+- 目标：删除 FlowExecutor 节点驱动设计，实现 Generate+Receive 核心循环，中性化术语
+- 计划文件：`.claude/plans/bubbly-toasting-candle.md`
+- 进展：
+  - [x] Step 0: 更新 feature_list.json 和 PROGRESS.md 追踪
+  - [ ] Step 1: types.ts 重写（删除 NodeType/NodeConfig/updatedBy，更新 ProgressState/role/source）
+  - [ ] Step 2: 删除 flow-executor.ts
+  - [ ] Step 3: tool-executor.ts 移除 advance_flow
+  - [ ] Step 4: game-session.ts 重写为 Generate+Receive 核心循环
+  - [ ] Step 5: context-assembler.ts role 映射更新
+  - [ ] Step 6: state-store.ts 检查
+  - [ ] Step 7: game-store.ts + UI 组件更新
+  - [ ] Step 8: Architect + Editor + Fixture 检查更新
+  - [ ] Step 9: feature_list.json 状态更新
+  - [ ] Step 10: 全量验证（tsc + pnpm dev）
 
 ## 关键决策记录
 

@@ -6,62 +6,19 @@
 import { z } from 'zod/v4';
 
 // ============================================================================
-// Flow Graph
+// Flow Graph（可视化参考，不做运行时路由）
 // ============================================================================
-
-export const nodeTypeSchema = z.enum(['scene', 'input', 'compress', 'state-update', 'checkpoint']);
-
-export const sceneNodeConfigSchema = z.object({
-  type: z.literal('scene'),
-  promptSegments: z.array(z.string()),
-  auto: z.boolean(),
-  model: z.string().optional(),
-  maxTokens: z.number().int().positive().optional(),
-});
-
-export const inputNodeConfigSchema = z.object({
-  type: z.literal('input'),
-  inputType: z.enum(['freetext', 'choice']),
-  choices: z.union([z.array(z.string()), z.object({ fromState: z.string() })]).optional(),
-  saveToState: z.string().optional(),
-  promptHint: z.string().optional(),
-});
-
-export const compressNodeConfigSchema = z.object({
-  type: z.literal('compress'),
-  hintPrompt: z.string().optional(),
-  pinItems: z.array(z.string()).optional(),
-});
-
-export const stateUpdateNodeConfigSchema = z.object({
-  type: z.literal('state-update'),
-  updates: z.record(z.string(), z.unknown()),
-});
-
-export const checkpointNodeConfigSchema = z.object({
-  type: z.literal('checkpoint'),
-  label: z.string().optional(),
-});
-
-export const nodeConfigSchema = z.discriminatedUnion('type', [
-  sceneNodeConfigSchema,
-  inputNodeConfigSchema,
-  compressNodeConfigSchema,
-  stateUpdateNodeConfigSchema,
-  checkpointNodeConfigSchema,
-]);
 
 export const flowNodeSchema = z.object({
   id: z.string(),
-  type: nodeTypeSchema,
   label: z.string(),
-  config: nodeConfigSchema,
+  description: z.string().optional(),
+  promptSegments: z.array(z.string()),
 });
 
 export const flowEdgeSchema = z.object({
   from: z.string(),
   to: z.string(),
-  condition: z.string().optional(),
   label: z.string().optional(),
 });
 
@@ -104,7 +61,6 @@ export const stateVariableSchema = z.object({
   type: z.enum(['number', 'string', 'boolean', 'array', 'object']),
   initial: z.unknown(),
   description: z.string(),
-  updatedBy: z.enum(['llm', 'flow', 'player']),
   range: z.object({
     min: z.number().optional(),
     max: z.number().optional(),
@@ -161,7 +117,7 @@ export const scriptManifestSchema = z.object({
 export const memoryEntrySchema = z.object({
   id: z.string(),
   turn: z.number().int().nonnegative(),
-  role: z.enum(['gm', 'pc', 'system']),
+  role: z.enum(['generate', 'receive', 'system']),
   content: z.string(),
   tokenCount: z.number().int().nonnegative(),
   timestamp: z.number(),
@@ -176,7 +132,7 @@ export const changelogEntrySchema = z.object({
   key: z.string(),
   previousValue: z.unknown(),
   newValue: z.unknown(),
-  source: z.enum(['llm', 'flow', 'player', 'system']),
+  source: z.enum(['llm', 'system']),
 });
 
 export const saveDataSchema = z.object({
@@ -186,11 +142,10 @@ export const saveDataSchema = z.object({
   timestamp: z.number(),
   progress: z.object({
     currentChapterId: z.string(),
-    currentNodeId: z.string(),
-    nodePhase: z.enum(['pending', 'generating', 'waiting-input', 'completed']),
-    loopCounters: z.record(z.string(), z.number()),
-    visitedNodes: z.array(z.string()),
     totalTurns: z.number().int().nonnegative(),
+    inputNeeded: z.boolean(),
+    activeSegmentIds: z.array(z.string()),
+    scriptVersion: z.string(),
   }),
   scriptState: z.object({
     vars: z.record(z.string(), z.unknown()),
