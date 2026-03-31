@@ -1,19 +1,12 @@
 /**
  * NodeEditPanel — 节点编辑侧边面板
  *
- * Step 3.2: 点击节点后弹出，可修改节点配置。
- * 根据节点类型显示不同的编辑表单。
+ * 点击节点后弹出，可修改节点的 label、description 和关联的 promptSegments。
+ * FlowNode 已简化：仅 id/label/description/promptSegments。
  */
 
 import { useState, useCallback } from 'react';
-import type {
-  FlowNode,
-  SceneNodeConfig,
-  InputNodeConfig,
-  CompressNodeConfig,
-  StateUpdateNodeConfig,
-} from '../../core/types';
-import { cn } from '../../lib/utils';
+import type { FlowNode } from '../../core/types';
 
 // ============================================================================
 // Props
@@ -31,11 +24,15 @@ export interface NodeEditPanelProps {
 
 export function NodeEditPanel({ node, onSave, onClose }: NodeEditPanelProps) {
   const [label, setLabel] = useState(node.label);
-  const [config, setConfig] = useState(node.config);
+  const [description, setDescription] = useState(node.description ?? '');
 
   const handleSave = useCallback(() => {
-    onSave({ ...node, label, config });
-  }, [node, label, config, onSave]);
+    onSave({
+      ...node,
+      label,
+      description: description || undefined,
+    });
+  }, [node, label, description, onSave]);
 
   return (
     <div className="w-80 bg-zinc-900 border-l border-zinc-800 flex flex-col h-full">
@@ -47,6 +44,11 @@ export function NodeEditPanel({ node, onSave, onClose }: NodeEditPanelProps) {
 
       {/* Form */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+        {/* ID (read-only) */}
+        <Field label="节点 ID">
+          <div className="text-xs text-zinc-500 font-mono">{node.id}</div>
+        </Field>
+
         {/* Label */}
         <Field label="节点名称">
           <input
@@ -56,26 +58,25 @@ export function NodeEditPanel({ node, onSave, onClose }: NodeEditPanelProps) {
           />
         </Field>
 
-        {/* Type-specific config */}
-        <div className="text-xs text-zinc-500 uppercase tracking-wider">
-          类型: {config.type}
-        </div>
+        {/* Description */}
+        <Field label="描述">
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="节点的简短描述"
+            rows={3}
+            className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-200 resize-none"
+          />
+        </Field>
 
-        {config.type === 'scene' && (
-          <SceneConfig config={config} onChange={(c) => setConfig(c)} />
-        )}
-        {config.type === 'input' && (
-          <InputConfig config={config} onChange={(c) => setConfig(c)} />
-        )}
-        {config.type === 'compress' && (
-          <CompressConfig config={config} onChange={(c) => setConfig(c)} />
-        )}
-        {config.type === 'state-update' && (
-          <StateUpdateConfig config={config} onChange={(c) => setConfig(c)} />
-        )}
-        {config.type === 'checkpoint' && (
-          <div className="text-sm text-zinc-500">检查点节点，无需额外配置。</div>
-        )}
+        {/* Prompt Segments */}
+        <Field label="关联 Prompt Segments">
+          <div className="text-xs text-zinc-500">
+            {node.promptSegments.length > 0
+              ? node.promptSegments.join(', ')
+              : '无（将在 Prompt 编辑器中关联）'}
+          </div>
+        </Field>
       </div>
 
       {/* Actions */}
@@ -98,124 +99,6 @@ export function NodeEditPanel({ node, onSave, onClose }: NodeEditPanelProps) {
 }
 
 // ============================================================================
-// Type-specific Configs
-// ============================================================================
-
-function SceneConfig({ config, onChange }: {
-  config: SceneNodeConfig;
-  onChange: (c: SceneNodeConfig) => void;
-}) {
-  return (
-    <>
-      <Field label="自动生成（不等玩家输入）">
-        <Toggle checked={config.auto} onChange={(auto) => onChange({ ...config, auto })} />
-      </Field>
-      <Field label="模型">
-        <input
-          value={config.model ?? ''}
-          onChange={(e) => onChange({ ...config, model: e.target.value || undefined })}
-          placeholder="默认模型"
-          className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-200"
-        />
-      </Field>
-      <Field label="Max Tokens">
-        <input
-          type="number"
-          value={config.maxTokens ?? ''}
-          onChange={(e) => onChange({ ...config, maxTokens: e.target.value ? Number(e.target.value) : undefined })}
-          placeholder="默认"
-          className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-200"
-        />
-      </Field>
-      <Field label="关联 Prompt Segments">
-        <div className="text-xs text-zinc-500">
-          {config.promptSegments.length > 0
-            ? config.promptSegments.join(', ')
-            : '无（将在 Prompt 编辑器中关联）'}
-        </div>
-      </Field>
-    </>
-  );
-}
-
-function InputConfig({ config, onChange }: {
-  config: InputNodeConfig;
-  onChange: (c: InputNodeConfig) => void;
-}) {
-  return (
-    <>
-      <Field label="输入类型">
-        <select
-          value={config.inputType}
-          onChange={(e) => onChange({ ...config, inputType: e.target.value as 'freetext' | 'choice' })}
-          className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-200"
-        >
-          <option value="freetext">自由输入</option>
-          <option value="choice">选项选择</option>
-        </select>
-      </Field>
-      <Field label="提示文字">
-        <input
-          value={config.promptHint ?? ''}
-          onChange={(e) => onChange({ ...config, promptHint: e.target.value || undefined })}
-          placeholder="引导玩家的提示"
-          className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-200"
-        />
-      </Field>
-      <Field label="保存到状态变量">
-        <input
-          value={config.saveToState ?? ''}
-          onChange={(e) => onChange({ ...config, saveToState: e.target.value || undefined })}
-          placeholder="例如 player_choice"
-          className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-200"
-        />
-      </Field>
-    </>
-  );
-}
-
-function CompressConfig({ config, onChange }: {
-  config: CompressNodeConfig;
-  onChange: (c: CompressNodeConfig) => void;
-}) {
-  return (
-    <Field label="压缩提示">
-      <textarea
-        value={config.hintPrompt ?? ''}
-        onChange={(e) => onChange({ ...config, hintPrompt: e.target.value || undefined })}
-        placeholder="自定义压缩策略提示"
-        rows={3}
-        className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-200 resize-none"
-      />
-    </Field>
-  );
-}
-
-function StateUpdateConfig({ config, onChange }: {
-  config: StateUpdateNodeConfig;
-  onChange: (c: StateUpdateNodeConfig) => void;
-}) {
-  const updatesJson = JSON.stringify(config.updates, null, 2);
-  return (
-    <Field label="状态更新 (JSON)">
-      <textarea
-        value={updatesJson}
-        onChange={(e) => {
-          try {
-            const parsed = JSON.parse(e.target.value);
-            onChange({ ...config, updates: parsed });
-          } catch {
-            // Invalid JSON, don't update
-          }
-        }}
-        rows={4}
-        className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-200 font-mono resize-none"
-      />
-    </Field>
-  );
-}
-
-// ============================================================================
 // Shared Components
 // ============================================================================
 
@@ -225,22 +108,5 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <label className="text-xs text-zinc-400 mb-1 block">{label}</label>
       {children}
     </div>
-  );
-}
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      onClick={() => onChange(!checked)}
-      className={cn(
-        'w-10 h-5 rounded-full relative transition-colors',
-        checked ? 'bg-blue-600' : 'bg-zinc-700',
-      )}
-    >
-      <div className={cn(
-        'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform',
-        checked ? 'translate-x-5' : 'translate-x-0.5',
-      )} />
-    </button>
   );
 }

@@ -3,6 +3,9 @@
  *
  * Step 4.5: 基于 MODULE_7 序章第一章/第二章的真实 GM Prompt 手写 IR。
  * 用于端到端验证引擎的完整流程。
+ *
+ * FlowGraph 是可视化参考图，不做运行时路由。
+ * LLM 在运行时通过 signal_input_needed / update_state 等工具自主控制节奏。
  */
 
 import type {
@@ -24,35 +27,30 @@ const stateSchema: StateSchema = {
       type: 'number',
       initial: 1,
       description: '当前章节 (1=序章第一章, 2=共鸣池)',
-      updatedBy: 'flow',
     },
     {
       name: 'stage',
       type: 'number',
       initial: 1,
       description: '当前阶段序号 (1-5)',
-      updatedBy: 'llm',
     },
     {
       name: 'stage_core_experience',
       type: 'boolean',
       initial: false,
       description: '当前阶段核心体验是否已建立',
-      updatedBy: 'llm',
     },
     {
       name: 'turn_count_in_stage',
       type: 'number',
       initial: 0,
       description: '当前阶段内的轮次计数',
-      updatedBy: 'llm',
     },
     {
       name: 'deviation_layers',
       type: 'number',
       initial: 0,
       description: '连续偏离收束协议触发层数 (0-3)',
-      updatedBy: 'llm',
       range: { min: 0, max: 3 },
     },
     {
@@ -60,7 +58,6 @@ const stateSchema: StateSchema = {
       type: 'number',
       initial: 1,
       description: '与女孩的关系阶段 (1=陌生人 → 6=无言羁绊)',
-      updatedBy: 'llm',
       range: { min: 1, max: 6 },
     },
     {
@@ -68,7 +65,6 @@ const stateSchema: StateSchema = {
       type: 'number',
       initial: 0,
       description: '女孩的交流能力 (0=无语言 → 3=简单对话)',
-      updatedBy: 'llm',
       range: { min: 0, max: 3 },
     },
     {
@@ -76,247 +72,83 @@ const stateSchema: StateSchema = {
       type: 'string',
       initial: 'awakening-chamber',
       description: '当前位置',
-      updatedBy: 'llm',
     },
     {
       name: 'explored_locations',
       type: 'array',
       initial: [],
       description: '已探索的区域列表',
-      updatedBy: 'llm',
     },
     {
       name: 'time_subjective',
       type: 'string',
       initial: '刚苏醒',
       description: '主观经过时间描述',
-      updatedBy: 'llm',
     },
     {
       name: 'sleep_count',
       type: 'number',
       initial: 0,
       description: '玩家入睡次数',
-      updatedBy: 'llm',
     },
     {
       name: 'water_valve_state',
       type: 'string',
       initial: 'unknown',
       description: '共鸣池水阀状态 (unknown/discovered/activated)',
-      updatedBy: 'llm',
     },
     {
       name: 'master_valve_decision',
       type: 'string',
       initial: 'none',
       description: '总阀门决策 (none/open/close)',
-      updatedBy: 'llm',
     },
   ],
 };
 
 // ============================================================================
-// Chapter 1 Flow Graph — 序章第一章：苏醒 → 行走 → 潜行区 → 坠落邂逅 → 同行
+// Chapter 1 Flow Graph — 序章第一章（可视化参考）
 // ============================================================================
 
 const chapter1Flow: FlowGraph = {
   id: 'ch1-flow',
   label: '序章第一章',
   nodes: [
-    {
-      id: 'ch1-s1-awakening',
-      type: 'scene',
-      label: '阶段1：苏醒',
-      config: { type: 'scene', promptSegments: ['seg-ch1-system', 'seg-ch1-awakening'], auto: true },
-    },
-    {
-      id: 'ch1-s1-input',
-      type: 'input',
-      label: '苏醒后行动',
-      config: { type: 'input', inputType: 'freetext', promptHint: '你在陌生的地方醒来...' },
-    },
-    {
-      id: 'ch1-s2-movement',
-      type: 'scene',
-      label: '阶段2：行走',
-      config: { type: 'scene', promptSegments: ['seg-ch1-system', 'seg-ch1-movement'], auto: false },
-    },
-    {
-      id: 'ch1-s2-input',
-      type: 'input',
-      label: '行走中行动',
-      config: { type: 'input', inputType: 'freetext', promptHint: '你沿着通道前行...' },
-    },
-    {
-      id: 'ch1-s3-incubation',
-      type: 'scene',
-      label: '阶段3：潜行区',
-      config: { type: 'scene', promptSegments: ['seg-ch1-system', 'seg-ch1-incubation'], auto: false },
-    },
-    {
-      id: 'ch1-s3-input',
-      type: 'input',
-      label: '潜行区互动',
-      config: { type: 'input', inputType: 'freetext', promptHint: '你发现了不寻常的区域...' },
-    },
-    {
-      id: 'ch1-s4-fall-encounter',
-      type: 'scene',
-      label: '阶段4：坠落与邂逅',
-      config: { type: 'scene', promptSegments: ['seg-ch1-system', 'seg-ch1-encounter', 'seg-girl-behavior'], auto: false },
-    },
-    {
-      id: 'ch1-s4-input',
-      type: 'input',
-      label: '邂逅后行动',
-      config: { type: 'input', inputType: 'freetext', promptHint: '你遇到了一个女孩...' },
-    },
-    {
-      id: 'ch1-s5-companions',
-      type: 'scene',
-      label: '阶段5：同行者',
-      config: { type: 'scene', promptSegments: ['seg-ch1-system', 'seg-ch1-companions', 'seg-girl-behavior'], auto: false },
-    },
-    {
-      id: 'ch1-s5-input',
-      type: 'input',
-      label: '同行互动',
-      config: { type: 'input', inputType: 'freetext', promptHint: '你和女孩一起行走...' },
-    },
-    {
-      id: 'ch1-s5-loop',
-      type: 'scene',
-      label: '同行继续',
-      config: { type: 'scene', promptSegments: ['seg-ch1-system', 'seg-ch1-companions', 'seg-girl-behavior'], auto: false },
-    },
-    {
-      id: 'ch1-compress',
-      type: 'compress',
-      label: '第一章记忆压缩',
-      config: { type: 'compress', hintPrompt: '保留：女孩的具体行为反应、玩家的关键选择、关系阶段变化、阶段转换的关键时刻' },
-    },
-    {
-      id: 'ch1-checkpoint',
-      type: 'checkpoint',
-      label: '第一章完成',
-      config: { type: 'checkpoint', label: '序章第一章完成' },
-    },
+    { id: 'ch1-s1-awakening', label: '阶段1：苏醒', promptSegments: ['seg-ch1-system', 'seg-ch1-awakening'] },
+    { id: 'ch1-s2-movement', label: '阶段2：行走', promptSegments: ['seg-ch1-system', 'seg-ch1-movement'] },
+    { id: 'ch1-s3-incubation', label: '阶段3：潜行区', promptSegments: ['seg-ch1-system', 'seg-ch1-incubation'] },
+    { id: 'ch1-s4-fall-encounter', label: '阶段4：坠落与邂逅', promptSegments: ['seg-ch1-system', 'seg-ch1-encounter', 'seg-girl-behavior'] },
+    { id: 'ch1-s5-companions', label: '阶段5：同行者', promptSegments: ['seg-ch1-system', 'seg-ch1-companions', 'seg-girl-behavior'] },
   ],
   edges: [
-    { from: 'ch1-s1-awakening', to: 'ch1-s1-input' },
-    { from: 'ch1-s1-input', to: 'ch1-s2-movement' },
-    { from: 'ch1-s2-movement', to: 'ch1-s2-input' },
-    { from: 'ch1-s2-input', to: 'ch1-s2-movement', condition: "stage === 2 && turn_count_in_stage < 2", label: '继续行走' },
-    { from: 'ch1-s2-input', to: 'ch1-s3-incubation', condition: "stage === 2 && turn_count_in_stage >= 2", label: '进入潜行区' },
-    { from: 'ch1-s3-incubation', to: 'ch1-s3-input' },
-    { from: 'ch1-s3-input', to: 'ch1-s3-incubation', condition: "stage === 3 && !stage_core_experience", label: '继续探索' },
-    { from: 'ch1-s3-input', to: 'ch1-s4-fall-encounter', condition: "stage === 3 && stage_core_experience", label: '坠落' },
-    { from: 'ch1-s4-fall-encounter', to: 'ch1-s4-input' },
-    { from: 'ch1-s4-input', to: 'ch1-s5-companions' },
-    { from: 'ch1-s5-companions', to: 'ch1-s5-input' },
-    { from: 'ch1-s5-input', to: 'ch1-s5-loop', condition: "relationship_stage < 3", label: '继续同行' },
-    { from: 'ch1-s5-loop', to: 'ch1-s5-input' },
-    { from: 'ch1-s5-input', to: 'ch1-compress', condition: "relationship_stage >= 3 && sleep_count >= 1", label: '入睡 → 章节结束' },
-    { from: 'ch1-compress', to: 'ch1-checkpoint' },
+    { from: 'ch1-s1-awakening', to: 'ch1-s2-movement' },
+    { from: 'ch1-s2-movement', to: 'ch1-s3-incubation', label: '核心体验建立后' },
+    { from: 'ch1-s3-incubation', to: 'ch1-s4-fall-encounter', label: '坠落' },
+    { from: 'ch1-s4-fall-encounter', to: 'ch1-s5-companions' },
+    { from: 'ch1-s5-companions', to: 'ch1-s5-companions', label: '同行继续（循环）' },
   ],
 };
 
 // ============================================================================
-// Chapter 2 Flow Graph — 第二章：共鸣池
+// Chapter 2 Flow Graph — 第二章：共鸣池（可视化参考）
 // ============================================================================
 
 const chapter2Flow: FlowGraph = {
   id: 'ch2-flow',
   label: '第二章：共鸣池',
   nodes: [
-    {
-      id: 'ch2-s1-timejump',
-      type: 'scene',
-      label: '阶段1：时间跳跃苏醒',
-      config: { type: 'scene', promptSegments: ['seg-ch2-system', 'seg-ch2-timejump'], auto: true },
-    },
-    {
-      id: 'ch2-s1-input',
-      type: 'input',
-      label: '苏醒后行动',
-      config: { type: 'input', inputType: 'freetext', promptHint: '你再次醒来，感觉过了很久...' },
-    },
-    {
-      id: 'ch2-s2-neva',
-      type: 'scene',
-      label: '阶段2：涅瓦入口',
-      config: { type: 'scene', promptSegments: ['seg-ch2-system', 'seg-ch2-resonance-pool', 'seg-girl-behavior-ch2'], auto: false },
-    },
-    {
-      id: 'ch2-s2-input',
-      type: 'input',
-      label: '涅瓦探索',
-      config: { type: 'input', inputType: 'freetext', promptHint: '你来到了一个水声回响的空间...' },
-    },
-    {
-      id: 'ch2-s3-exploration',
-      type: 'scene',
-      label: '阶段3：共鸣池探索',
-      config: { type: 'scene', promptSegments: ['seg-ch2-system', 'seg-ch2-resonance-pool', 'seg-girl-behavior-ch2'], auto: false },
-    },
-    {
-      id: 'ch2-s3-input',
-      type: 'input',
-      label: '共鸣池互动',
-      config: { type: 'input', inputType: 'freetext', promptHint: '你在共鸣池的各个分区探索...' },
-    },
-    {
-      id: 'ch2-s4-master-valve',
-      type: 'scene',
-      label: '阶段4：总阀门抉择',
-      config: { type: 'scene', promptSegments: ['seg-ch2-system', 'seg-ch2-resonance-pool', 'seg-girl-behavior-ch2'], auto: false },
-    },
-    {
-      id: 'ch2-s4-input',
-      type: 'input',
-      label: '总阀门选择',
-      config: { type: 'input', inputType: 'freetext', promptHint: '你面对总阀门，需要做出选择...' },
-    },
-    {
-      id: 'ch2-s5-aftermath',
-      type: 'scene',
-      label: '阶段5：余波',
-      config: { type: 'scene', promptSegments: ['seg-ch2-system', 'seg-girl-behavior-ch2'], auto: false },
-    },
-    {
-      id: 'ch2-s5-input',
-      type: 'input',
-      label: '余波互动',
-      config: { type: 'input', inputType: 'freetext' },
-    },
-    {
-      id: 'ch2-compress',
-      type: 'compress',
-      label: '第二章记忆压缩',
-      config: { type: 'compress', hintPrompt: '保留：共鸣池关键发现、总阀门决策及原因、女孩的成长变化、关系阶段进展' },
-    },
-    {
-      id: 'ch2-checkpoint',
-      type: 'checkpoint',
-      label: '第二章完成',
-      config: { type: 'checkpoint', label: '第二章共鸣池完成' },
-    },
+    { id: 'ch2-s1-timejump', label: '阶段1：时间跳跃苏醒', promptSegments: ['seg-ch2-system', 'seg-ch2-timejump'] },
+    { id: 'ch2-s2-neva', label: '阶段2：涅瓦入口', promptSegments: ['seg-ch2-system', 'seg-ch2-resonance-pool', 'seg-girl-behavior-ch2'] },
+    { id: 'ch2-s3-exploration', label: '阶段3：共鸣池探索', promptSegments: ['seg-ch2-system', 'seg-ch2-resonance-pool', 'seg-girl-behavior-ch2'] },
+    { id: 'ch2-s4-master-valve', label: '阶段4：总阀门抉择', promptSegments: ['seg-ch2-system', 'seg-ch2-resonance-pool', 'seg-girl-behavior-ch2'] },
+    { id: 'ch2-s5-aftermath', label: '阶段5：余波', promptSegments: ['seg-ch2-system', 'seg-girl-behavior-ch2'] },
   ],
   edges: [
-    { from: 'ch2-s1-timejump', to: 'ch2-s1-input' },
-    { from: 'ch2-s1-input', to: 'ch2-s2-neva' },
-    { from: 'ch2-s2-neva', to: 'ch2-s2-input' },
-    { from: 'ch2-s2-input', to: 'ch2-s3-exploration' },
-    { from: 'ch2-s3-exploration', to: 'ch2-s3-input' },
-    { from: 'ch2-s3-input', to: 'ch2-s3-exploration', condition: "water_valve_state !== 'activated'", label: '继续探索' },
-    { from: 'ch2-s3-input', to: 'ch2-s4-master-valve', condition: "water_valve_state === 'activated'", label: '找到总阀门' },
-    { from: 'ch2-s4-master-valve', to: 'ch2-s4-input' },
-    { from: 'ch2-s4-input', to: 'ch2-s5-aftermath' },
-    { from: 'ch2-s5-aftermath', to: 'ch2-s5-input' },
-    { from: 'ch2-s5-input', to: 'ch2-compress', condition: "stage_core_experience" },
-    { from: 'ch2-s5-input', to: 'ch2-s5-aftermath', condition: "!stage_core_experience" },
-    { from: 'ch2-compress', to: 'ch2-checkpoint' },
+    { from: 'ch2-s1-timejump', to: 'ch2-s2-neva' },
+    { from: 'ch2-s2-neva', to: 'ch2-s3-exploration' },
+    { from: 'ch2-s3-exploration', to: 'ch2-s3-exploration', label: '继续探索（循环）' },
+    { from: 'ch2-s3-exploration', to: 'ch2-s4-master-valve', label: '找到总阀门' },
+    { from: 'ch2-s4-master-valve', to: 'ch2-s5-aftermath' },
   ],
 };
 
@@ -343,13 +175,14 @@ const segments: PromptSegment[] = [
 - 第3层（硬引导）：直接叙事推动
 
 工具使用：每次回复必须调用 update_state 更新阶段和轮次。
-当阶段核心体验建立时，设置 stage_core_experience = true。`,
+当阶段核心体验建立时，设置 stage_core_experience = true。
+当需要玩家输入时，调用 signal_input_needed。`,
     contentHash: 'ch1sys001',
     type: 'logic',
     sourceDoc: 'MODULE7_GM_Prompt_序章第一章_v2_3.md',
     role: 'system',
     priority: 0,
-    tokenCount: 200,
+    tokenCount: 220,
   },
   {
     id: 'seg-ch1-awakening',
@@ -362,7 +195,7 @@ const segments: PromptSegment[] = [
 
 核心体验：建立"陌生但不恐惧"的基调。
 限制：不透露任何世界观信息，纯粹的感官描写。
-完成标准：描写完苏醒场景后自动推进到阶段2。`,
+完成标准：描写完苏醒场景后调用 signal_input_needed。`,
     contentHash: 'ch1awk001',
     type: 'content',
     sourceDoc: 'MODULE7_GM_Prompt_序章第一章_v2_3.md',
@@ -627,7 +460,7 @@ export const module7TestManifest: ScriptManifest = {
   label: 'MODULE_7 互动叙事',
   stateSchema,
   memoryConfig,
-  enabledTools: ['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood', 'advance_flow'],
+  enabledTools: ['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood'],
   chapters: [
     {
       id: 'chapter-1',

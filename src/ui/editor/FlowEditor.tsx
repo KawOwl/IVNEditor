@@ -1,8 +1,8 @@
 /**
  * FlowEditor — ReactFlow 可视化流程图编辑器
  *
- * Step 3.1: 将 FlowGraph 渲染为可拖拽的流程图。
- * 节点按类型显示不同样式，边支持条件标签。
+ * 将 FlowGraph 渲染为可拖拽的流程图。
+ * FlowGraph 是可视化参考，不做运行时路由。
  */
 
 import { useCallback, useMemo } from 'react';
@@ -22,47 +22,26 @@ import {
   Position,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { FlowGraph, FlowNode as GameFlowNode, NodeType } from '../../core/types';
+import type { FlowGraph, FlowNode as GameFlowNode } from '../../core/types';
 import { cn } from '../../lib/utils';
-
-// ============================================================================
-// Node Colors by Type
-// ============================================================================
-
-const NODE_STYLES: Record<NodeType, { bg: string; border: string; text: string }> = {
-  scene:          { bg: 'bg-purple-950', border: 'border-purple-600', text: 'text-purple-200' },
-  input:          { bg: 'bg-blue-950',   border: 'border-blue-600',   text: 'text-blue-200' },
-  compress:       { bg: 'bg-amber-950',  border: 'border-amber-600',  text: 'text-amber-200' },
-  'state-update': { bg: 'bg-green-950',  border: 'border-green-600',  text: 'text-green-200' },
-  checkpoint:     { bg: 'bg-cyan-950',   border: 'border-cyan-600',   text: 'text-cyan-200' },
-};
-
-const NODE_TYPE_LABELS: Record<NodeType, string> = {
-  scene: '场景',
-  input: '输入',
-  compress: '压缩',
-  'state-update': '状态更新',
-  checkpoint: '检查点',
-};
 
 // ============================================================================
 // Custom Node Component
 // ============================================================================
 
-function GameNode({ data }: { data: { label: string; nodeType: NodeType; gameNode: GameFlowNode } }) {
-  const style = NODE_STYLES[data.nodeType];
+function GameNode({ data }: { data: { label: string; description?: string; gameNode: GameFlowNode } }) {
   return (
     <div className={cn(
       'px-4 py-2 rounded-lg border-2 min-w-[140px] shadow-lg',
-      style.bg, style.border,
+      'bg-zinc-900 border-zinc-600',
     )}>
       <Handle type="target" position={Position.Top} className="!bg-zinc-400" />
-      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-0.5">
-        {NODE_TYPE_LABELS[data.nodeType]}
-      </div>
-      <div className={cn('text-sm font-medium', style.text)}>
+      <div className={cn('text-sm font-medium text-zinc-200')}>
         {data.label}
       </div>
+      {data.description && (
+        <div className="text-[10px] text-zinc-500 mt-0.5">{data.description}</div>
+      )}
       <Handle type="source" position={Position.Bottom} className="!bg-zinc-400" />
     </div>
   );
@@ -76,10 +55,10 @@ function toReactFlowNodes(graph: FlowGraph): Node[] {
   return graph.nodes.map((node, index) => ({
     id: node.id,
     type: 'gameNode',
-    position: { x: 250, y: index * 120 },  // Auto-layout: vertical stack
+    position: { x: 250, y: index * 120 },
     data: {
       label: node.label,
-      nodeType: node.type,
+      description: node.description,
       gameNode: node,
     },
   }));
@@ -90,9 +69,8 @@ function toReactFlowEdges(graph: FlowGraph): Edge[] {
     id: `edge-${index}`,
     source: edge.from,
     target: edge.to,
-    label: edge.label ?? edge.condition,
-    animated: !!edge.condition,
-    style: { stroke: edge.condition ? '#eab308' : '#71717a' },
+    label: edge.label,
+    style: { stroke: '#71717a' },
     labelStyle: { fill: '#a1a1aa', fontSize: 11 },
   }));
 }
@@ -122,7 +100,6 @@ export function FlowEditor({ graph, onNodeSelect, onEdgeSelect, onGraphChange }:
   const onConnect = useCallback(
     (params: Connection) => {
       setEdges((eds) => addEdge({ ...params, style: { stroke: '#71717a' } }, eds));
-      // Notify parent of graph change
       if (onGraphChange) {
         const newEdge = { from: params.source!, to: params.target! };
         onGraphChange({

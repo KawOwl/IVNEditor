@@ -22,7 +22,6 @@ const OPTIONAL_TOOLS = [
   'query_memory',
   'inject_context',
   'list_context',
-  'advance_flow',
   'set_mood',
   'show_image',
 ] as const;
@@ -32,7 +31,7 @@ const OPTIONAL_TOOLS = [
 // ============================================================================
 
 const TOOL_ENABLEMENT_SYSTEM = `你是一个互动小说引擎的工具配置助手。
-GM（游戏主持人）有两个必选工具（update_state、signal_input_needed）和 9 个可选工具。
+GM（游戏主持人）有两个必选工具（update_state、signal_input_needed）和 8 个可选工具。
 
 可选工具及用途：
 - read_state: 读取当前状态变量（GM 需要查看非 prompt 内的状态时）
@@ -41,7 +40,6 @@ GM（游戏主持人）有两个必选工具（update_state、signal_input_neede
 - query_memory: 搜索历史记忆（GM 需要回忆过去事件时）
 - inject_context: 临时注入世界观文档（GM 需要参考额外资料时）
 - list_context: 列出可注入的文档（配合 inject_context 使用）
-- advance_flow: 跳转到指定流程节点（GM 需要非线性跳转时）
 - set_mood: 设置场景氛围标签（影响 UI 视觉风格时）
 - show_image: 显示图片/CG（有视觉内容展示需求时）
 
@@ -51,7 +49,7 @@ GM（游戏主持人）有两个必选工具（update_state、signal_input_neede
 const enablementSchema = z.object({
   enabledTools: z.array(z.enum([
     'read_state', 'query_changelog', 'pin_memory', 'query_memory',
-    'inject_context', 'list_context', 'advance_flow', 'set_mood', 'show_image',
+    'inject_context', 'list_context', 'set_mood', 'show_image',
   ])),
   reasoning: z.string(),
 });

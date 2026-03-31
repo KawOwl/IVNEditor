@@ -136,18 +136,9 @@ function FlowPreview({ result }: { result: ArchitectResult }) {
         <h4 className="text-sm text-zinc-400">节点 ({graph.nodes.length})</h4>
         {graph.nodes.map((n) => (
           <div key={n.id} className="bg-zinc-900 rounded-lg px-4 py-2 flex items-center gap-3">
-            <span className={cn(
-              'text-xs px-1.5 py-0.5 rounded',
-              n.type === 'scene' && 'bg-purple-900/50 text-purple-300',
-              n.type === 'input' && 'bg-blue-900/50 text-blue-300',
-              n.type === 'compress' && 'bg-amber-900/50 text-amber-300',
-              n.type === 'state-update' && 'bg-green-900/50 text-green-300',
-              n.type === 'checkpoint' && 'bg-cyan-900/50 text-cyan-300',
-            )}>
-              {n.type}
-            </span>
             <span className="text-sm text-zinc-200">{n.label}</span>
             <span className="text-xs text-zinc-600 font-mono">{n.id}</span>
+            {n.description && <span className="text-xs text-zinc-500">{n.description}</span>}
           </div>
         ))}
         <h4 className="text-sm text-zinc-400 mt-4">边 ({graph.edges.length})</h4>
@@ -156,8 +147,8 @@ function FlowPreview({ result }: { result: ArchitectResult }) {
             <span className="text-zinc-300">{e.from}</span>
             <span className="text-zinc-600 mx-2">→</span>
             <span className="text-zinc-300">{e.to}</span>
-            {e.condition && (
-              <span className="text-xs text-yellow-400 ml-2 font-mono">if: {e.condition}</span>
+            {e.label && (
+              <span className="text-xs text-zinc-500 ml-2">{e.label}</span>
             )}
           </div>
         ))}
