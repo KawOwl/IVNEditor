@@ -13,13 +13,12 @@
  */
 
 // Vite ?raw imports — 加载原始文本
-import gmPromptCh1 from '../../scenario/MODULE_7/MODULE7_GM_Prompt_序章第一章_v2_3.md?raw';
+import gmPromptCh1 from '../../scenario/MODULE_7/MODULE7_GM_Prompt_序章第一章_v3_0_refine.md?raw';
 import gmPromptCh2 from '../../scenario/MODULE_7/MODULE7_GM_Prompt_第二章_共鸣池_v1_9.md?raw';
 import pcPrompt from '../../scenario/MODULE_7/MODULE7_PC_Prompt_v1_0.md?raw';
 import worldTimeline from '../../scenario/MODULE_7/世界观——时间线（大事年表）_草案v3.md?raw';
 import resonancePool from '../../scenario/MODULE_7/共鸣池（地点C）—— 场景完整设定.md?raw';
 import projectPlan from '../../scenario/MODULE_7/MODULE7_项目策划案_v1.1.txt?raw';
-import initialPromptText from '../../scenario/MODULE_7/prompt.txt?raw';
 
 import type {
   ScriptManifest,
@@ -48,17 +47,24 @@ function simpleHash(text: string): string {
 
 const stateSchema: StateSchema = {
   variables: [
+    // --- 与 GM Prompt H 节状态字段对齐 ---
     { name: 'chapter', type: 'number', initial: 1, description: '当前章节 (1=序章第一章, 2=共鸣池)' },
     { name: 'stage', type: 'number', initial: 1, description: '当前阶段序号 (1-5)' },
-    { name: 'stage_core_experience', type: 'boolean', initial: false, description: '当前阶段核心体验是否已建立' },
-    { name: 'turn_count_in_stage', type: 'number', initial: 0, description: '当前阶段内的轮次计数' },
-    { name: 'deviation_layers', type: 'number', initial: 0, description: '连续偏离收束协议触发层数 (0-3)', range: { min: 0, max: 3 } },
-    { name: 'relationship_stage', type: 'number', initial: 1, description: '与女孩的关系阶段 (1=陌生人 → 6=无言羁绊)', range: { min: 1, max: 6 } },
-    { name: 'girl_communication_level', type: 'number', initial: 0, description: '女孩的交流能力 (0=无语言 → 3=简单对话)', range: { min: 0, max: 3 } },
-    { name: 'current_location', type: 'string', initial: 'awakening-chamber', description: '当前位置' },
+    { name: 'route', type: 'string', initial: 'main', description: '路线状态: main / cold' },
+    { name: 'player_type', type: 'string', initial: 'unknown', description: '分流类型: A / B / unknown' },
+    { name: 'player_knowledge', type: 'string', initial: 'unknown', description: '知识背景: science / arts / urban / unknown' },
+    { name: 'girl_language_level', type: 'number', initial: 0, description: '女孩语言状态 (0=无语言 → 3=短句)', range: { min: 0, max: 3 } },
+    { name: 'player_tendency', type: 'string', initial: 'unknown', description: '行为倾向: active / passive / protective / observer / cold' },
+    { name: 'player_preference', type: 'string', initial: 'unknown', description: '偏好类型: emotional / explorer / mixed / unknown' },
+    { name: 'deviation_count', type: 'number', initial: 0, description: '当前阶段连续偏离次数', range: { min: 0, max: 10 } },
+    { name: 'fall_choice', type: 'string', initial: 'pending', description: '坠落选择: pending / protect / ignore / other' },
+    { name: 'companion_confirmed', type: 'string', initial: 'no', description: '同行意图: yes / no / cold_route' },
+    { name: 'player_mood', type: 'string', initial: '', description: '当前轮玩家情绪基调' },
+    { name: 'current_location', type: 'string', initial: 'wasteland', description: '当前位置' },
+    // --- 跨章节持久字段 ---
     { name: 'explored_locations', type: 'array', initial: [], description: '已探索的区域列表' },
-    { name: 'time_subjective', type: 'string', initial: '刚苏醒', description: '主观经过时间描述' },
     { name: 'sleep_count', type: 'number', initial: 0, description: '玩家入睡次数' },
+    // --- 第二章专用 ---
     { name: 'water_valve_state', type: 'string', initial: 'unknown', description: '共鸣池水阀状态 (unknown/discovered/activated)' },
     { name: 'master_valve_decision', type: 'string', initial: 'none', description: '总阀门决策 (none/open/close)' },
   ],
@@ -114,11 +120,11 @@ const segments: PromptSegment[] = [
   // --- GM Prompts（system role，按章节条件注入）---
   {
     id: 'doc-gm-ch1',
-    label: 'GM Prompt 序章第一章 v2.3',
+    label: 'GM Prompt 序章第一章 v3.0-engine',
     content: gmPromptCh1,
     contentHash: simpleHash(gmPromptCh1),
     type: 'logic',
-    sourceDoc: 'MODULE7_GM_Prompt_序章第一章_v2_3.md',
+    sourceDoc: 'MODULE7_GM_Prompt_序章第一章_v3_0_refine.md',
     role: 'system',
     priority: 0,
     injectionRule: {
@@ -211,8 +217,8 @@ const memoryConfig: MemoryConfig = {
 4. 收束协议触发记录
 5. 共鸣池中的关键发现和阀门状态`,
   crossChapterInheritance: {
-    inherit: ['relationship_stage', 'girl_communication_level', 'explored_locations', 'sleep_count'],
-    exclude: ['turn_count_in_stage', 'deviation_layers', 'stage_core_experience'],
+    inherit: ['girl_language_level', 'explored_locations', 'sleep_count', 'route'],
+    exclude: ['deviation_count', 'player_mood', 'fall_choice', 'companion_confirmed'],
   },
 };
 
@@ -222,7 +228,7 @@ const memoryConfig: MemoryConfig = {
 
 export const module7TestManifest: ScriptManifest = {
   id: 'module-7',
-  version: '2.3.0',
+  version: '3.0.0',
   label: 'MODULE_7 互动叙事',
   description: '你在一个陌生的地下设施中苏醒，身边有一个不会说话的女孩。在废墟与微光中，你们将一起探索这个被遗忘的世界。',
   author: '编剧团队',
@@ -235,7 +241,7 @@ export const module7TestManifest: ScriptManifest = {
   stateSchema,
   memoryConfig,
   enabledTools: ['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood'],
-  initialPrompt: initialPromptText,
+  initialPrompt: '请开始序章第一章的叙事。从苏醒过程开始生成，遵循阶段一的指令。',
   chapters: [
     {
       id: 'chapter-1',

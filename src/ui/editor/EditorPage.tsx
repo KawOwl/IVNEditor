@@ -69,14 +69,16 @@ export function EditorPage() {
   const stateVars = useMemo<StateVarInfo[]>(() => [
     { name: 'chapter', type: 'number', description: '当前章节' },
     { name: 'stage', type: 'number', description: '当前阶段序号' },
-    { name: 'stage_core_experience', type: 'boolean', description: '核心体验是否已建立' },
-    { name: 'turn_count_in_stage', type: 'number', description: '当前阶段轮次计数' },
-    { name: 'deviation_layers', type: 'number', description: '连续偏离层数' },
-    { name: 'relationship_stage', type: 'number', description: '关系阶段' },
-    { name: 'girl_communication_level', type: 'number', description: '女孩交流能力' },
+    { name: 'route', type: 'string', description: '路线状态' },
+    { name: 'player_type', type: 'string', description: '分流类型' },
+    { name: 'player_knowledge', type: 'string', description: '知识背景' },
+    { name: 'girl_language_level', type: 'number', description: '女孩语言状态' },
+    { name: 'player_tendency', type: 'string', description: '行为倾向' },
+    { name: 'player_preference', type: 'string', description: '偏好类型' },
+    { name: 'deviation_count', type: 'number', description: '连续偏离次数' },
+    { name: 'fall_choice', type: 'string', description: '坠落选择' },
+    { name: 'companion_confirmed', type: 'string', description: '同行意图' },
     { name: 'current_location', type: 'string', description: '当前位置' },
-    { name: 'explored_locations', type: 'array', description: '已探索区域' },
-    { name: 'sleep_count', type: 'number', description: '入睡次数' },
   ], []);
 
   // Build a temporary manifest from editor content for the play panel
