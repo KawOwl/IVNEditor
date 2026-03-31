@@ -82,6 +82,11 @@ export class LLMClient {
       name: this.config.name ?? 'provider',
       baseURL: this.config.baseURL,
       apiKey: this.config.apiKey,
+      // 关闭 DeepSeek 等模型的内置思考模式，避免 reasoning 混入正文
+      transformRequestBody: (body) => ({
+        ...body,
+        enable_thinking: false,
+      }),
     });
     return provider.chatModel(this.config.model);
   }

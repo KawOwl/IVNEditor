@@ -30,6 +30,75 @@ import type { LLMConfig } from './llm-client';
 import { useGameStore } from '../stores/game-store';
 
 // ============================================================================
+// ReasoningFilter — 启发式分离 LLM 推理文本与叙事正文
+// ============================================================================
+
+/**
+ * 某些模型（如 deepseek-chat）将推理过程直接输出到 content 中，
+ * 而非通过 reasoning_content 字段。此过滤器在流式输出中检测并分离推理文本。
+ *
+ * 策略：缓冲初始文本，检测到叙事起始标记后，将缓冲内容分类为 reasoning，
+ * 后续内容直接作为叙事正文传递。
+ */
+class ReasoningFilter {
+  private buffer = '';
+  private resolved = false; // true = 已确定推理/正文边界
+  private onReasoning: (text: string) => void;
+  private onText: (text: string) => void;
+
+  /** 叙事正文的起始标记（出现任一即认为正文开始） */
+  private static NARRATIVE_MARKERS = /\n---[\s\n]|\n#{1,3}\s|\n\*\*/;
+
+  constructor(
+    onReasoning: (text: string) => void,
+    onText: (text: string) => void,
+  ) {
+    this.onReasoning = onReasoning;
+    this.onText = onText;
+  }
+
+  push(chunk: string): void {
+    if (this.resolved) {
+      // 边界已确定，直接传递正文
+      this.onText(chunk);
+      return;
+    }
+
+    this.buffer += chunk;
+
+    // 检测叙事标记
+    const match = ReasoningFilter.NARRATIVE_MARKERS.exec(this.buffer);
+    if (match) {
+      // 标记前的内容是推理，标记及之后是正文
+      const reasoningPart = this.buffer.slice(0, match.index).trim();
+      const narrativePart = this.buffer.slice(match.index);
+
+      if (reasoningPart) {
+        this.onReasoning(reasoningPart);
+      }
+      this.onText(narrativePart);
+      this.resolved = true;
+      return;
+    }
+
+    // 缓冲超过 500 字符仍无标记 → 认为全是正文（无推理前缀）
+    if (this.buffer.length > 500) {
+      this.onText(this.buffer);
+      this.resolved = true;
+    }
+  }
+
+  /** 流结束时 flush 剩余缓冲 */
+  flush(): void {
+    if (!this.resolved && this.buffer) {
+      // 从未检测到标记，全部视为正文
+      this.onText(this.buffer);
+      this.resolved = true;
+    }
+  }
+}
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -179,15 +248,21 @@ export class GameSession {
       });
 
       // Call LLM (agentic tool loop)
+      // ReasoningFilter: 启发式分离推理前缀（针对 deepseek-chat 等模型）
+      const textFilter = new ReasoningFilter(
+        (reasoning) => store.appendReasoningChunk(reasoning),
+        (text) => store.appendStreamingChunk(text),
+      );
       const result = await this.llmClient.generate({
         systemPrompt: context.systemPrompt,
         messages: context.messages,
         tools: enabledToolSet,
         maxSteps: 10,
         onTextChunk: (chunk) => {
-          store.appendStreamingChunk(chunk);
+          textFilter.push(chunk);
         },
         onReasoningChunk: (chunk) => {
+          // 原生 reasoning（如 deepseek-reasoner）直接传递
           store.appendReasoningChunk(chunk);
         },
         onToolCall: (name, args) => {
@@ -203,6 +278,9 @@ export class GameSession {
           }
         },
       });
+
+      // Flush any buffered text in the reasoning filter
+      textFilter.flush();
 
       // Finalize streaming → append to narrative entries
       store.finalizeStreaming();
