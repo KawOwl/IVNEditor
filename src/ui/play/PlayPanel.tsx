@@ -174,9 +174,7 @@ export function PlayPanel({ manifest, compact = false, showDebug = true }: PlayP
       )}
 
       {/* Narrative area */}
-      <div className="flex-1 min-h-0">
-        <NarrativeView />
-      </div>
+      <NarrativeView />
 
       {/* Input area */}
       <InputPanel onSubmit={handlePlayerInput} />

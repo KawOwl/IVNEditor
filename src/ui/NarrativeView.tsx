@@ -27,7 +27,7 @@ export function NarrativeView() {
   return (
     <div
       ref={scrollRef}
-      className="flex-1 overflow-y-auto px-6 py-4 space-y-4"
+      className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4"
     >
       {entries.length === 0 && !isStreaming && status === 'idle' && (
         <div className="text-zinc-500 text-center py-12">
