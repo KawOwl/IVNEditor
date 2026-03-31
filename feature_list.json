@@ -12,11 +12,11 @@
     "id": "1.1",
     "title": "类型定义",
     "description": "core/types.ts 全部 IR 接口 + 四层运行时状态 + core/schemas.ts Zod 验证",
-    "status": "in-progress",
+    "status": "done",
     "type": "logic",
     "ref": "v2.0.md#三、Data Layer",
     "verify": "tsc --noEmit 通过，所有类型可被其他模块正确 import",
-    "note": "需重写：删除 NodeType/NodeConfig/updatedBy，简化 FlowNode/FlowEdge，更新 ProgressState/MemoryEntry.role/ChangelogEntry.source"
+    "note": "已重写：删除 NodeType/NodeConfig/updatedBy，简化 FlowNode/FlowEdge，MemoryEntry.role='generate'|'receive'|'system'，ChangelogEntry.source='llm'|'system'"
   },
   {
     "id": "1.2",
@@ -49,11 +49,11 @@
     "id": "1.5",
     "title": "ToolExecutor",
     "description": "10 个工具注册 + 执行 + AI SDK 格式转换（2 必选 + 8 可选）",
-    "status": "in-progress",
+    "status": "done",
     "type": "logic",
     "ref": "v2.0.md#五、Agentic 工具系统",
     "verify": "tsc 通过；createTools 返回 10 个工具；getEnabledTools 正确过滤；toAISDKTools 输出兼容格式",
-    "note": "需修改：移除 advance_flow 工具和 onAdvanceFlow 回调"
+    "note": "已修改：移除 advance_flow 工具和 onAdvanceFlow 回调"
   },
   {
     "id": "1.6",
@@ -68,11 +68,11 @@
     "id": "1.7",
     "title": "CoreLoop (Generate+Receive)",
     "description": "引擎核心循环：Generate（LLM agentic 生成 + 工具调用）+ Receive（等待外部输入）",
-    "status": "in-progress",
+    "status": "done",
     "type": "logic",
     "ref": "v2.0.md#六、核心循环",
     "verify": "tsc 通过；核心循环按 Generate→Receive 执行；signal_input_needed 正确触发暂停",
-    "note": "替换旧 FlowExecutor，删除 flow-executor.ts，重写 game-session.ts"
+    "note": "已完成：删除 flow-executor.ts，重写 game-session.ts 为 Generate+Receive 核心循环"
   },
   {
     "id": "1.8",
@@ -87,11 +87,11 @@
     "id": "1.9",
     "title": "GameSession 端到端集成",
     "description": "连接 CoreLoop + LLMClient + ContextAssembler + ToolExecutor + UI 的集成层",
-    "status": "in-progress",
+    "status": "done",
     "type": "e2e",
     "ref": "v2.0.md#六、核心循环",
     "verify": "tsc + build 通过；createGameStarter 可创建会话实例；submitInput 触发完整引擎循环",
-    "note": "需重写：移除 FlowExecutor 依赖，实现 Generate+Receive 核心循环"
+    "note": "已重写：移除 FlowExecutor 依赖，实现 Generate+Receive 核心循环"
   },
   {
     "id": "2.1",
