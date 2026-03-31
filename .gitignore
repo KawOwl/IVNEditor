@@ -6,3 +6,5 @@ dist/
 *.db-journal
 tsconfig.tsbuildinfo
 dist/
+scenario
+.DS_Store
