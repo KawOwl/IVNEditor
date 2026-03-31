@@ -3,13 +3,22 @@
  *
  * 左右分栏布局：
  *   - 左侧：CodeMirror 6 编辑器
- *   - 右侧：预览面板（大纲、工具引用、Token 统计）
+ *   - 右侧：tab 切换 —「预览」（大纲/引用/统计）/「试玩」（嵌入 PlayPanel）
  */
 
 import { useState, useCallback, useMemo } from 'react';
 import { useAppStore } from '../../stores/app-store';
 import { CodeEditor } from './CodeEditor';
+import { PlayPanel } from '../play/PlayPanel';
+import { useGameStore } from '../../stores/game-store';
+import { estimateTokens } from '../../core/memory';
+import { cn } from '../../lib/utils';
+import type { ScriptManifest, PromptSegment, StateSchema, MemoryConfig, FlowGraph } from '../../core/types';
 import type { StateVarInfo } from '../../core/editor/completion-sources';
+
+// ============================================================================
+// Sample content
+// ============================================================================
 
 const SAMPLE_CONTENT = `# GM Prompt — 序章第一章
 
@@ -37,15 +46,26 @@ const SAMPLE_CONTENT = `# GM Prompt — 序章第一章
 当偏离度达到阈值时，使用 {{tool:update_state}} 触发收束。
 `;
 
+// ============================================================================
+// Right panel tab type
+// ============================================================================
+
+type RightTab = 'preview' | 'play';
+
+// ============================================================================
+// EditorPage
+// ============================================================================
+
 export function EditorPage() {
   const goHome = useAppStore((s) => s.goHome);
   const [content, setContent] = useState(SAMPLE_CONTENT);
+  const [rightTab, setRightTab] = useState<RightTab>('preview');
 
   const handleContentChange = useCallback((newContent: string) => {
     setContent(newContent);
   }, []);
 
-  // Sample state vars for autocomplete (will be dynamic in future)
+  // State vars for autocomplete
   const stateVars = useMemo<StateVarInfo[]>(() => [
     { name: 'chapter', type: 'number', description: '当前章节' },
     { name: 'stage', type: 'number', description: '当前阶段序号' },
@@ -58,6 +78,17 @@ export function EditorPage() {
     { name: 'explored_locations', type: 'array', description: '已探索区域' },
     { name: 'sleep_count', type: 'number', description: '入睡次数' },
   ], []);
+
+  // Build a temporary manifest from editor content for the play panel
+  const playManifest = useMemo<ScriptManifest>(() => buildManifestFromContent(content), [content]);
+
+  const handleTabSwitch = useCallback((tab: RightTab) => {
+    // Reset game state when switching away from play
+    if (rightTab === 'play' && tab !== 'play') {
+      useGameStore.getState().reset();
+    }
+    setRightTab(tab);
+  }, [rightTab]);
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
@@ -90,13 +121,118 @@ export function EditorPage() {
           />
         </div>
 
-        {/* Right: Preview */}
-        <div className="w-80 flex-none overflow-y-auto bg-zinc-950">
-          <PreviewPanel content={content} />
+        {/* Right: Tabbed panel */}
+        <div className="w-96 flex-none flex flex-col min-h-0 bg-zinc-950">
+          {/* Tab bar */}
+          <div className="flex-none flex border-b border-zinc-800">
+            <button
+              onClick={() => handleTabSwitch('preview')}
+              className={cn(
+                'flex-1 px-3 py-2 text-xs font-medium transition-colors',
+                rightTab === 'preview'
+                  ? 'text-zinc-200 border-b-2 border-zinc-400'
+                  : 'text-zinc-500 hover:text-zinc-400',
+              )}
+            >
+              预览
+            </button>
+            <button
+              onClick={() => handleTabSwitch('play')}
+              className={cn(
+                'flex-1 px-3 py-2 text-xs font-medium transition-colors',
+                rightTab === 'play'
+                  ? 'text-emerald-400 border-b-2 border-emerald-500'
+                  : 'text-zinc-500 hover:text-zinc-400',
+              )}
+            >
+              试玩
+            </button>
+          </div>
+
+          {/* Tab content */}
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {rightTab === 'preview' && (
+              <div className="h-full overflow-y-auto">
+                <PreviewPanel content={content} />
+              </div>
+            )}
+            {rightTab === 'play' && (
+              <PlayPanel
+                manifest={playManifest}
+                compact
+                showDebug={false}
+              />
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
+}
+
+// ============================================================================
+// Build manifest from raw editor content
+// ============================================================================
+
+function simpleHash(text: string): string {
+  let hash = 0;
+  for (let i = 0; i < Math.min(text.length, 1000); i++) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function buildManifestFromContent(content: string): ScriptManifest {
+  // Treat the entire editor content as a single system segment
+  const segment: PromptSegment = {
+    id: 'editor-draft',
+    label: '编辑器草稿',
+    content,
+    contentHash: simpleHash(content),
+    type: 'logic',
+    sourceDoc: 'editor',
+    role: 'system',
+    priority: 0,
+    tokenCount: estimateTokens(content),
+  };
+
+  const stateSchema: StateSchema = {
+    variables: [
+      { name: 'chapter', type: 'number', initial: 1, description: '当前章节' },
+      { name: 'stage', type: 'number', initial: 1, description: '当前阶段序号' },
+      { name: 'current_location', type: 'string', initial: 'unknown', description: '当前位置' },
+    ],
+  };
+
+  const memoryConfig: MemoryConfig = {
+    contextBudget: 200000,
+    compressionThreshold: 160000,
+    recencyWindow: 10,
+  };
+
+  const flowGraph: FlowGraph = {
+    id: 'draft-flow',
+    label: '草稿',
+    nodes: [],
+    edges: [],
+  };
+
+  return {
+    id: 'editor-draft',
+    version: '0.0.0',
+    label: '编辑器试玩',
+    stateSchema,
+    memoryConfig,
+    enabledTools: ['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood'],
+    chapters: [
+      {
+        id: 'draft-ch1',
+        label: '草稿章节',
+        flowGraph,
+        segments: [segment],
+      },
+    ],
+  };
 }
 
 // ============================================================================
