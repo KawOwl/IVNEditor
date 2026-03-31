@@ -15,6 +15,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching } from '@codemirror/language';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { oneDark } from '@codemirror/theme-one-dark';
+import { scriptTagDecorations } from '../../core/editor/decorations';
 
 export interface CodeEditorProps {
   value: string;
@@ -56,6 +57,7 @@ export function CodeEditor({ value, onChange, className }: CodeEditorProps) {
           ...searchKeymap,
         ]),
         updateListener,
+        scriptTagDecorations(),
         // Editor styling
         EditorView.theme({
           '&': {
