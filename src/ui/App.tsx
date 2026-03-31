@@ -1,134 +1,73 @@
 /**
- * App — 主应用布局
+ * App — 应用根组件（路由分发器）
  *
- * 三区布局：
- *   - NarrativeView: 叙事区域（可滚动，占满剩余空间）
- *   - InputPanel: 输入区域（底部固定）
- *   - DebugPanel: 调试面板（底部可折叠）
+ * 三个页面：
+ *   - home: 首页卡片网格
+ *   - play: 对话页（互动叙事）
+ *   - editor: 编辑器（待实现）
  *
- * 通过 GameSession 实例连接引擎核心。
+ * 路由通过 Zustand app-store 管理，不引入 React Router。
  */
 
-import { useCallback, useRef } from 'react';
-import { NarrativeView } from './NarrativeView';
-import { InputPanel } from './InputPanel';
-import { DebugPanel } from './DebugPanel';
-import { useGameStore } from '../stores/game-store';
-import { GameSession } from '../core/game-session';
-import type { GameSessionConfig } from '../core/game-session';
-import { module7TestManifest } from '../fixtures/module7-test';
+import { useEffect } from 'react';
+import { useAppStore } from '../stores/app-store';
+import { HomePage } from './home/HomePage';
+import { PlayPage } from './play/PlayPage';
+import { getCatalog, getManifestById } from '../fixtures/registry';
 
 export function App() {
-  const status = useGameStore((s) => s.status);
-  const error = useGameStore((s) => s.error);
-  const sessionRef = useRef<GameSession | null>(null);
+  const page = useAppStore((s) => s.page);
+  const setCatalog = useAppStore((s) => s.setCatalog);
 
-  const handleStart = useCallback(() => {
-    if (sessionRef.current) return;
+  // Load catalog on mount
+  useEffect(() => {
+    setCatalog(getCatalog());
+  }, [setCatalog]);
 
-    const chapter = module7TestManifest.chapters[0]!;
-    const config: GameSessionConfig = {
-      chapterId: chapter.id,
-      segments: chapter.segments,
-      stateSchema: module7TestManifest.stateSchema,
-      memoryConfig: module7TestManifest.memoryConfig,
-      enabledTools: module7TestManifest.enabledTools,
-      initialPrompt: module7TestManifest.initialPrompt,
-      llmConfig: {
-        provider: 'openai-compatible',
-        baseURL: import.meta.env.VITE_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1',
-        apiKey: import.meta.env.VITE_DEEPSEEK_API_KEY ?? '',
-        model: import.meta.env.VITE_DEEPSEEK_MODEL ?? 'deepseek-chat',
-        name: 'deepseek',
-      },
-    };
+  switch (page.name) {
+    case 'home':
+      return <HomePage />;
 
-    const session = new GameSession();
-    sessionRef.current = session;
-    session.start(config);
-  }, []);
+    case 'play': {
+      const manifest = getManifestById(page.scriptId);
+      if (!manifest) {
+        return (
+          <div className="h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
+            <div className="text-center">
+              <p className="text-zinc-400 mb-4">找不到剧本: {page.scriptId}</p>
+              <button
+                onClick={() => useAppStore.getState().goHome()}
+                className="text-sm text-blue-400 hover:text-blue-300"
+              >
+                返回首页
+              </button>
+            </div>
+          </div>
+        );
+      }
+      return <PlayPage manifest={manifest} />;
+    }
 
-  const handlePlayerInput = useCallback(
-    (text: string) => {
-      sessionRef.current?.submitInput(text);
-    },
-    [],
-  );
-
-  const handleStop = useCallback(() => {
-    sessionRef.current?.stop();
-    sessionRef.current = null;
-  }, []);
-
-  return (
-    <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-      {/* Header */}
-      <header className="flex-none px-6 py-3 border-b border-zinc-800 flex items-center justify-between">
-        <h1 className="text-sm font-medium text-zinc-400">
-          Interactive Novel Engine
-        </h1>
-        <div className="flex items-center gap-3">
-          {status === 'idle' && !sessionRef.current && (
-            <button
-              onClick={handleStart}
-              className="text-xs px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white transition-colors"
-            >
-              Start MODULE_7
-            </button>
-          )}
-          {status !== 'idle' && status !== 'error' && (
-            <button
-              onClick={handleStop}
-              className="text-xs text-zinc-500 hover:text-red-400 transition-colors"
-            >
-              Stop
-            </button>
-          )}
-          <div className="text-xs text-zinc-600">v2.0</div>
+    case 'editor':
+      return (
+        <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
+          <header className="flex-none px-8 py-5 border-b border-zinc-800">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => useAppStore.getState().goHome()}
+                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+              >
+                ← 返回
+              </button>
+              <h1 className="text-sm font-medium text-zinc-300">编辑器</h1>
+            </div>
+          </header>
+          <div className="flex-1 flex items-center justify-center text-zinc-600">
+            编辑器功能开发中...
+          </div>
         </div>
-      </header>
-
-      {/* Error banner */}
-      {error && (
-        <div className="flex-none px-6 py-2 bg-red-950/50 border-b border-red-900/50 text-red-300 text-sm">
-          {error}
-        </div>
-      )}
-
-      {/* Narrative area */}
-      <NarrativeView />
-
-      {/* Input area */}
-      <InputPanel onSubmit={handlePlayerInput} />
-
-      {/* Debug panel */}
-      <DebugPanel />
-    </div>
-  );
+      );
+  }
 }
 
-export { type GameSessionConfig };
 export { App as default };
-
-/**
- * Helper to start a game session from outside React.
- * Usage: startGame(config) from a script loader or test harness.
- */
-export function createGameStarter() {
-  let session: GameSession | null = null;
-
-  return {
-    start: (config: GameSessionConfig) => {
-      session = new GameSession();
-      session.start(config);
-      return session;
-    },
-    submitInput: (text: string) => {
-      session?.submitInput(text);
-    },
-    stop: () => {
-      session?.stop();
-      session = null;
-    },
-  };
-}

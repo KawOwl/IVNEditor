@@ -103,6 +103,23 @@ export interface ScriptManifest {
   memoryConfig: MemoryConfig;
   enabledTools: string[];         // 启用的可选工具 ID 列表
   initialPrompt?: string;         // 首轮 user message（等效于 prompt.txt）
+  // --- 展示字段 ---
+  coverImage?: string;            // 封面图 URL
+  description?: string;           // 简介
+  author?: string;                // 作者
+  tags?: string[];                // 分类标签
+  openingMessages?: string[];     // 进入对话页后的静态开场消息（不经过 LLM）
+}
+
+/** 首页卡片用的轻量目录条目 */
+export interface ScriptCatalogEntry {
+  id: string;
+  label: string;
+  coverImage?: string;
+  description?: string;
+  author?: string;
+  tags?: string[];
+  chapterCount: number;
 }
 
 export interface ChapterManifest {
