@@ -38,7 +38,6 @@ export interface ToolExecutorContext {
   memory: MemoryManager;
   segments: PromptSegment[];
   onSignalInput?: (hint?: string) => void;
-  onAdvanceFlow?: (nodeId: string) => void;
   onSetMood?: (mood: string) => void;
   onShowImage?: (assetId: string) => void;
 }
@@ -181,19 +180,6 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
       return ctx.segments
         .filter((s) => s.role === 'context')
         .map((s) => ({ id: s.id, label: s.label, tokens: s.tokenCount }));
-    },
-    required: false,
-  };
-
-  tools['advance_flow'] = {
-    description: 'Jump to a specific node in the flow graph.',
-    parameters: z.object({
-      node_id: z.string().describe('The target node ID to jump to'),
-    }),
-    execute: (args) => {
-      const { node_id } = args as { node_id: string };
-      ctx.onAdvanceFlow?.(node_id);
-      return { success: true, jumped_to: node_id };
     },
     required: false,
   };
