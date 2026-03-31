@@ -68,15 +68,11 @@ export function DebugPanel() {
 
 function StateTab() {
   const stateVars = useGameStore((s) => s.stateVars);
-  const currentNodeId = useGameStore((s) => s.currentNodeId);
-  const currentNodePhase = useGameStore((s) => s.currentNodePhase);
   const totalTurns = useGameStore((s) => s.totalTurns);
 
   return (
     <div className="space-y-1 text-zinc-400">
       <div className="text-zinc-500 mb-1">
-        Node: <span className="text-zinc-300">{currentNodeId ?? '—'}</span>{' '}
-        Phase: <span className="text-zinc-300">{currentNodePhase ?? '—'}</span>{' '}
         Turns: <span className="text-zinc-300">{totalTurns}</span>
       </div>
       <div className="border-t border-zinc-800 pt-1">
@@ -249,8 +245,8 @@ function MemoryTab() {
               )}>
                 <div className="flex items-center gap-1 mb-0.5">
                   <span className={cn(
-                    entry.role === 'gm' ? 'text-purple-400' :
-                    entry.role === 'pc' ? 'text-blue-400' : 'text-zinc-500',
+                    entry.role === 'generate' ? 'text-purple-400' :
+                    entry.role === 'receive' ? 'text-blue-400' : 'text-zinc-500',
                   )}>
                     {entry.role}
                   </span>

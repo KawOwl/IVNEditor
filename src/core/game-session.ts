@@ -3,26 +3,23 @@
  *
  * 串联所有核心模块：
  *   StateStore, MemoryManager, ContextAssembler, ToolExecutor,
- *   LLMClient, FlowExecutor → Zustand GameStore
+ *   LLMClient → Zustand GameStore
+ *
+ * 核心循环：Generate + Receive
+ *   1. Generate: 组装 context → 调用 LLM（agentic tool loop）→ 追加记忆 → 按需压缩
+ *   2. Receive: 若 LLM 调用了 signal_input_needed → 等待外部输入 → 追加记忆
+ *   循环直到 session 被停止
  *
  * 对外只暴露简单的 API：
  *   - start(config): 初始化并开始运行
  *   - submitInput(text): 提交玩家输入
  *   - stop(): 停止
- *
- * 内部通过 FlowExecutor 的 NodeHandlers 回调驱动引擎循环。
  */
 
 import type {
-  FlowGraph,
-  FlowNode,
   PromptSegment,
   StateSchema,
   MemoryConfig,
-  SceneNodeConfig,
-  InputNodeConfig,
-  CompressNodeConfig,
-  StateUpdateNodeConfig,
 } from './types';
 import { StateStore } from './state-store';
 import { MemoryManager, estimateTokens } from './memory';
@@ -30,8 +27,6 @@ import { assembleContext } from './context-assembler';
 import { createTools, getEnabledTools } from './tool-executor';
 import { LLMClient } from './llm-client';
 import type { LLMConfig } from './llm-client';
-import { FlowExecutor, createInitialProgress } from './flow-executor';
-import type { NodeHandlers } from './flow-executor';
 import { useGameStore } from '../stores/game-store';
 
 // ============================================================================
@@ -40,7 +35,6 @@ import { useGameStore } from '../stores/game-store';
 
 export interface GameSessionConfig {
   chapterId: string;
-  flowGraph: FlowGraph;
   segments: PromptSegment[];
   stateSchema: StateSchema;
   memoryConfig: MemoryConfig;
@@ -48,6 +42,7 @@ export interface GameSessionConfig {
   enabledTools?: string[];       // optional tool names to enable
   tokenBudget?: number;          // context window budget (default: 120000)
   inheritedSummary?: string;     // from previous chapter
+  scriptVersion?: string;        // script version for progress tracking
 }
 
 // ============================================================================
@@ -58,10 +53,14 @@ export class GameSession {
   private stateStore!: StateStore;
   private memory!: MemoryManager;
   private llmClient!: LLMClient;
-  private flowExecutor!: FlowExecutor;
   private segments!: PromptSegment[];
   private enabledTools!: string[];
   private tokenBudget!: number;
+  private chapterId!: string;
+  private scriptVersion!: string;
+
+  // Session lifecycle
+  private active = false;
 
   // Player input promise resolution
   private inputResolve: ((text: string) => void) | null = null;
@@ -88,49 +87,23 @@ export class GameSession {
       this.segments = config.segments;
       this.enabledTools = config.enabledTools ?? [];
       this.tokenBudget = config.tokenBudget ?? 120000;
+      this.chapterId = config.chapterId;
+      this.scriptVersion = config.scriptVersion ?? '1.0.0';
 
       if (config.inheritedSummary) {
         this.memory.setInheritedSummary(config.inheritedSummary);
       }
 
-      // Create flow executor
-      const progress = createInitialProgress(config.flowGraph, config.chapterId);
-      const handlers = this.createNodeHandlers();
-
-      this.flowExecutor = new FlowExecutor(
-        config.flowGraph,
-        progress,
-        handlers,
-        {
-          onNodeEnter: (node) => {
-            store.updateDebug({
-              currentNodeId: node.id,
-              currentNodePhase: 'entering',
-            });
-          },
-          onNodeExit: (node) => {
-            store.updateDebug({
-              currentNodeId: node.id,
-              currentNodePhase: 'completed',
-            });
-          },
-          onFlowComplete: () => {
-            store.setStatus('idle');
-            store.appendEntry({
-              role: 'system',
-              content: '章节结束。',
-            });
-          },
-        },
-      );
-
       // Sync initial state to UI
       this.syncDebugState();
 
-      // Start flow execution
-      await this.flowExecutor.run();
+      // Start core loop
+      this.active = true;
+      await this.coreLoop();
     } catch (error) {
-      store.setError(error instanceof Error ? error.message : String(error));
+      if (this.active) {
+        store.setError(error instanceof Error ? error.message : String(error));
+      }
     }
   }
 
@@ -144,7 +117,7 @@ export class GameSession {
 
   /** Stop the session */
   stop(): void {
-    this.flowExecutor?.stop();
+    this.active = false;
     if (this.inputResolve) {
       this.inputResolve('');
       this.inputResolve = null;
@@ -153,216 +126,124 @@ export class GameSession {
   }
 
   // ============================================================================
-  // NodeHandlers
+  // Core Loop — Generate + Receive
   // ============================================================================
 
-  private createNodeHandlers(): NodeHandlers {
-    return {
-      onScene: (node, config) => this.handleScene(node, config),
-      onInput: (node, config) => this.handleInput(node, config),
-      onCompress: (_node, config) => this.handleCompress(config),
-      onStateUpdate: (_node, config) => this.handleStateUpdate(config),
-      onCheckpoint: (_node) => this.handleCheckpoint(),
-      getStateVars: () => this.stateStore.getAll(),
-    };
-  }
-
-  private async handleScene(_node: FlowNode, config: SceneNodeConfig): Promise<{
-    inputSignaled: boolean;
-    inputHint?: string;
-  }> {
+  private async coreLoop(): Promise<void> {
     const store = useGameStore.getState();
-    store.setStatus('generating');
 
-    // Update turn
-    const turn = this.stateStore.getTurn() + 1;
-    this.stateStore.setTurn(turn);
+    while (this.active) {
+      // --- Generate Phase ---
+      store.setStatus('generating');
+      const turn = this.stateStore.getTurn() + 1;
+      this.stateStore.setTurn(turn);
 
-    // Create tools
-    const allTools = createTools({
-      stateStore: this.stateStore,
-      memory: this.memory,
-      segments: this.segments,
-      onSignalInput: (hint) => {
-        store.setInputHint(hint ?? null);
-      },
-      onAdvanceFlow: (nodeId) => {
-        this.flowExecutor.jumpTo(nodeId);
-      },
-      onSetMood: (_mood) => {
-        // TODO: connect to UI mood system
-      },
-      onShowImage: (_assetId) => {
-        // TODO: connect to UI image display
-      },
-    });
-    const enabledToolSet = getEnabledTools(allTools, this.enabledTools);
-
-    // Determine which segments to use for this scene
-    const sceneSegments = config.promptSegments.length > 0
-      ? this.segments.filter((s) => config.promptSegments.includes(s.id))
-      : this.segments;
-
-    // Assemble context
-    const context = assembleContext({
-      segments: sceneSegments,
-      stateStore: this.stateStore,
-      memory: this.memory,
-      tokenBudget: this.tokenBudget,
-      outputReserve: config.maxTokens ?? 4096,
-    });
-
-    // Update token breakdown in debug
-    store.updateDebug({
-      tokenBreakdown: context.tokenBreakdown,
-    });
-
-    // Call LLM
-    const result = await this.llmClient.generate({
-      systemPrompt: context.systemPrompt,
-      messages: context.messages,
-      tools: enabledToolSet,
-      maxSteps: 10,
-      maxOutputTokens: config.maxTokens,
-      onTextChunk: (chunk) => {
-        store.appendStreamingChunk(chunk);
-      },
-      onToolCall: (name, args) => {
-        store.addToolCall({ name, args, result: undefined });
-      },
-      onToolResult: (name, toolResult) => {
-        // Update the last matching tool call entry
-        const calls = useGameStore.getState().toolCalls;
-        const lastCall = [...calls].reverse().find(
-          (c) => c.name === name && c.result === undefined,
-        );
-        if (lastCall) {
-          lastCall.result = toolResult;
-        }
-      },
-    });
-
-    // Finalize streaming → append to narrative entries
-    store.finalizeStreaming();
-
-    // Store GM response in memory
-    if (result.text) {
-      this.memory.appendTurn({
-        turn,
-        role: 'gm',
-        content: result.text,
-        tokenCount: estimateTokens(result.text),
+      // Create tools with callbacks
+      const allTools = createTools({
+        stateStore: this.stateStore,
+        memory: this.memory,
+        segments: this.segments,
+        onSignalInput: (hint) => {
+          store.setInputHint(hint ?? null);
+        },
+        onSetMood: (_mood) => {
+          // TODO: connect to UI mood system
+        },
+        onShowImage: (_assetId) => {
+          // TODO: connect to UI image display
+        },
       });
-    }
+      const enabledToolSet = getEnabledTools(allTools, this.enabledTools);
 
-    // Check if memory needs compression
-    if (this.memory.needsCompression()) {
-      await this.memory.compress(this.compressFn);
-    }
+      // Assemble context
+      const context = assembleContext({
+        segments: this.segments,
+        stateStore: this.stateStore,
+        memory: this.memory,
+        tokenBudget: this.tokenBudget,
+      });
 
-    // Sync debug state
-    this.syncDebugState();
+      // Update token breakdown in debug
+      store.updateDebug({
+        tokenBreakdown: context.tokenBreakdown,
+      });
 
-    // If auto scene and input was signaled, wait for input
-    if (result.inputSignaled && !config.auto) {
-      store.setStatus('waiting-input');
-      const inputText = await this.waitForInput();
+      // Call LLM (agentic tool loop)
+      const result = await this.llmClient.generate({
+        systemPrompt: context.systemPrompt,
+        messages: context.messages,
+        tools: enabledToolSet,
+        maxSteps: 10,
+        onTextChunk: (chunk) => {
+          store.appendStreamingChunk(chunk);
+        },
+        onToolCall: (name, args) => {
+          store.addToolCall({ name, args, result: undefined });
+        },
+        onToolResult: (name, toolResult) => {
+          const calls = useGameStore.getState().toolCalls;
+          const lastCall = [...calls].reverse().find(
+            (c) => c.name === name && c.result === undefined,
+          );
+          if (lastCall) {
+            lastCall.result = toolResult;
+          }
+        },
+      });
 
-      if (inputText) {
-        store.appendEntry({ role: 'pc', content: inputText });
-        store.setStatus('generating');
+      // Finalize streaming → append to narrative entries
+      store.finalizeStreaming();
 
+      // Store LLM response in memory
+      if (result.text) {
         this.memory.appendTurn({
           turn,
-          role: 'pc',
-          content: inputText,
-          tokenCount: estimateTokens(inputText),
+          role: 'generate',
+          content: result.text,
+          tokenCount: estimateTokens(result.text),
+        });
+      }
+
+      // Check if memory needs compression
+      if (this.memory.needsCompression()) {
+        store.setStatus('compressing');
+        await this.memory.compress(this.compressFn);
+      }
+
+      // Sync debug state
+      this.syncDebugState();
+
+      // --- Receive Phase (if signaled) ---
+      if (result.inputSignaled && this.active) {
+        store.setStatus('waiting-input');
+        const inputText = await this.waitForInput();
+
+        if (!this.active) break; // stopped while waiting
+
+        if (inputText) {
+          store.appendEntry({ role: 'receive', content: inputText });
+
+          this.memory.appendTurn({
+            turn,
+            role: 'receive',
+            content: inputText,
+            tokenCount: estimateTokens(inputText),
+          });
+        }
+
+        store.setInputHint(null);
+      } else if (!result.inputSignaled) {
+        // LLM didn't signal input needed — chapter may be complete
+        // or LLM will continue generating on next loop iteration.
+        // If the LLM finished without requesting input, end the session.
+        this.active = false;
+        store.setStatus('idle');
+        store.appendEntry({
+          role: 'system',
+          content: '章节结束。',
         });
       }
     }
-
-    return {
-      inputSignaled: result.inputSignaled,
-      inputHint: result.inputHint,
-    };
-  }
-
-  private async handleInput(_node: FlowNode, config: InputNodeConfig): Promise<{
-    text: string;
-    savedToState?: string;
-  }> {
-    const store = useGameStore.getState();
-
-    // Set up input mode
-    if (config.inputType === 'choice' && config.choices) {
-      const choiceList = Array.isArray(config.choices)
-        ? config.choices
-        : []; // fromState would need runtime resolution
-      store.setInputType('choice', choiceList);
-    } else {
-      store.setInputType('freetext');
-    }
-
-    if (config.promptHint) {
-      store.setInputHint(config.promptHint);
-    }
-
-    store.setStatus('waiting-input');
-
-    // Wait for player input
-    const text = await this.waitForInput();
-
-    // Store in memory
-    const turn = this.stateStore.getTurn();
-    this.memory.appendTurn({
-      turn,
-      role: 'pc',
-      content: text,
-      tokenCount: estimateTokens(text),
-    });
-
-    // Append to narrative
-    store.appendEntry({ role: 'pc', content: text });
-
-    // Save to state if configured
-    if (config.saveToState) {
-      this.stateStore.set(config.saveToState, text, 'system');
-    }
-
-    // Reset input mode
-    store.setInputType('freetext');
-    store.setInputHint(null);
-
-    this.syncDebugState();
-
-    return {
-      text,
-      savedToState: config.saveToState,
-    };
-  }
-
-  private async handleCompress(config: CompressNodeConfig): Promise<void> {
-    if (config.pinItems) {
-      for (const item of config.pinItems) {
-        this.memory.pin(item);
-      }
-    }
-    await this.memory.compress(this.compressFn);
-    this.syncDebugState();
-  }
-
-  private async handleStateUpdate(config: StateUpdateNodeConfig): Promise<void> {
-    this.stateStore.update(config.updates, 'system');
-    this.syncDebugState();
-  }
-
-  private async handleCheckpoint(): Promise<void> {
-    // TODO: Auto-save to IndexedDB
-    const store = useGameStore.getState();
-    store.appendEntry({
-      role: 'system',
-      content: '[Checkpoint saved]',
-    });
   }
 
   // ============================================================================
@@ -377,13 +258,10 @@ export class GameSession {
 
   private syncDebugState(): void {
     const store = useGameStore.getState();
-    const progress = this.flowExecutor.getProgress();
 
     store.updateDebug({
       stateVars: this.stateStore.getAll(),
-      currentNodeId: progress.currentNodeId,
-      currentNodePhase: progress.nodePhase,
-      totalTurns: progress.totalTurns,
+      totalTurns: this.stateStore.getTurn(),
       memoryEntryCount: this.memory.getAllEntries().length,
       memorySummaryCount: this.memory.getSummaries().length,
     });

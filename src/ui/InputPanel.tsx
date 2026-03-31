@@ -87,7 +87,7 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={isDisabled}
-            placeholder={isDisabled ? '等待 GM...' : '输入你的行动、对话或想法...'}
+            placeholder={isDisabled ? '等待生成...' : '输入你的行动、对话或想法...'}
             rows={2}
             className={cn(
               'flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2',
@@ -114,7 +114,7 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
       {/* Status indicator */}
       {status === 'generating' && (
         <div className="text-xs text-zinc-500 mt-2 animate-pulse">
-          GM 正在生成...
+          正在生成...
         </div>
       )}
       {status === 'error' && (

@@ -156,7 +156,7 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
   for (const entry of recentEntries) {
     if (usedTokens + entry.tokenCount > availableBudget) break;
     historyMessages.push({
-      role: entry.role === 'pc' ? 'user' : 'assistant',
+      role: entry.role === 'receive' ? 'user' : 'assistant',
       content: entry.content,
     });
     historyTokens += entry.tokenCount;

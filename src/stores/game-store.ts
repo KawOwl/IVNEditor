@@ -1,7 +1,7 @@
 /**
  * GameStore — Zustand 全局状态管理
  *
- * 连接引擎核心（FlowExecutor, LLMClient, etc.）和 UI 层。
+ * 连接引擎核心（CoreLoop, LLMClient, etc.）和 UI 层。
  * UI 组件只读取此 store，所有引擎操作通过 actions 触发。
  */
 
@@ -13,7 +13,7 @@ import { create } from 'zustand';
 
 export interface NarrativeEntry {
   id: string;
-  role: 'gm' | 'pc' | 'system';
+  role: 'generate' | 'receive' | 'system';
   content: string;
   timestamp: number;
 }
@@ -37,12 +37,12 @@ export interface TokenBreakdownInfo {
 
 export interface GameState {
   // --- Session Status ---
-  status: 'idle' | 'loading' | 'generating' | 'waiting-input' | 'error';
+  status: 'idle' | 'loading' | 'generating' | 'waiting-input' | 'compressing' | 'error';
   error: string | null;
 
   // --- Narrative ---
   entries: NarrativeEntry[];
-  streamingText: string;       // current GM streaming output (partial)
+  streamingText: string;       // current LLM streaming output (partial)
   isStreaming: boolean;
 
   // --- Input ---
@@ -52,8 +52,6 @@ export interface GameState {
 
   // --- Debug ---
   stateVars: Record<string, unknown>;
-  currentNodeId: string | null;
-  currentNodePhase: string | null;
   totalTurns: number;
   toolCalls: ToolCallEntry[];
   tokenBreakdown: TokenBreakdownInfo | null;
@@ -79,8 +77,6 @@ export interface GameState {
 
 interface DebugUpdate {
   stateVars: Record<string, unknown>;
-  currentNodeId: string | null;
-  currentNodePhase: string | null;
   totalTurns: number;
   tokenBreakdown: TokenBreakdownInfo | null;
   memoryEntryCount: number;
@@ -113,8 +109,6 @@ const initialState = {
   inputType: 'freetext' as const,
   choices: null,
   stateVars: {},
-  currentNodeId: null,
-  currentNodePhase: null,
   totalTurns: 0,
   toolCalls: [],
   tokenBreakdown: null,
@@ -153,7 +147,7 @@ export const useGameStore = create<GameState>((set) => ({
           ...state.entries,
           {
             id: generateId(),
-            role: 'gm' as const,
+            role: 'generate' as const,
             content: state.streamingText,
             timestamp: Date.now(),
           },

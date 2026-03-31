@@ -1,7 +1,7 @@
 /**
  * NarrativeView — 流式叙事显示组件
  *
- * 显示 GM 叙事和 PC 输入的对话历史。
+ * 显示 LLM 生成的叙事和玩家输入的对话历史。
  * 支持流式打字机效果（显示正在生成的文本）。
  * 自动滚动到底部。
  */
@@ -41,12 +41,12 @@ export function NarrativeView() {
 
       {/* Streaming text (currently generating) */}
       {isStreaming && streamingText && (
-        <NarrativeEntry role="gm" content={streamingText} streaming />
+        <NarrativeEntry role="generate" content={streamingText} streaming />
       )}
 
       {/* Loading indicator */}
       {status === 'generating' && !streamingText && (
-        <div className="text-zinc-500 animate-pulse">GM 正在思考...</div>
+        <div className="text-zinc-500 animate-pulse">正在生成...</div>
       )}
     </div>
   );
@@ -61,7 +61,7 @@ function NarrativeEntry({
   content,
   streaming = false,
 }: {
-  role: 'gm' | 'pc' | 'system';
+  role: 'generate' | 'receive' | 'system';
   content: string;
   streaming?: boolean;
 }) {
@@ -69,18 +69,18 @@ function NarrativeEntry({
     <div
       className={cn(
         'max-w-3xl',
-        role === 'pc' && 'ml-auto text-right',
+        role === 'receive' && 'ml-auto text-right',
         role === 'system' && 'mx-auto text-center text-zinc-500 text-sm',
       )}
     >
-      {role === 'pc' && (
+      {role === 'receive' && (
         <div className="text-xs text-zinc-500 mb-1">你</div>
       )}
       <div
         className={cn(
           'whitespace-pre-wrap leading-relaxed',
-          role === 'gm' && 'text-zinc-100 prose prose-invert prose-sm max-w-none',
-          role === 'pc' && 'text-blue-200 bg-blue-950/30 rounded-lg px-4 py-2 inline-block text-left',
+          role === 'generate' && 'text-zinc-100 prose prose-invert prose-sm max-w-none',
+          role === 'receive' && 'text-blue-200 bg-blue-950/30 rounded-lg px-4 py-2 inline-block text-left',
           role === 'system' && 'text-zinc-500 italic',
           streaming && 'animate-pulse',
         )}

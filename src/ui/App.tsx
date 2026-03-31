@@ -29,7 +29,6 @@ export function App() {
     const chapter = module7TestManifest.chapters[0]!;
     const config: GameSessionConfig = {
       chapterId: chapter.id,
-      flowGraph: chapter.flowGraph,
       segments: chapter.segments,
       stateSchema: module7TestManifest.stateSchema,
       memoryConfig: module7TestManifest.memoryConfig,
