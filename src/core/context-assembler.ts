@@ -192,14 +192,14 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
     );
   }
 
-  // --- Tail reminder: 引擎工具规则（放在末尾，模型关注度最高） ---
+  // --- Tail reminder: 引擎规则（放在末尾，模型关注度最高） ---
   systemPromptSections.push(
-    `---\n[ENGINE RULES — CRITICAL]\n` +
+    `---\n[ENGINE RULES]\n` +
     `你运行在互动叙事引擎中。你是GM，不是玩家。\n` +
     `- 绝对不要替玩家行动、观察、思考或说话。\n` +
-    `- 叙事到达需要玩家回应的时刻时，必须调用 signal_input_needed 工具。\n` +
-    `- 不调用 signal_input_needed = 会话结束。\n` +
-    `- 调用 update_state 更新状态变量。\n` +
+    `- 你的回复结束后，引擎会自动等待玩家输入（和聊天一样）。\n` +
+    `- 叙事到达需要等待玩家的时刻时，正常结束你的回复即可。\n` +
+    `- 可用 update_state 更新状态变量，signal_input_needed 提供输入提示。\n` +
     `- 输出只包含叙事正文和工具调用，不要输出计划、分析或元叙述。\n` +
     `---`,
   );

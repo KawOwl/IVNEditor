@@ -304,8 +304,10 @@ export class GameSession {
       // Sync debug state
       this.syncDebugState();
 
-      // --- Receive Phase (if signaled) ---
-      if (result.inputSignaled && this.active) {
+      // --- Receive Phase ---
+      // 默认行为：回复结束 = 等待玩家输入（与 chat 一致）。
+      // signal_input_needed 仅用于提供 prompt hint，不再是必需的。
+      if (this.active) {
         store.setStatus('waiting-input');
         const inputText = await this.waitForInput();
 
@@ -323,16 +325,6 @@ export class GameSession {
         }
 
         store.setInputHint(null);
-      } else if (!result.inputSignaled) {
-        // LLM didn't signal input needed — chapter may be complete
-        // or LLM will continue generating on next loop iteration.
-        // If the LLM finished without requesting input, end the session.
-        this.active = false;
-        store.setStatus('idle');
-        store.appendEntry({
-          role: 'system',
-          content: '章节结束。',
-        });
       }
     }
   }
