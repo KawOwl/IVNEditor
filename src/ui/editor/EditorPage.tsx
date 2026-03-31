@@ -11,7 +11,6 @@ import { useAppStore } from '../../stores/app-store';
 import { CodeEditor } from './CodeEditor';
 import { EditorDebugPanel } from './EditorDebugPanel';
 import { PlayPanel } from '../play/PlayPanel';
-import { useGameStore } from '../../stores/game-store';
 import { estimateTokens } from '../../core/memory';
 import { cn } from '../../lib/utils';
 import type { ScriptManifest, PromptSegment, StateSchema, MemoryConfig, FlowGraph } from '../../core/types';
@@ -84,12 +83,10 @@ export function EditorPage() {
   const playManifest = useMemo<ScriptManifest>(() => buildManifestFromContent(content), [content]);
 
   const handleTabSwitch = useCallback((tab: RightTab) => {
-    // Reset game state when switching away from play
-    if (rightTab === 'play' && tab !== 'play') {
-      useGameStore.getState().reset();
-    }
+    // Don't auto-reset — debug tab needs play session data.
+    // User can manually reset via PlayPanel's 重置 button.
     setRightTab(tab);
-  }, [rightTab]);
+  }, []);
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
