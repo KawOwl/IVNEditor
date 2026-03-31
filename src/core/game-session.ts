@@ -42,7 +42,6 @@ export interface GameSessionConfig {
   enabledTools?: string[];       // optional tool names to enable
   tokenBudget?: number;          // context window budget (default: 120000)
   inheritedSummary?: string;     // from previous chapter
-  scriptVersion?: string;        // script version for progress tracking
 }
 
 // ============================================================================
@@ -56,9 +55,6 @@ export class GameSession {
   private segments!: PromptSegment[];
   private enabledTools!: string[];
   private tokenBudget!: number;
-  private chapterId!: string;
-  private scriptVersion!: string;
-
   // Session lifecycle
   private active = false;
 
@@ -87,8 +83,6 @@ export class GameSession {
       this.segments = config.segments;
       this.enabledTools = config.enabledTools ?? [];
       this.tokenBudget = config.tokenBudget ?? 120000;
-      this.chapterId = config.chapterId;
-      this.scriptVersion = config.scriptVersion ?? '1.0.0';
 
       if (config.inheritedSummary) {
         this.memory.setInheritedSummary(config.inheritedSummary);
