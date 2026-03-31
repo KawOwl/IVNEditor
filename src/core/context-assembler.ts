@@ -192,6 +192,18 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
     );
   }
 
+  // --- Tail reminder: 引擎工具规则（放在末尾，模型关注度最高） ---
+  systemPromptSections.push(
+    `---\n[ENGINE RULES — CRITICAL]\n` +
+    `你运行在互动叙事引擎中。你是GM，不是玩家。\n` +
+    `- 绝对不要替玩家行动、观察、思考或说话。\n` +
+    `- 叙事到达需要玩家回应的时刻时，必须调用 signal_input_needed 工具。\n` +
+    `- 不调用 signal_input_needed = 会话结束。\n` +
+    `- 调用 update_state 更新状态变量。\n` +
+    `- 输出只包含叙事正文和工具调用，不要输出计划、分析或元叙述。\n` +
+    `---`,
+  );
+
   const systemPrompt = systemPromptSections.join('\n\n');
 
   // AI SDK requires at least one message — use initialPrompt or fallback

@@ -14,7 +14,7 @@
 
 // Vite ?raw imports — 加载原始文本
 import gmPromptCh1 from '../../scenario/MODULE_7/MODULE7_GM_Prompt_序章第一章_v3_0_refine.md?raw';
-import gmPromptCh2 from '../../scenario/MODULE_7/MODULE7_GM_Prompt_第二章_共鸣池_v1_9.md?raw';
+import gmPromptCh2 from '../../scenario/MODULE_7/MODULE7_GM_Prompt_第二章_共鸣池_v3_0.md?raw';
 import pcPrompt from '../../scenario/MODULE_7/MODULE7_PC_Prompt_v1_0.md?raw';
 import worldTimeline from '../../scenario/MODULE_7/世界观——时间线（大事年表）_草案v3.md?raw';
 import resonancePool from '../../scenario/MODULE_7/共鸣池（地点C）—— 场景完整设定.md?raw';
@@ -241,7 +241,7 @@ export const module7TestManifest: ScriptManifest = {
   stateSchema,
   memoryConfig,
   enabledTools: ['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood'],
-  initialPrompt: '请开始序章第一章的叙事。从苏醒过程开始生成，遵循阶段一的指令。',
+  initialPrompt: '开始序章第一章。生成苏醒过程（自动事件），到睁眼瞬间停止。你是GM，不是玩家——不要替玩家行动、观察或思考。苏醒描写结束后，立刻调用 signal_input_needed 等待玩家的第一次输入。',
   chapters: [
     {
       id: 'chapter-1',
