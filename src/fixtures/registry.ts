@@ -6,15 +6,12 @@
  */
 
 import type { ScriptManifest, ScriptCatalogEntry } from '../core/types';
-import { module7TestManifest } from './module7-test';
 
 // ============================================================================
 // Registry — 所有注册的 manifest
 // ============================================================================
 
-const manifests: ScriptManifest[] = [
-  module7TestManifest,
-];
+const manifests: ScriptManifest[] = [];
 
 // ============================================================================
 // Public API
