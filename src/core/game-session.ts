@@ -210,8 +210,11 @@ export class GameSession {
           stateStore: this.stateStore,
           memory: this.memory,
           segments: this.segments,
-          onSignalInput: (hint) => {
+          onSignalInput: ({ hint, choices }) => {
             store.setInputHint(hint ?? null);
+            if (choices && choices.length > 0) {
+              store.setInputType('choice', choices);
+            }
           },
           onSetMood: (_mood) => {
             // TODO: connect to UI mood system
@@ -364,6 +367,7 @@ export class GameSession {
         }
 
         store.setInputHint(null);
+        store.setInputType('freetext');
       }
     }
   }

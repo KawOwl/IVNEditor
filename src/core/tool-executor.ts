@@ -33,11 +33,16 @@ export interface ToolHandler {
   required: boolean;  // true = 必选, false = 可选
 }
 
+export interface SignalInputOptions {
+  hint?: string;
+  choices?: string[];
+}
+
 export interface ToolExecutorContext {
   stateStore: StateStore;
   memory: MemoryManager;
   segments: PromptSegment[];
-  onSignalInput?: (hint?: string) => void;
+  onSignalInput?: (options: SignalInputOptions) => void;
   onSetMood?: (mood: string) => void;
   onShowImage?: (assetId: string) => void;
 }
@@ -71,15 +76,17 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
   };
 
   tools['signal_input_needed'] = {
-    description: 'Signal that the narrative has reached a point where player input is needed. Call this when the player should respond.',
+    description: 'Signal that the narrative has reached a point where player input is needed. Optionally provide choices for the player to pick from — the player can always type a custom response instead.',
     parameters: z.object({
       prompt_hint: z.string().optional()
         .describe('Optional hint text to display to the player'),
+      choices: z.array(z.string()).optional()
+        .describe('Optional list of suggested choices for the player. The player may also type freely instead of picking a choice.'),
     }),
     execute: (args) => {
-      const { prompt_hint } = args as { prompt_hint?: string };
-      ctx.onSignalInput?.(prompt_hint);
-      return { success: true, waiting_for_input: true };
+      const { prompt_hint, choices } = args as { prompt_hint?: string; choices?: string[] };
+      ctx.onSignalInput?.({ hint: prompt_hint, choices });
+      return { success: true, waiting_for_input: true, choices_provided: choices?.length ?? 0 };
     },
     required: true,
   };
