@@ -231,23 +231,36 @@ export class GameSession {
           initialPrompt: this.initialPrompt,
         });
 
-        // Update assembled context + token breakdown in debug
+        // Compute active segment IDs
+        const activeSegmentIds = this.segments
+          .filter((s) => {
+            if (!s.injectionRule) return true;
+            try {
+              const vars = this.stateStore.getAll();
+              const keys = Object.keys(vars);
+              const values = keys.map((k) => vars[k]);
+              const fn = new Function(...keys, `try { return !!(${s.injectionRule.condition}); } catch { return false; }`);
+              return fn(...values);
+            } catch { return false; }
+          })
+          .map((s) => s.id);
+
+        // Update global debug state
         store.updateDebug({
           tokenBreakdown: context.tokenBreakdown,
           assembledSystemPrompt: context.systemPrompt,
           assembledMessages: context.messages.map((m) => ({ role: m.role, content: m.content })),
-          activeSegmentIds: this.segments
-            .filter((s) => {
-              if (!s.injectionRule) return true;
-              try {
-                const vars = this.stateStore.getAll();
-                const keys = Object.keys(vars);
-                const values = keys.map((k) => vars[k]);
-                const fn = new Function(...keys, `try { return !!(${s.injectionRule.condition}); } catch { return false; }`);
-                return fn(...values);
-              } catch { return false; }
-            })
-            .map((s) => s.id),
+          activeSegmentIds,
+        });
+
+        // Stage prompt snapshot for this generation entry
+        store.stagePendingDebug({
+          promptSnapshot: {
+            systemPrompt: context.systemPrompt,
+            messages: context.messages.map((m) => ({ role: m.role, content: m.content })),
+            tokenBreakdown: context.tokenBreakdown,
+            activeSegmentIds,
+          },
         });
 
         // Call LLM (agentic tool loop)
@@ -268,8 +281,10 @@ export class GameSession {
           },
           onToolCall: (name, args) => {
             store.addToolCall({ name, args, result: undefined });
+            store.addPendingToolCall({ name, args, result: undefined });
           },
           onToolResult: (name, toolResult) => {
+            // Update global tool call log
             const calls = useGameStore.getState().toolCalls;
             const lastCall = [...calls].reverse().find(
               (c) => c.name === name && c.result === undefined,
@@ -277,13 +292,24 @@ export class GameSession {
             if (lastCall) {
               lastCall.result = toolResult;
             }
+            // Update pending tool call for this entry
+            const pending = useGameStore.getState().pendingToolCalls;
+            const lastPending = [...pending].reverse().find(
+              (c) => c.name === name && c.result === undefined,
+            );
+            if (lastPending) {
+              lastPending.result = toolResult;
+            }
           },
         });
 
         // Flush any buffered text in the reasoning filter
         textFilter.flush();
 
-        // Finalize streaming → append to narrative entries
+        // Stage finish reason
+        store.stagePendingDebug({ finishReason: result.finishReason });
+
+        // Finalize streaming → append to narrative entries (with attached debug info)
         store.finalizeStreaming();
 
         // Store LLM response in memory
