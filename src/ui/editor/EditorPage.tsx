@@ -18,6 +18,7 @@ import { EditorDebugPanel } from './EditorDebugPanel';
 import { PromptPreviewPanel } from './PromptPreviewPanel';
 import { PlayPanel } from '../play/PlayPanel';
 import { estimateTokens } from '../../core/memory';
+import { getCatalog, getManifestById } from '../../fixtures/registry';
 import { cn } from '../../lib/utils';
 import type {
   ScriptManifest,
@@ -72,6 +73,28 @@ function docToSegment(doc: EditorDocument): PromptSegment {
   };
 }
 
+/** Convert a ScriptManifest's segments into EditorDocuments (deduplicated by segment ID) */
+function manifestToDocuments(manifest: ScriptManifest): EditorDocument[] {
+  const seen = new Set<string>();
+  const docs: EditorDocument[] = [];
+  for (const chapter of manifest.chapters) {
+    for (const seg of chapter.segments) {
+      if (seen.has(seg.id)) continue;
+      seen.add(seg.id);
+      docs.push({
+        id: seg.id,
+        filename: seg.sourceDoc || seg.label,
+        content: seg.content,
+        role: seg.role,
+        priority: seg.priority,
+        injectionCondition: seg.injectionRule?.condition ?? '',
+        injectionDescription: seg.injectionRule?.description ?? '',
+      });
+    }
+  }
+  return docs;
+}
+
 // ============================================================================
 // Default state schema (MODULE_7 aligned)
 // ============================================================================
@@ -97,13 +120,6 @@ const defaultMemoryConfig: MemoryConfig = {
   recencyWindow: 10,
 };
 
-// State vars for autocomplete
-const defaultStateVars: StateVarInfo[] = defaultStateSchema.variables.map((v) => ({
-  name: v.name,
-  type: v.type,
-  description: v.description,
-}));
-
 // ============================================================================
 // Right panel tab type
 // ============================================================================
@@ -122,14 +138,42 @@ export function EditorPage() {
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [rightTab, setRightTab] = useState<RightTab>('prompt');
   const [initialPrompt, setInitialPrompt] = useState('开始测试');
+  const [stateSchema, setStateSchema] = useState<StateSchema>(defaultStateSchema);
+  const [memoryConfig, setMemoryConfig] = useState<MemoryConfig>(defaultMemoryConfig);
+  const [enabledTools, setEnabledTools] = useState<string[]>(['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood']);
+  const [loadedScriptId, setLoadedScriptId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;
+
+  // --- Available scripts from registry ---
+  const catalog = useMemo(() => getCatalog(), []);
+
+  // --- Load a built-in script ---
+  const handleLoadScript = useCallback((scriptId: string) => {
+    const manifest = getManifestById(scriptId);
+    if (!manifest) return;
+
+    const docs = manifestToDocuments(manifest);
+    setDocuments(docs);
+    setSelectedDocId(docs.length > 0 ? docs[0]!.id : null);
+    setStateSchema(manifest.stateSchema);
+    setMemoryConfig(manifest.memoryConfig);
+    setEnabledTools(manifest.enabledTools);
+    setInitialPrompt(manifest.initialPrompt ?? '开始测试');
+    setLoadedScriptId(scriptId);
+  }, []);
 
   // --- Segments derived from documents ---
   const segments = useMemo(
     () => documents.map(docToSegment),
     [documents],
+  );
+
+  // --- State vars for autocomplete (derived from current schema) ---
+  const stateVars = useMemo<StateVarInfo[]>(
+    () => stateSchema.variables.map((v) => ({ name: v.name, type: v.type, description: v.description })),
+    [stateSchema],
   );
 
   // --- Handlers ---
@@ -234,12 +278,12 @@ export function EditorPage() {
   const playManifest = useMemo<ScriptManifest>(() => {
     const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
     return {
-      id: 'editor-draft',
+      id: loadedScriptId ?? 'editor-draft',
       version: '0.0.0',
       label: '编辑器试玩',
-      stateSchema: defaultStateSchema,
-      memoryConfig: defaultMemoryConfig,
-      enabledTools: ['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood'],
+      stateSchema,
+      memoryConfig,
+      enabledTools,
       initialPrompt: initialPrompt || undefined,
       chapters: [{
         id: 'draft-ch1',
@@ -248,7 +292,7 @@ export function EditorPage() {
         segments,
       }],
     };
-  }, [segments, initialPrompt]);
+  }, [segments, initialPrompt, stateSchema, memoryConfig, enabledTools, loadedScriptId]);
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
@@ -280,8 +324,24 @@ export function EditorPage() {
         <div className="flex-1 flex min-w-0">
           {/* File sidebar */}
           <div className="w-56 flex-none border-r border-zinc-800 flex flex-col">
-            {/* Upload button */}
-            <div className="flex-none px-3 py-2 border-b border-zinc-800">
+            {/* Script selector + Upload */}
+            <div className="flex-none px-3 py-2 border-b border-zinc-800 space-y-2">
+              {/* Load built-in script */}
+              <select
+                value={loadedScriptId ?? ''}
+                onChange={(e) => {
+                  if (e.target.value) handleLoadScript(e.target.value);
+                }}
+                className="w-full text-xs px-2 py-1.5 rounded bg-zinc-900 border border-zinc-700 text-zinc-300 focus:outline-none focus:border-zinc-500"
+              >
+                <option value="">选择内置剧本...</option>
+                {catalog.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.label}
+                  </option>
+                ))}
+              </select>
+              {/* Upload files */}
               <button
                 onClick={handleUploadClick}
                 className="w-full text-xs px-2 py-1.5 rounded border border-dashed border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-300 transition-colors"
@@ -350,7 +410,7 @@ export function EditorPage() {
                   <CodeEditor
                     value={selectedDoc.content}
                     onChange={handleContentChange}
-                    stateVars={defaultStateVars}
+                    stateVars={stateVars}
                   />
                 </div>
               </>
@@ -391,7 +451,7 @@ export function EditorPage() {
             {rightTab === 'prompt' && (
               <PromptPreviewPanel
                 segments={segments}
-                stateSchema={defaultStateSchema}
+                stateSchema={stateSchema}
                 initialPrompt={initialPrompt}
               />
             )}
