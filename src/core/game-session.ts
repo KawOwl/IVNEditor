@@ -204,108 +204,115 @@ export class GameSession {
       const turn = this.stateStore.getTurn() + 1;
       this.stateStore.setTurn(turn);
 
-      // Create tools with callbacks
-      const allTools = createTools({
-        stateStore: this.stateStore,
-        memory: this.memory,
-        segments: this.segments,
-        onSignalInput: (hint) => {
-          store.setInputHint(hint ?? null);
-        },
-        onSetMood: (_mood) => {
-          // TODO: connect to UI mood system
-        },
-        onShowImage: (_assetId) => {
-          // TODO: connect to UI image display
-        },
-      });
-      const enabledToolSet = getEnabledTools(allTools, this.enabledTools);
-
-      // Assemble context
-      const context = assembleContext({
-        segments: this.segments,
-        stateStore: this.stateStore,
-        memory: this.memory,
-        tokenBudget: this.tokenBudget,
-        initialPrompt: this.initialPrompt,
-      });
-
-      // Update assembled context + token breakdown in debug
-      store.updateDebug({
-        tokenBreakdown: context.tokenBreakdown,
-        assembledSystemPrompt: context.systemPrompt,
-        assembledMessages: context.messages.map((m) => ({ role: m.role, content: m.content })),
-        activeSegmentIds: this.segments
-          .filter((s) => {
-            if (!s.injectionRule) return true;
-            // Simple check — mirror the assembler logic
-            try {
-              const vars = this.stateStore.getAll();
-              const keys = Object.keys(vars);
-              const values = keys.map((k) => vars[k]);
-              const fn = new Function(...keys, `try { return !!(${s.injectionRule.condition}); } catch { return false; }`);
-              return fn(...values);
-            } catch { return false; }
-          })
-          .map((s) => s.id),
-      });
-
-      // Call LLM (agentic tool loop)
-      // ReasoningFilter: 启发式分离推理前缀（针对 deepseek-chat 等模型）
-      const textFilter = new ReasoningFilter(
-        (reasoning) => store.appendReasoningChunk(reasoning),
-        (text) => store.appendStreamingChunk(text),
-      );
-      const result = await this.llmClient.generate({
-        systemPrompt: context.systemPrompt,
-        messages: context.messages,
-        tools: enabledToolSet,
-        maxSteps: 10,
-        onTextChunk: (chunk) => {
-          textFilter.push(chunk);
-        },
-        onReasoningChunk: (chunk) => {
-          // 原生 reasoning（如 deepseek-reasoner）直接传递
-          store.appendReasoningChunk(chunk);
-        },
-        onToolCall: (name, args) => {
-          store.addToolCall({ name, args, result: undefined });
-        },
-        onToolResult: (name, toolResult) => {
-          const calls = useGameStore.getState().toolCalls;
-          const lastCall = [...calls].reverse().find(
-            (c) => c.name === name && c.result === undefined,
-          );
-          if (lastCall) {
-            lastCall.result = toolResult;
-          }
-        },
-      });
-
-      // Flush any buffered text in the reasoning filter
-      textFilter.flush();
-
-      // Finalize streaming → append to narrative entries
-      store.finalizeStreaming();
-
-      // Store LLM response in memory
-      if (result.text) {
-        this.memory.appendTurn({
-          turn,
-          role: 'generate',
-          content: result.text,
-          tokenCount: estimateTokens(result.text),
+      try {
+        // Create tools with callbacks
+        const allTools = createTools({
+          stateStore: this.stateStore,
+          memory: this.memory,
+          segments: this.segments,
+          onSignalInput: (hint) => {
+            store.setInputHint(hint ?? null);
+          },
+          onSetMood: (_mood) => {
+            // TODO: connect to UI mood system
+          },
+          onShowImage: (_assetId) => {
+            // TODO: connect to UI image display
+          },
         });
-      }
+        const enabledToolSet = getEnabledTools(allTools, this.enabledTools);
 
-      // Check if memory needs compression
-      if (this.memory.needsCompression()) {
-        store.setStatus('compressing');
-        await this.memory.compress(this.compressFn);
-      }
+        // Assemble context
+        const context = assembleContext({
+          segments: this.segments,
+          stateStore: this.stateStore,
+          memory: this.memory,
+          tokenBudget: this.tokenBudget,
+          initialPrompt: this.initialPrompt,
+        });
 
-      // Sync debug state
-      this.syncDebugState();
+        // Update assembled context + token breakdown in debug
+        store.updateDebug({
+          tokenBreakdown: context.tokenBreakdown,
+          assembledSystemPrompt: context.systemPrompt,
+          assembledMessages: context.messages.map((m) => ({ role: m.role, content: m.content })),
+          activeSegmentIds: this.segments
+            .filter((s) => {
+              if (!s.injectionRule) return true;
+              try {
+                const vars = this.stateStore.getAll();
+                const keys = Object.keys(vars);
+                const values = keys.map((k) => vars[k]);
+                const fn = new Function(...keys, `try { return !!(${s.injectionRule.condition}); } catch { return false; }`);
+                return fn(...values);
+              } catch { return false; }
+            })
+            .map((s) => s.id),
+        });
+
+        // Call LLM (agentic tool loop)
+        const textFilter = new ReasoningFilter(
+          (reasoning) => store.appendReasoningChunk(reasoning),
+          (text) => store.appendStreamingChunk(text),
+        );
+        const result = await this.llmClient.generate({
+          systemPrompt: context.systemPrompt,
+          messages: context.messages,
+          tools: enabledToolSet,
+          maxSteps: 10,
+          onTextChunk: (chunk) => {
+            textFilter.push(chunk);
+          },
+          onReasoningChunk: (chunk) => {
+            store.appendReasoningChunk(chunk);
+          },
+          onToolCall: (name, args) => {
+            store.addToolCall({ name, args, result: undefined });
+          },
+          onToolResult: (name, toolResult) => {
+            const calls = useGameStore.getState().toolCalls;
+            const lastCall = [...calls].reverse().find(
+              (c) => c.name === name && c.result === undefined,
+            );
+            if (lastCall) {
+              lastCall.result = toolResult;
+            }
+          },
+        });
+
+        // Flush any buffered text in the reasoning filter
+        textFilter.flush();
+
+        // Finalize streaming → append to narrative entries
+        store.finalizeStreaming();
+
+        // Store LLM response in memory
+        if (result.text) {
+          this.memory.appendTurn({
+            turn,
+            role: 'generate',
+            content: result.text,
+            tokenCount: estimateTokens(result.text),
+          });
+        }
+
+        // Check if memory needs compression
+        if (this.memory.needsCompression()) {
+          store.setStatus('compressing');
+          await this.memory.compress(this.compressFn);
+        }
+
+        // Sync debug state
+        this.syncDebugState();
+
+      } catch (error) {
+        if (!this.active) break;
+        // Finalize any partial streaming content so it's not lost
+        store.finalizeStreaming();
+        // Show error banner but don't change status — Receive Phase will set waiting-input
+        useGameStore.setState({ error: error instanceof Error ? error.message : String(error) });
+        // Fall through to Receive Phase — player can re-send to retry
+      }
 
       // --- Receive Phase ---
       // 默认行为：回复结束 = 等待玩家输入（与 chat 一致）。
@@ -315,6 +322,9 @@ export class GameSession {
         const inputText = await this.waitForInput();
 
         if (!this.active) break; // stopped while waiting
+
+        // Clear error banner on new input
+        useGameStore.setState({ error: null });
 
         if (inputText) {
           store.appendEntry({ role: 'receive', content: inputText });
