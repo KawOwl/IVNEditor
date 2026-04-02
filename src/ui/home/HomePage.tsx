@@ -6,10 +6,11 @@
  * 管理员登录通过全局快捷键 Ctrl+Shift+L 呼出（在 App.tsx 中注册）。
  */
 
+import { useCallback } from 'react';
 import { useAppStore } from '../../stores/app-store';
 import { useAuthStore } from '../../stores/auth-store';
 import { ScriptCard } from './ScriptCard';
-import { getEngineMode } from '../../core/engine-mode';
+import { getEngineMode, getBackendUrl } from '../../core/engine-mode';
 
 const engineMode = getEngineMode();
 
@@ -22,6 +23,23 @@ export function HomePage() {
 
   // Local 模式总是显示编辑器按钮；Remote 模式仅管理员可见
   const canEdit = engineMode === 'local' || isAdmin;
+
+  // 管理员下架剧本
+  const handleUnpublish = useCallback(async (scriptId: string) => {
+    if (!confirm('确定下架此剧本？')) return;
+    try {
+      const authHeader = useAuthStore.getState().getAuthHeader();
+      await fetch(`${getBackendUrl()}/api/scripts/${scriptId}`, {
+        method: 'DELETE',
+        headers: authHeader,
+      });
+      // 刷新 catalog：移除已下架的条目
+      const current = useAppStore.getState().catalog;
+      useAppStore.getState().setCatalog(current.filter((e) => e.id !== scriptId));
+    } catch {
+      // ignore
+    }
+  }, []);
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
@@ -80,6 +98,7 @@ export function HomePage() {
                   key={entry.id}
                   entry={entry}
                   onClick={() => navigateTo({ name: 'play', scriptId: entry.id })}
+                  onUnpublish={canEdit ? () => handleUnpublish(entry.id) : undefined}
                 />
               ))}
             </div>

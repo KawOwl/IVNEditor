@@ -27,6 +27,8 @@ export interface ScriptCatalogEntry {
   id: string;
   label: string;
   description?: string;
+  tags?: string[];
+  version?: string;
   chapterCount: number;
 }
 
@@ -53,6 +55,8 @@ class ScriptStore {
         id: r.id,
         label: r.label,
         description: r.description,
+        tags: r.manifest.tags,
+        version: r.manifest.version,
         chapterCount: r.manifest.chapters.length,
       }));
   }

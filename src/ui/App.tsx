@@ -65,11 +65,13 @@ export function App() {
       // Remote mode: fetch catalog from backend API
       fetch(`${getBackendUrl()}/api/scripts/catalog`)
         .then((res) => res.json())
-        .then((scripts: Array<{ id: string; label: string; description?: string; chapterCount?: number }>) => {
+        .then((scripts: Array<{ id: string; label: string; description?: string; tags?: string[]; version?: string; chapterCount?: number }>) => {
           setCatalog(scripts.map((s) => ({
             id: s.id,
             label: s.label,
             description: s.description,
+            tags: s.tags,
+            version: s.version,
             chapterCount: s.chapterCount ?? 1,
           })));
         })
@@ -83,6 +85,8 @@ export function App() {
           id: item.id,
           label: item.label,
           description: item.description,
+          tags: item.tags,
+          version: item.version,
           chapterCount: item.fileCount,
         })));
       });

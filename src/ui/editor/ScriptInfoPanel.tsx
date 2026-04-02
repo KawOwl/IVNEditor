@@ -4,7 +4,7 @@
  * 编辑剧本标签、简介、状态变量、记忆配置、启用工具等元信息。
  */
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import type { StateSchema, StateVariable, StateVariableType, MemoryConfig } from '../../core/types';
 import { cn } from '../../lib/utils';
 
@@ -15,12 +15,16 @@ import { cn } from '../../lib/utils';
 export interface ScriptInfoPanelProps {
   label: string;
   description: string;
+  version: string;
+  tags: string[];
   stateSchema: StateSchema;
   memoryConfig: MemoryConfig;
   enabledTools: string[];
   initialPrompt: string;
   onLabelChange: (label: string) => void;
   onDescriptionChange: (desc: string) => void;
+  onVersionChange: (version: string) => void;
+  onTagsChange: (tags: string[]) => void;
   onStateSchemaChange: (schema: StateSchema) => void;
   onMemoryConfigChange: (config: MemoryConfig) => void;
   onEnabledToolsChange: (tools: string[]) => void;
@@ -48,12 +52,16 @@ const VAR_TYPES: StateVariableType[] = ['number', 'string', 'boolean', 'array', 
 export function ScriptInfoPanel({
   label,
   description,
+  version,
+  tags,
   stateSchema,
   memoryConfig,
   enabledTools,
   initialPrompt,
   onLabelChange,
   onDescriptionChange,
+  onVersionChange,
+  onTagsChange,
   onStateSchemaChange,
   onMemoryConfigChange,
   onEnabledToolsChange,
@@ -82,6 +90,18 @@ export function ScriptInfoPanel({
               className={cn(inputClass, 'resize-none')}
             />
           </Field>
+          <Field label="版本号">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={version}
+                onChange={(e) => onVersionChange(e.target.value)}
+                placeholder="0.0.0"
+                className={cn(inputClass, 'w-24 font-mono')}
+              />
+              <span className="text-[10px] text-zinc-600">保存时自动 +1</span>
+            </div>
+          </Field>
           <Field label="Initial Prompt">
             <input
               type="text"
@@ -91,6 +111,11 @@ export function ScriptInfoPanel({
               className={inputClass}
             />
           </Field>
+        </Section>
+
+        {/* Tags */}
+        <Section title="标签">
+          <TagsEditor tags={tags} onChange={onTagsChange} />
         </Section>
 
         {/* State variables */}
@@ -233,6 +258,56 @@ function StateVariableEditor({
       >
         + 添加变量
       </button>
+    </div>
+  );
+}
+
+// ============================================================================
+// TagsEditor
+// ============================================================================
+
+function TagsEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
+  const [input, setInput] = useState('');
+
+  const handleAdd = useCallback(() => {
+    const tag = input.trim();
+    if (tag && !tags.includes(tag)) {
+      onChange([...tags, tag]);
+    }
+    setInput('');
+  }, [input, tags, onChange]);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {tags.map((tag) => (
+          <span key={tag} className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">
+            {tag}
+            <button
+              onClick={() => onChange(tags.filter((t) => t !== tag))}
+              className="text-zinc-600 hover:text-red-400 transition-colors"
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-1.5">
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAdd(); } }}
+          placeholder="输入标签，回车添加"
+          className={cn(inputClass, 'flex-1')}
+        />
+        <button
+          onClick={handleAdd}
+          className="text-[11px] px-2 py-1 rounded border border-zinc-700 text-zinc-500 hover:text-zinc-300 hover:border-zinc-500 transition-colors"
+        >
+          +
+        </button>
+      </div>
     </div>
   );
 }

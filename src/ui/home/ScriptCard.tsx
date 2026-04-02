@@ -11,11 +11,12 @@ import { cn } from '../../lib/utils';
 export interface ScriptCardProps {
   entry: ScriptCatalogEntry;
   onClick: () => void;
+  onUnpublish?: () => void;
 }
 
-export function ScriptCard({ entry, onClick }: ScriptCardProps) {
+export function ScriptCard({ entry, onClick, onUnpublish }: ScriptCardProps) {
   return (
-    <button
+    <div
       onClick={onClick}
       className={cn(
         'group relative rounded-xl overflow-hidden',
@@ -54,6 +55,24 @@ export function ScriptCard({ entry, onClick }: ScriptCardProps) {
         <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-sm rounded-full px-2 py-0.5 text-[10px] text-zinc-300">
           {entry.chapterCount} 章
         </div>
+
+        {/* Version badge */}
+        {entry.version && (
+          <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm rounded-full px-2 py-0.5 text-[10px] text-zinc-400 font-mono">
+            v{entry.version}
+          </div>
+        )}
+
+        {/* Unpublish button (admin only) */}
+        {onUnpublish && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onUnpublish(); }}
+            className="absolute bottom-2 right-2 z-10 bg-red-900/80 backdrop-blur-sm text-red-300 hover:bg-red-800 hover:text-red-200 rounded px-2 py-0.5 text-[10px] transition-colors"
+            title="下架此剧本"
+          >
+            下架
+          </button>
+        )}
       </div>
 
       {/* Info area */}
@@ -89,6 +108,6 @@ export function ScriptCard({ entry, onClick }: ScriptCardProps) {
           </div>
         )}
       </div>
-    </button>
+    </div>
   );
 }

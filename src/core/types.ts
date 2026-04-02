@@ -145,6 +145,7 @@ export interface ScriptCatalogEntry {
   description?: string;
   author?: string;
   tags?: string[];
+  version?: string;
   chapterCount: number;
 }
 

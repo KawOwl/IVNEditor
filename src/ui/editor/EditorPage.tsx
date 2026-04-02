@@ -148,6 +148,8 @@ export function EditorPage() {
   const [loadedScriptId, setLoadedScriptId] = useState<string | null>(null);
   const [scriptLabel, setScriptLabel] = useState('未命名剧本');
   const [scriptDescription, setScriptDescription] = useState('');
+  const [scriptVersion, setScriptVersion] = useState('0.0.0');
+  const [scriptTags, setScriptTags] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -187,6 +189,8 @@ export function EditorPage() {
     setLoadedScriptId(scriptId);
     setScriptLabel(record.label);
     setScriptDescription(record.description);
+    setScriptVersion(manifest.version ?? '0.0.0');
+    setScriptTags(manifest.tags ?? []);
     setIsPublished(!!record.published);
     setPromptAssemblyOrder(manifest.promptAssemblyOrder);
     setShowScriptLibrary(false);
@@ -197,12 +201,18 @@ export function EditorPage() {
     setSaving(true);
     try {
       const id = loadedScriptId ?? uuid();
+      // Auto-increment patch version
+      const vParts = scriptVersion.split('.').map(Number);
+      const newVersion = `${vParts[0] || 0}.${vParts[1] || 0}.${(vParts[2] || 0) + 1}`;
+      setScriptVersion(newVersion);
+
       const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
       const manifest: ScriptManifest = {
         id,
-        version: '0.0.0',
+        version: newVersion,
         label: scriptLabel,
         description: scriptDescription,
+        tags: scriptTags.length > 0 ? scriptTags : undefined,
         stateSchema,
         memoryConfig,
         enabledTools,
@@ -233,7 +243,7 @@ export function EditorPage() {
     } finally {
       setSaving(false);
     }
-  }, [loadedScriptId, scriptLabel, scriptDescription, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, refreshScriptList]);
+  }, [loadedScriptId, scriptLabel, scriptDescription, scriptVersion, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, refreshScriptList]);
 
   // --- Delete a script from IndexedDB ---
   const handleDeleteScript = useCallback(async (id: string) => {
@@ -264,9 +274,10 @@ export function EditorPage() {
     const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
     const manifest: ScriptManifest = {
       id,
-      version: '0.0.0',
+      version: scriptVersion,
       label: scriptLabel,
       description: scriptDescription,
+      tags: scriptTags.length > 0 ? scriptTags : undefined,
       stateSchema,
       memoryConfig,
       enabledTools,
@@ -318,6 +329,8 @@ export function EditorPage() {
       setLoadedScriptId(record.id);
       setScriptLabel(record.label);
       setScriptDescription(record.description);
+      setScriptVersion(record.manifest.version ?? '0.0.0');
+      setScriptTags(record.manifest.tags ?? []);
       setPromptAssemblyOrder(record.manifest.promptAssemblyOrder);
       setShowScriptLibrary(false);
     } catch (err) {
@@ -332,6 +345,8 @@ export function EditorPage() {
     setLoadedScriptId(null);
     setScriptLabel('未命名剧本');
     setScriptDescription('');
+    setScriptVersion('0.0.0');
+    setScriptTags([]);
     setStateSchema(defaultStateSchema);
     setMemoryConfig(defaultMemoryConfig);
     setEnabledTools(['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood']);
@@ -811,12 +826,16 @@ export function EditorPage() {
               <ScriptInfoPanel
                 label={scriptLabel}
                 description={scriptDescription}
+                version={scriptVersion}
+                tags={scriptTags}
                 stateSchema={stateSchema}
                 memoryConfig={memoryConfig}
                 enabledTools={enabledTools}
                 initialPrompt={initialPrompt}
                 onLabelChange={setScriptLabel}
                 onDescriptionChange={setScriptDescription}
+                onVersionChange={setScriptVersion}
+                onTagsChange={setScriptTags}
                 onStateSchemaChange={setStateSchema}
                 onMemoryConfigChange={setMemoryConfig}
                 onEnabledToolsChange={setEnabledTools}
