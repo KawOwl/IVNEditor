@@ -23,6 +23,7 @@ import { ScriptStorage, exportScript, parseImportedScript } from '../../storage/
 import type { ScriptRecord, ScriptListItem } from '../../storage/script-storage';
 import { getEngineMode, getBackendUrl } from '../../core/engine-mode';
 import { cn } from '../../lib/utils';
+import { uuid } from '../../lib/uuid';
 import type {
   ScriptManifest,
   PromptSegment,
@@ -191,7 +192,7 @@ export function EditorPage() {
   const handleSaveScript = useCallback(async () => {
     setSaving(true);
     try {
-      const id = loadedScriptId ?? crypto.randomUUID();
+      const id = loadedScriptId ?? uuid();
       const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
       const manifest: ScriptManifest = {
         id,
