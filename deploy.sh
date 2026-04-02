@@ -46,51 +46,56 @@ info "运行用户: $RUN_USER"
 # 获取用户的 HOME（sudo 下 $HOME 可能是 /root）
 RUN_HOME=$(getent passwd "$RUN_USER" | cut -d: -f6)
 
-# 检测 bun
-BUN_PATH=""
-for candidate in \
-  "$(su - "$RUN_USER" -c 'which bun' 2>/dev/null)" \
-  "$RUN_HOME/.bun/bin/bun" \
-  "/usr/local/bin/bun" \
-  "/usr/bin/bun"; do
-  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-    BUN_PATH="$candidate"
-    break
+# nvm 安装的 node/pnpm 路径（取最新版本）
+NVM_BIN=""
+if [ -d "$RUN_HOME/.nvm/versions/node" ]; then
+  NVM_NODE_VER=$(ls "$RUN_HOME/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)
+  if [ -n "$NVM_NODE_VER" ]; then
+    NVM_BIN="$RUN_HOME/.nvm/versions/node/$NVM_NODE_VER/bin"
+    info "检测到 nvm: $NVM_BIN"
   fi
-done
-[ -z "$BUN_PATH" ] && error "找不到 bun，请先安装: curl -fsSL https://bun.sh/install | bash"
+fi
+
+# 通用查找函数：依次检查候选路径，返回第一个可执行的
+find_bin() {
+  local name="$1"
+  shift
+  for candidate in "$@"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# 检测 bun
+BUN_PATH=$(find_bin bun \
+  "$RUN_HOME/.bun/bin/bun" \
+  "${NVM_BIN:+$NVM_BIN/bun}" \
+  "/usr/local/bin/bun" \
+  "/usr/bin/bun" \
+) || error "找不到 bun，请先安装: curl -fsSL https://bun.sh/install | bash"
 info "Bun 路径: $BUN_PATH"
 
-# 检测 pnpm
-PNPM_PATH=""
-for candidate in \
-  "$(su - "$RUN_USER" -c 'which pnpm' 2>/dev/null)" \
-  "$RUN_HOME/.local/share/pnpm/pnpm" \
-  "/usr/local/bin/pnpm" \
-  "/usr/bin/pnpm"; do
-  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-    PNPM_PATH="$candidate"
-    break
-  fi
-done
-[ -z "$PNPM_PATH" ] && error "找不到 pnpm，请先安装: npm install -g pnpm"
-info "pnpm 路径: $PNPM_PATH"
-
-# 检测 node（pnpm 需要）
-NODE_PATH=""
-for candidate in \
-  "$(su - "$RUN_USER" -c 'which node' 2>/dev/null)" \
-  "$RUN_HOME/.nvm/versions/node/$(ls "$RUN_HOME/.nvm/versions/node/" 2>/dev/null | tail -1)/bin/node" \
+# 检测 node
+NODE_PATH=$(find_bin node \
+  "${NVM_BIN:+$NVM_BIN/node}" \
   "/usr/local/bin/node" \
-  "/usr/bin/node"; do
-  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-    NODE_PATH="$candidate"
-    break
-  fi
-done
-[ -z "$NODE_PATH" ] && error "找不到 node，请先安装"
+  "/usr/bin/node" \
+) || error "找不到 node，请先安装"
 NODE_DIR="$(dirname "$NODE_PATH")"
 info "Node 路径: $NODE_PATH"
+
+# 检测 pnpm（nvm 装的 pnpm 在 node 同目录下）
+PNPM_PATH=$(find_bin pnpm \
+  "${NVM_BIN:+$NVM_BIN/pnpm}" \
+  "$NODE_DIR/pnpm" \
+  "$RUN_HOME/.local/share/pnpm/pnpm" \
+  "/usr/local/bin/pnpm" \
+  "/usr/bin/pnpm" \
+) || error "找不到 pnpm，请先安装: npm install -g pnpm"
+info "pnpm 路径: $PNPM_PATH"
 
 # 检查关键文件
 [ ! -f "$PROJECT_DIR/package.json" ] && error "项目目录缺少 package.json"
