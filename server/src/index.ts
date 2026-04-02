@@ -14,6 +14,7 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { scriptRoutes } from './routes/scripts';
 import { sessionRoutes } from './routes/sessions';
+import { configRoutes } from './routes/config';
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -24,6 +25,7 @@ const app = new Elysia()
   .use(cors())
   .use(scriptRoutes)
   .use(sessionRoutes)
+  .use(configRoutes)
   .get('/health', () => ({ ok: true, timestamp: Date.now() }));
 
 // 托管前端静态资源（仅在 dist/ 存在时启用）

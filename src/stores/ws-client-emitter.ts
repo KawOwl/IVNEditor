@@ -158,11 +158,11 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
       break;
 
     case 'tool-call':
-      store().addToolCall({ name: msg.name as string, args: msg.args as Record<string, unknown> });
+      store().addToolCall({ name: msg.name as string, args: msg.args as Record<string, unknown>, result: undefined });
       break;
 
     case 'pending-tool-call':
-      store().addPendingToolCall({ name: msg.name as string, args: msg.args as Record<string, unknown> });
+      store().addPendingToolCall({ name: msg.name as string, args: msg.args as Record<string, unknown>, result: undefined });
       break;
 
     case 'tool-result':

@@ -10,18 +10,20 @@ import type { GameSessionConfig } from '../../src/core/game-session';
 import type { ScriptManifest, PromptSegment } from '../../src/core/types';
 import type { LLMConfig } from '../../src/core/llm-client';
 import { createWebSocketEmitter } from './ws-session-emitter';
+import { getLLMConfig } from './storage/llm-config-store';
 
 // ============================================================================
-// LLM Config — 后端从环境变量读取（API Key 保密）
+// LLM Config — 从可变 config store 读取（编剧可通过 API 动态更新）
 // ============================================================================
 
 function getServerLLMConfig(): LLMConfig {
+  const cfg = getLLMConfig();
   return {
-    provider: process.env.LLM_PROVIDER ?? 'openai-compatible',
-    baseURL: process.env.LLM_BASE_URL ?? 'https://api.deepseek.com/v1',
-    apiKey: process.env.LLM_API_KEY ?? '',
-    model: process.env.LLM_MODEL ?? 'deepseek-chat',
-    name: process.env.LLM_NAME ?? 'server-llm',
+    provider: cfg.provider,
+    baseURL: cfg.baseUrl,
+    apiKey: cfg.apiKey,
+    model: cfg.model,
+    name: cfg.name,
   };
 }
 

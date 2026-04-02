@@ -3,6 +3,9 @@
  *
  * 编剧用来配置文本生成和向量嵌入模型的连接信息。
  * 数据存储在 localStorage，不跟剧本走。
+ *
+ * Remote 模式下额外显示「从服务器拉取」和「同步到服务器」按钮，
+ * 编剧可以将本地配置推送到后端，或从后端拉取当前配置。
  */
 
 import { useState } from 'react';
@@ -11,6 +14,7 @@ import {
   PROVIDER_OPTIONS,
 } from '../../stores/llm-settings-store';
 import type { LLMProviderType } from '../../core/types';
+import { getEngineMode, getBackendUrl } from '../../core/engine-mode';
 import { cn } from '../../lib/utils';
 
 // ============================================================================
@@ -28,8 +32,13 @@ export function LLMSettingsPanel() {
   const [showTextKey, setShowTextKey] = useState(false);
   const [showEmbeddingKey, setShowEmbeddingKey] = useState(false);
 
+  const isRemote = getEngineMode() === 'remote';
+
   return (
     <div className="space-y-6">
+      {/* Remote mode: server sync controls */}
+      {isRemote && <ServerSyncSection />}
+
       {/* Text model */}
       <EndpointSection
         title="文本生成模型"
@@ -61,6 +70,103 @@ export function LLMSettingsPanel() {
           />
         )}
       </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// ServerSyncSection — 服务器配置同步（仅 remote 模式）
+// ============================================================================
+
+function ServerSyncSection() {
+  const [syncing, setSyncing] = useState(false);
+  const [message, setMessage] = useState<{ text: string; type: 'ok' | 'error' } | null>(null);
+
+  const backendUrl = getBackendUrl();
+
+  const handlePull = async () => {
+    setSyncing(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`${backendUrl}/api/config/llm`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const cfg = await res.json();
+
+      // 更新本地 store（注意：apiKey 是掩码的，不覆盖本地）
+      const patch: Record<string, string> = {};
+      if (cfg.provider) patch.provider = cfg.provider;
+      if (cfg.baseUrl) patch.baseUrl = cfg.baseUrl;
+      if (cfg.model) patch.model = cfg.model;
+      if (cfg.name) patch.name = cfg.name;
+      // apiKey 如果包含 ... 说明是掩码，不覆盖本地
+      if (cfg.apiKey && !cfg.apiKey.includes('...')) {
+        patch.apiKey = cfg.apiKey;
+      }
+
+      useLLMSettingsStore.getState().updateText(patch);
+      setMessage({ text: '已从服务器拉取配置（API Key 除外）', type: 'ok' });
+    } catch (err) {
+      setMessage({ text: `拉取失败: ${err}`, type: 'error' });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handlePush = async () => {
+    setSyncing(true);
+    setMessage(null);
+    try {
+      const { text } = useLLMSettingsStore.getState();
+      const res = await fetch(`${backendUrl}/api/config/llm`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: text.provider,
+          baseUrl: text.baseUrl,
+          apiKey: text.apiKey,
+          model: text.model,
+          name: text.name,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setMessage({ text: '已同步到服务器，新会话将使用此配置', type: 'ok' });
+    } catch (err) {
+      setMessage({ text: `同步失败: ${err}`, type: 'error' });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <div className="rounded border border-zinc-700 bg-zinc-900/50 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-zinc-300">服务器配置同步</span>
+        <span className="text-[10px] text-zinc-600">{backendUrl}</span>
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={handlePull}
+          disabled={syncing}
+          className="flex-1 text-[11px] px-2 py-1.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 transition-colors disabled:opacity-50"
+        >
+          {syncing ? '...' : '从服务器拉取'}
+        </button>
+        <button
+          onClick={handlePush}
+          disabled={syncing}
+          className="flex-1 text-[11px] px-2 py-1.5 rounded bg-blue-900/50 border border-blue-800/50 text-blue-300 hover:border-blue-600 hover:text-blue-100 transition-colors disabled:opacity-50"
+        >
+          {syncing ? '...' : '同步到服务器'}
+        </button>
+      </div>
+      {message && (
+        <p className={cn(
+          'text-[10px]',
+          message.type === 'ok' ? 'text-emerald-400' : 'text-red-400',
+        )}>
+          {message.text}
+        </p>
+      )}
     </div>
   );
 }
