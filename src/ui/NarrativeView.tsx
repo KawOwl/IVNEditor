@@ -66,10 +66,7 @@ export function NarrativeView({ showReasoning = false }: NarrativeViewProps) {
         />
       )}
 
-      {/* Loading indicator */}
-      {status === 'generating' && !streamingText && !streamingReasoning && (
-        <div className="text-zinc-500 animate-pulse">正在生成...</div>
-      )}
+      {/* Loading indicator removed — status bar already shows "生成中..." */}
     </div>
   );
 }

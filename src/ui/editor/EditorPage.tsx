@@ -446,26 +446,26 @@ export function EditorPage() {
             ))}
           </div>
 
-          {/* Tab content */}
-          <div className="flex-1 min-h-0 overflow-hidden">
-            {rightTab === 'prompt' && (
+          {/* Tab content — PlayPanel 始终挂载（hidden），避免切 tab 丢失 session */}
+          <div className="flex-1 min-h-0 overflow-hidden relative">
+            <div className={cn('absolute inset-0', rightTab !== 'prompt' && 'hidden')}>
               <PromptPreviewPanel
                 segments={segments}
                 stateSchema={stateSchema}
                 initialPrompt={initialPrompt}
               />
-            )}
-            {rightTab === 'play' && (
+            </div>
+            <div className={cn('absolute inset-0', rightTab !== 'play' && 'hidden')}>
               <PlayPanel
                 manifest={playManifest}
                 compact
                 showDebug={false}
                 showReasoning
               />
-            )}
-            {rightTab === 'debug' && (
+            </div>
+            <div className={cn('absolute inset-0', rightTab !== 'debug' && 'hidden')}>
               <EditorDebugPanel />
-            )}
+            </div>
           </div>
         </div>
       </div>

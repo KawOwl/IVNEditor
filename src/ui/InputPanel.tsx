@@ -1,15 +1,13 @@
 /**
  * InputPanel — 玩家输入面板
  *
- * 交互模式：
- *   1. 在输入框输入内容
- *   2. 点击下方动作按钮（思考/对话/行动/观察）发送
- *      - 无文本时按钮为灰色标签态，仅切换默认类型
- *      - 有文本时按钮高亮为发送态，点击直接发送
+ * 交互流程：
+ *   1. 在输入框输入内容（placeholder 引导："输入你想做的行动并提交"）
+ *   2. 点击下方四个动作按钮之一发送（思考/对话/行动/观察）
+ *      - 无文本时按钮灰色 disabled
+ *      - 有文本时按钮亮起可点击
  *      - Enter 快捷键以当前选中类型发送
  *   3. choice 模式下额外显示选项按钮，点击直接发送
- *
- * placeholder 随动作类型变化，引导用户输入。
  */
 
 import { useState, useCallback, type KeyboardEvent } from 'react';
@@ -23,40 +21,15 @@ import { cn } from '../lib/utils';
 interface ActionType {
   id: string;
   label: string;
-  icon: string;
   prefix: string;
-  placeholder: string;  // 输入框引导文字
-  // 标签态（无文本）
-  tagColor: string;
-  // 发送态（有文本）
-  sendColor: string;
+  color: string;        // active/enabled color
 }
 
 const ACTION_TYPES: ActionType[] = [
-  {
-    id: 'think', label: '思考', icon: '💭', prefix: '[思考]',
-    placeholder: '你在想什么...',
-    tagColor: 'border-purple-800/50 text-purple-500/70',
-    sendColor: 'border-purple-500 text-purple-200 bg-purple-900/60 shadow-sm shadow-purple-900/30',
-  },
-  {
-    id: 'speak', label: '对话', icon: '💬', prefix: '[对话]',
-    placeholder: '你想说什么...',
-    tagColor: 'border-blue-800/50 text-blue-500/70',
-    sendColor: 'border-blue-500 text-blue-200 bg-blue-900/60 shadow-sm shadow-blue-900/30',
-  },
-  {
-    id: 'act', label: '行动', icon: '🎬', prefix: '[行动]',
-    placeholder: '你想做什么...',
-    tagColor: 'border-emerald-800/50 text-emerald-500/70',
-    sendColor: 'border-emerald-500 text-emerald-200 bg-emerald-900/60 shadow-sm shadow-emerald-900/30',
-  },
-  {
-    id: 'observe', label: '观察', icon: '👁', prefix: '[观察]',
-    placeholder: '你想观察什么...',
-    tagColor: 'border-amber-800/50 text-amber-500/70',
-    sendColor: 'border-amber-500 text-amber-200 bg-amber-900/60 shadow-sm shadow-amber-900/30',
-  },
+  { id: 'think',   label: '思考', prefix: '[思考]', color: 'border-purple-500 text-purple-200 bg-purple-900/50' },
+  { id: 'speak',   label: '对话', prefix: '[对话]', color: 'border-blue-500 text-blue-200 bg-blue-900/50' },
+  { id: 'act',     label: '行动', prefix: '[行动]', color: 'border-emerald-500 text-emerald-200 bg-emerald-900/50' },
+  { id: 'observe', label: '观察', prefix: '[观察]', color: 'border-amber-500 text-amber-200 bg-amber-900/50' },
 ];
 
 const DEFAULT_HINT = '你想做什么？';
@@ -114,7 +87,7 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
   const displayHint = inputHint ?? DEFAULT_HINT;
 
   return (
-    <div className="border-t border-zinc-800 px-4 py-3 space-y-2.5">
+    <div className="border-t border-zinc-800 px-4 py-3 space-y-2">
       {/* Hint */}
       {status === 'waiting-input' && (
         <div className="text-sm text-zinc-400 italic">
@@ -131,7 +104,7 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
               onClick={() => handleChoice(choice)}
               disabled={isDisabled}
               className={cn(
-                'px-4 py-2 rounded-lg text-sm transition-colors border',
+                'px-4 py-2 rounded text-sm transition-colors border',
                 isDisabled
                   ? 'bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed'
                   : 'bg-zinc-900 border-zinc-700 text-zinc-200 hover:bg-zinc-800 hover:border-zinc-600 hover:text-white cursor-pointer',
@@ -154,73 +127,43 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
             ? '等待生成...'
             : hasChoices
               ? '或者输入自定义回应...'
-              : currentAction.placeholder
+              : '输入你想做的事情并选择动作类型提交'
         }
         rows={2}
         className={cn(
-          'w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2',
+          'w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2',
           'text-zinc-100 placeholder:text-zinc-600 resize-none text-sm',
           'focus:outline-none focus:border-zinc-500 transition-colors',
           isDisabled && 'opacity-50 cursor-not-allowed',
         )}
       />
 
-      {/* Action buttons row */}
-      <div className="flex items-center gap-1.5">
+      {/* Action buttons — 四等分宽度 */}
+      <div className="grid grid-cols-4 gap-1.5">
         {ACTION_TYPES.map((action) => {
-          const isActive = activeAction === action.id;
+          const canSend = hasText && !isDisabled;
           return (
             <button
               key={action.id}
               onClick={() => {
                 setActiveAction(action.id);
-                if (hasText && !isDisabled) {
+                if (canSend) {
                   submitWithAction(action);
                 }
               }}
-              disabled={isDisabled}
+              disabled={isDisabled || !hasText}
               className={cn(
-                'px-3 py-1.5 rounded-lg text-xs font-medium transition-all border',
-                isDisabled
-                  ? 'bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed'
-                  : hasText
-                    // 发送态：高亮、有存在感
-                    ? cn(
-                        action.sendColor,
-                        'cursor-pointer hover:brightness-110',
-                      )
-                    // 标签态：低调
-                    : isActive
-                      ? cn(action.tagColor, 'bg-zinc-900/50')
-                      : 'border-zinc-800/50 text-zinc-600 bg-transparent hover:text-zinc-500 hover:border-zinc-700 cursor-pointer',
+                'py-1.5 rounded text-xs font-medium transition-all border text-center',
+                !canSend
+                  ? 'bg-zinc-900/50 border-zinc-800 text-zinc-600 cursor-not-allowed'
+                  : action.color + ' cursor-pointer hover:brightness-110',
               )}
             >
-              {action.icon} {action.label}{hasText && !isDisabled ? ' →' : ''}
+              {action.label}
             </button>
           );
         })}
-
-        <div className="flex-1" />
-
-        {/* 快捷键提示 */}
-        {!isDisabled && hasText && (
-          <span className="text-[10px] text-zinc-600">
-            Enter = {currentAction.icon}{currentAction.label}
-          </span>
-        )}
       </div>
-
-      {/* Status indicator */}
-      {status === 'generating' && (
-        <div className="text-xs text-zinc-500 animate-pulse">
-          正在生成...
-        </div>
-      )}
-      {status === 'error' && (
-        <div className="text-xs text-red-400">
-          发生错误，请查看调试面板
-        </div>
-      )}
     </div>
   );
 }
