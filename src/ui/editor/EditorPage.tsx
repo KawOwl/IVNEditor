@@ -17,6 +17,7 @@ import { CodeEditor } from './CodeEditor';
 import { EditorDebugPanel } from './EditorDebugPanel';
 import { PromptPreviewPanel } from './PromptPreviewPanel';
 import { PlayPanel } from '../play/PlayPanel';
+import { LLMSettingsPanel } from '../settings/LLMSettingsPanel';
 import { estimateTokens } from '../../core/memory';
 import { ScriptStorage, exportScript, parseImportedScript } from '../../storage/script-storage';
 import type { ScriptRecord, ScriptListItem } from '../../storage/script-storage';
@@ -123,7 +124,7 @@ const defaultMemoryConfig: MemoryConfig = {
 // Right panel tab type
 // ============================================================================
 
-type RightTab = 'prompt' | 'play' | 'debug';
+type RightTab = 'prompt' | 'play' | 'debug' | 'settings';
 
 // ============================================================================
 // EditorPage
@@ -698,6 +699,7 @@ export function EditorPage() {
               { id: 'prompt' as const, label: 'Prompt 预览', activeClass: 'text-zinc-200 border-b-2 border-zinc-400' },
               { id: 'play' as const, label: '试玩', activeClass: 'text-emerald-400 border-b-2 border-emerald-500' },
               { id: 'debug' as const, label: '调试', activeClass: 'text-amber-400 border-b-2 border-amber-500' },
+              { id: 'settings' as const, label: '设置', activeClass: 'text-zinc-200 border-b-2 border-zinc-400' },
             ]).map((tab) => (
               <button
                 key={tab.id}
@@ -731,6 +733,9 @@ export function EditorPage() {
             </div>
             <div className={cn('absolute inset-0', rightTab !== 'debug' && 'hidden')}>
               <EditorDebugPanel />
+            </div>
+            <div className={cn('absolute inset-0 overflow-y-auto p-3', rightTab !== 'settings' && 'hidden')}>
+              <LLMSettingsPanel />
             </div>
           </div>
         </div>

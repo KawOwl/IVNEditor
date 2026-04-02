@@ -18,6 +18,7 @@ import { GameSession } from '../../core/game-session';
 import type { GameSessionConfig } from '../../core/game-session';
 import { createLocalEmitter } from '../../stores/local-session-emitter';
 import type { ScriptManifest } from '../../core/types';
+import { getTextLLMConfig } from '../../stores/llm-settings-store';
 import { cn } from '../../lib/utils';
 
 // ============================================================================
@@ -33,20 +34,6 @@ export interface PlayPanelProps {
   showDebug?: boolean;
   /** 是否显示 LLM 推理过程（debug 模式） */
   showReasoning?: boolean;
-}
-
-// ============================================================================
-// LLM Config helper（从环境变量读取）
-// ============================================================================
-
-function getLLMConfig() {
-  return {
-    provider: 'openai-compatible' as const,
-    baseURL: import.meta.env.VITE_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1',
-    apiKey: import.meta.env.VITE_DEEPSEEK_API_KEY ?? '',
-    model: import.meta.env.VITE_DEEPSEEK_MODEL ?? 'deepseek-chat',
-    name: 'deepseek',
-  };
 }
 
 // ============================================================================
@@ -85,7 +72,7 @@ export function PlayPanel({ manifest, compact = false, showDebug = true, showRea
       memoryConfig: manifest.memoryConfig,
       enabledTools: manifest.enabledTools,
       initialPrompt: manifest.initialPrompt,
-      llmConfig: getLLMConfig(),
+      llmConfig: getTextLLMConfig(),
     };
 
     const session = new GameSession(createLocalEmitter());

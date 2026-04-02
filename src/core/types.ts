@@ -6,6 +6,28 @@
  */
 
 // ============================================================================
+// LLM Provider Config — LLM 提供商配置（core 统一接口）
+// ============================================================================
+
+/** 支持的 provider 协议 */
+export type LLMProviderType = 'openai-compatible' | 'anthropic';
+
+/** 单个模型端点配置 */
+export interface ModelEndpoint {
+  provider: LLMProviderType;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  name?: string;                    // 显示名称
+}
+
+/** 引擎所需的完整 LLM 配置——文本生成 + 向量嵌入 */
+export interface ProviderConfig {
+  text: ModelEndpoint;              // 文本生成模型（必需）
+  embedding?: ModelEndpoint;        // 向量嵌入模型（可选，记忆模块用）
+}
+
+// ============================================================================
 // Flow Graph — 场景流程图（可视化参考，不做运行时路由）
 // ============================================================================
 
