@@ -127,7 +127,7 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
             ? '等待生成...'
             : hasChoices
               ? '或者输入自定义回应...'
-              : '输入你想做的事情并选择动作类型提交'
+              : '输入你想做的事情，并点击对应行动类型提交'
         }
         rows={2}
         className={cn(
