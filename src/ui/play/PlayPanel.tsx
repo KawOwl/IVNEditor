@@ -111,6 +111,7 @@ export function PlayPanel({
         memoryConfig: manifest.memoryConfig,
         enabledTools: manifest.enabledTools,
         initialPrompt: manifest.initialPrompt,
+        assemblyOrder: manifest.promptAssemblyOrder,
         llmConfig: getTextLLMConfig(),
       };
 

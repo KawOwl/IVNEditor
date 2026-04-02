@@ -51,6 +51,7 @@ export interface AssembleOptions {
   tokenBudget: number;
   outputReserve?: number;   // tokens reserved for LLM output (default: 4096)
   initialPrompt?: string;   // 首轮 user message（等效于 prompt.txt）
+  assemblyOrder?: string[]; // 自定义组装顺序（section ID 列表，含虚拟 section）
 }
 
 // ============================================================================
@@ -88,6 +89,25 @@ function evaluateCondition(
 // ContextAssembler
 // ============================================================================
 
+// Virtual section IDs (must match PromptPreviewPanel)
+const VIRTUAL_IDS = {
+  STATE: '_engine_state',
+  MEMORY: '_engine_memory',
+  HISTORY: '_engine_history',
+  RULES: '_engine_rules',
+  INITIAL_PROMPT: '_initial_prompt',
+} as const;
+
+const ENGINE_RULES_CONTENT =
+  `---\n[ENGINE RULES]\n` +
+  `你运行在互动叙事引擎中。你是GM，不是玩家。\n` +
+  `- 绝对不要替玩家行动、观察、思考或说话。\n` +
+  `- 你的回复结束后，引擎会自动等待玩家输入（和聊天一样）。\n` +
+  `- 叙事到达需要等待玩家的时刻时，正常结束你的回复即可。\n` +
+  `- 可用 update_state 更新状态变量，signal_input_needed 提供输入提示。\n` +
+  `- 输出只包含叙事正文和工具调用，不要输出计划、分析或元叙述。\n` +
+  `---`;
+
 export function assembleContext(options: AssembleOptions): AssembledContext {
   const {
     segments,
@@ -95,70 +115,125 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
     memory,
     tokenBudget,
     outputReserve = 4096,
+    assemblyOrder,
   } = options;
 
   const availableBudget = tokenBudget - outputReserve;
   const vars = stateStore.getAll();
   let usedTokens = 0;
 
-  // --- 1. Filter and sort segments by injection rules ---
+  // --- 1. Filter active segments by injection rules ---
   const activeSegments = segments.filter((seg) => {
-    if (seg.role === 'draft') return false; // draft segments are never injected
-    if (!seg.injectionRule) return true; // no rule = always inject
+    if (seg.role === 'draft') return false;
+    if (!seg.injectionRule) return true;
     return evaluateCondition(seg.injectionRule.condition, vars);
   });
 
-  const systemSegments = activeSegments
-    .filter((s) => s.role === 'system')
-    .sort((a, b) => a.priority - b.priority);
+  // --- 2. Build named section content map ---
+  // Each user segment gets its own ID; virtual sections use VIRTUAL_IDS
+  const sectionContent = new Map<string, string>();
+  const sectionTokens = new Map<string, number>();
 
-  const contextSegments = activeSegments
-    .filter((s) => s.role === 'context')
-    .sort((a, b) => a.priority - b.priority);
-
-  // --- 2. System segments (not trimmed) ---
-  const systemParts: string[] = [];
-  let systemTokens = 0;
-  for (const seg of systemSegments) {
-    systemParts.push(seg.content);
-    systemTokens += seg.tokenCount;
+  // User segments
+  for (const seg of activeSegments) {
+    sectionContent.set(seg.id, seg.content);
+    sectionTokens.set(seg.id, seg.tokenCount);
   }
-  usedTokens += systemTokens;
 
-  // --- 3. State YAML ---
+  // State YAML
   const stateYaml = stateStore.serialize();
-  const stateTokens = estimateTokens(stateYaml);
   const stateSection = `---\nINTERNAL_STATE:\n${stateYaml}\n---`;
-  usedTokens += stateTokens;
+  const stateTokenCount = estimateTokens(stateYaml);
+  sectionContent.set(VIRTUAL_IDS.STATE, stateSection);
+  sectionTokens.set(VIRTUAL_IDS.STATE, stateTokenCount);
 
-  // --- 4. Memory summaries ---
-  let summaryTokens = 0;
+  // Memory summaries
   const summaryParts: string[] = [];
-
   const inherited = memory.getInheritedSummary();
-  if (inherited) {
-    const tokens = estimateTokens(inherited);
-    if (usedTokens + tokens <= availableBudget) {
-      summaryParts.push(`[Previous Chapter Summary]\n${inherited}`);
-      summaryTokens += tokens;
-      usedTokens += tokens;
+  if (inherited) summaryParts.push(`[Previous Chapter Summary]\n${inherited}`);
+  for (const summary of memory.getSummaries()) summaryParts.push(summary);
+  const summaryContent = summaryParts.length > 0
+    ? `---\n[Memory Summary]\n${summaryParts.join('\n\n')}\n---`
+    : '';
+  const summaryTokenCount = summaryContent ? estimateTokens(summaryContent) : 0;
+  if (summaryContent) {
+    sectionContent.set(VIRTUAL_IDS.MEMORY, summaryContent);
+    sectionTokens.set(VIRTUAL_IDS.MEMORY, summaryTokenCount);
+  }
+
+  // Engine rules
+  sectionContent.set(VIRTUAL_IDS.RULES, ENGINE_RULES_CONTENT);
+  sectionTokens.set(VIRTUAL_IDS.RULES, estimateTokens(ENGINE_RULES_CONTENT));
+
+  // --- 3. Determine assembly order ---
+  let orderedIds: string[];
+  if (assemblyOrder && assemblyOrder.length > 0) {
+    // Use custom order, filtering to only existing sections
+    const existing = new Set(sectionContent.keys());
+    orderedIds = assemblyOrder.filter((id) => existing.has(id));
+    // Append any new sections not in custom order
+    for (const id of sectionContent.keys()) {
+      if (!orderedIds.includes(id)) orderedIds.push(id);
     }
+  } else {
+    // Default order: system segs → state → memory → context segs → rules
+    const systemSegs = activeSegments
+      .filter((s) => s.role === 'system')
+      .sort((a, b) => a.priority - b.priority);
+    const contextSegs = activeSegments
+      .filter((s) => s.role === 'context')
+      .sort((a, b) => a.priority - b.priority);
+    orderedIds = [
+      ...systemSegs.map((s) => s.id),
+      VIRTUAL_IDS.STATE,
+      ...(summaryContent ? [VIRTUAL_IDS.MEMORY] : []),
+      ...contextSegs.map((s) => s.id),
+      VIRTUAL_IDS.RULES,
+    ];
   }
 
-  for (const summary of memory.getSummaries()) {
-    const tokens = estimateTokens(summary);
-    if (usedTokens + tokens > availableBudget) break;
-    summaryParts.push(summary);
-    summaryTokens += tokens;
+  // Remove history and initial_prompt from system prompt ordering
+  // (they are handled as messages, not system prompt sections)
+  orderedIds = orderedIds.filter(
+    (id) => id !== VIRTUAL_IDS.HISTORY && id !== VIRTUAL_IDS.INITIAL_PROMPT,
+  );
+
+  // --- 4. Assemble system prompt following order, respecting budget ---
+  const systemPromptSections: string[] = [];
+  let systemTokens = 0;
+  let contextTokens = 0;
+  let stateTokensFinal = 0;
+  let summaryTokensFinal = 0;
+
+  for (const id of orderedIds) {
+    const content = sectionContent.get(id);
+    const tokens = sectionTokens.get(id) ?? 0;
+    if (!content) continue;
+
+    // System segments and engine rules are not trimmed
+    const seg = activeSegments.find((s) => s.id === id);
+    const isSystemOrRules = (seg?.role === 'system') || id === VIRTUAL_IDS.RULES || id === VIRTUAL_IDS.STATE;
+
+    if (!isSystemOrRules && usedTokens + tokens > availableBudget) continue;
+
+    systemPromptSections.push(content);
     usedTokens += tokens;
+
+    // Track token categories
+    if (seg?.role === 'system') systemTokens += tokens;
+    else if (seg?.role === 'context') contextTokens += tokens;
+    else if (id === VIRTUAL_IDS.STATE) stateTokensFinal = tokens;
+    else if (id === VIRTUAL_IDS.MEMORY) summaryTokensFinal = tokens;
+    else if (id === VIRTUAL_IDS.RULES) systemTokens += tokens;
   }
 
-  // --- 5. Recent history ---
+  const systemPrompt = systemPromptSections.join('\n\n');
+
+  // --- 5. Recent history (always after system prompt, as messages) ---
   let historyTokens = 0;
   const recentEntries = memory.getRecent();
   const historyMessages: ChatMessage[] = [];
 
-  // Add recent entries from oldest to newest
   for (const entry of recentEntries) {
     if (usedTokens + entry.tokenCount > availableBudget) break;
     historyMessages.push({
@@ -168,48 +243,6 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
     historyTokens += entry.tokenCount;
     usedTokens += entry.tokenCount;
   }
-
-  // --- 6. Context segments (trimmable) ---
-  let contextTokens = 0;
-  const contextParts: string[] = [];
-  for (const seg of contextSegments) {
-    if (usedTokens + seg.tokenCount > availableBudget) break;
-    contextParts.push(seg.content);
-    contextTokens += seg.tokenCount;
-    usedTokens += seg.tokenCount;
-  }
-
-  // --- Assemble system prompt ---
-  const systemPromptSections = [
-    ...systemParts,
-    stateSection,
-  ];
-
-  if (summaryParts.length > 0) {
-    systemPromptSections.push(
-      `---\n[Memory Summary]\n${summaryParts.join('\n\n')}\n---`,
-    );
-  }
-
-  if (contextParts.length > 0) {
-    systemPromptSections.push(
-      `---\n[World Knowledge]\n${contextParts.join('\n\n')}\n---`,
-    );
-  }
-
-  // --- Tail reminder: 引擎规则（放在末尾，模型关注度最高） ---
-  systemPromptSections.push(
-    `---\n[ENGINE RULES]\n` +
-    `你运行在互动叙事引擎中。你是GM，不是玩家。\n` +
-    `- 绝对不要替玩家行动、观察、思考或说话。\n` +
-    `- 你的回复结束后，引擎会自动等待玩家输入（和聊天一样）。\n` +
-    `- 叙事到达需要等待玩家的时刻时，正常结束你的回复即可。\n` +
-    `- 可用 update_state 更新状态变量，signal_input_needed 提供输入提示。\n` +
-    `- 输出只包含叙事正文和工具调用，不要输出计划、分析或元叙述。\n` +
-    `---`,
-  );
-
-  const systemPrompt = systemPromptSections.join('\n\n');
 
   // AI SDK requires at least one message — use initialPrompt or fallback
   if (historyMessages.length === 0) {
@@ -224,8 +257,8 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
     messages: historyMessages,
     tokenBreakdown: {
       system: systemTokens,
-      state: stateTokens,
-      summaries: summaryTokens,
+      state: stateTokensFinal,
+      summaries: summaryTokensFinal,
       recentHistory: historyTokens,
       contextSegments: contextTokens,
       total: usedTokens,

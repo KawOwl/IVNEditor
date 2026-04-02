@@ -68,6 +68,7 @@ export interface PromptSegment {
   sourceRange?: [number, number];
   role: SegmentRole;
   priority: number;           // 组装时的优先级（数字越小优先级越高）
+  assemblyOrder?: number;     // 组装顺序（用于 prompt 前缀缓存优化，越小越前）
   injectionRule?: InjectionRule;
   tokenCount: number;
 }
@@ -131,6 +132,9 @@ export interface ScriptManifest {
   author?: string;                // 作者
   tags?: string[];                // 分类标签
   openingMessages?: string[];     // 进入对话页后的静态开场消息（不经过 LLM）
+  // --- 组装顺序 ---
+  /** Prompt 组装顺序：section ID 列表，决定各部分在 prompt 中的排列位置 */
+  promptAssemblyOrder?: string[];
 }
 
 /** 首页卡片用的轻量目录条目 */

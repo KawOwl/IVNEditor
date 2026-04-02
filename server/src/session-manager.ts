@@ -63,6 +63,7 @@ export class GameSessionWrapper {
       enabledTools: manifest.enabledTools,
       tokenBudget: manifest.memoryConfig.contextBudget,
       initialPrompt: manifest.initialPrompt,
+      assemblyOrder: manifest.promptAssemblyOrder,
     };
 
     this.gameSession.start(config);

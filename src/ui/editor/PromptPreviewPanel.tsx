@@ -1,15 +1,18 @@
 /**
- * PromptPreviewPanel — Prompt 组装预览
+ * PromptPreviewPanel — Prompt 组装预览 + 排序
  *
- * 不需要启动 LLM，模拟 ContextAssembler 的拼接逻辑，
- * 展示最终发送给 LLM 的 system prompt 的每个组成部分：
- *   - 每段来源（文件名、role、priority）
- *   - 注入状态（已注入 / 条件不满足）
- *   - 引擎自动追加的部分（State YAML、ENGINE RULES）
+ * 展示最终发送给 LLM 的 prompt 的每个组成部分，包括：
+ *   - 编剧创建的 segments（system / context）
+ *   - 引擎虚拟 sections（State YAML、Memory、History、ENGINE RULES）
  *   - Token 预算使用情况
+ *
+ * 功能：
+ *   - 拖拽排序：调整 prompt 各部分的组装顺序
+ *   - 自动排序：将稳定内容放前面，优化 LLM 前缀缓存命中率
+ *   - 顺序变更通过 onOrderChange 回调传出，存入 manifest
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import type { PromptSegment, StateSchema } from '../../core/types';
 import { estimateTokens } from '../../core/memory';
 import { cn } from '../../lib/utils';
@@ -23,19 +26,39 @@ export interface PromptPreviewProps {
   stateSchema: StateSchema;
   tokenBudget?: number;
   initialPrompt?: string;
+  /** 当前组装顺序（section ID 列表），undefined = 使用默认顺序 */
+  assemblyOrder?: string[];
+  /** 排序变更回调 */
+  onOrderChange?: (order: string[]) => void;
 }
 
 interface PreviewSection {
   id: string;
   label: string;
-  source: string;       // 来源说明
+  source: string;
   role: 'system' | 'context' | 'engine' | 'draft';
   content: string;
   tokenCount: number;
   injected: boolean;
-  reason?: string;       // 未注入的原因
+  reason?: string;
   priority?: number;
+  /** 是否为虚拟 section（引擎自动生成，不可删除） */
+  virtual?: boolean;
+  /** 虚拟 section 的类型标记（用于自动排序分类） */
+  stability?: 'stable' | 'dynamic';
 }
+
+// ============================================================================
+// Virtual Section IDs
+// ============================================================================
+
+const VIRTUAL_IDS = {
+  STATE: '_engine_state',
+  MEMORY: '_engine_memory',
+  HISTORY: '_engine_history',
+  RULES: '_engine_rules',
+  INITIAL_PROMPT: '_initial_prompt',
+} as const;
 
 // ============================================================================
 // Condition evaluator (mirror of context-assembler)
@@ -59,19 +82,14 @@ function evaluateCondition(
 }
 
 // ============================================================================
-// Build preview sections
+// Build preview sections (unordered)
 // ============================================================================
 
-function buildPreviewSections(
+function buildAllSections(
   segments: PromptSegment[],
   stateSchema: StateSchema,
-  tokenBudget: number,
   initialPrompt?: string,
 ): PreviewSection[] {
-  const outputReserve = 4096;
-  const availableBudget = tokenBudget - outputReserve;
-
-  // Build initial state vars from schema
   const vars: Record<string, unknown> = {};
   for (const v of stateSchema.variables) {
     vars[v.name] = v.initial;
@@ -79,12 +97,11 @@ function buildPreviewSections(
 
   const sections: PreviewSection[] = [];
 
-  // --- 1. Evaluate each segment ---
+  // --- User segments ---
   for (const seg of segments) {
     let injected = true;
     let reason: string | undefined;
 
-    // Draft segments are never injected
     if (seg.role === 'draft') {
       injected = false;
       reason = '草稿（不注入 prompt）';
@@ -105,38 +122,54 @@ function buildPreviewSections(
       injected,
       reason,
       priority: seg.priority,
+      stability: 'stable',
     });
   }
 
-  // Sort: system first (by priority), then context (by priority)
-  sections.sort((a, b) => {
-    if (a.role !== b.role) {
-      if (a.role === 'system') return -1;
-      if (b.role === 'system') return 1;
-    }
-    return (a.priority ?? 99) - (b.priority ?? 99);
-  });
-
-  // --- 2. Engine auto-appended sections ---
-
-  // State YAML
+  // --- Virtual: State YAML ---
   const stateYaml = stateSchema.variables
     .map((v) => `  ${v.name}: ${JSON.stringify(v.initial)}`)
     .join('\n');
   const stateContent = `---\nINTERNAL_STATE:\n${stateYaml}\n---`;
-  const stateTokens = estimateTokens(stateContent);
-
   sections.push({
-    id: '_engine_state',
-    label: 'State YAML (initial)',
-    source: 'engine auto-generated',
+    id: VIRTUAL_IDS.STATE,
+    label: 'State YAML',
+    source: '引擎自动生成 · 每轮更新',
     role: 'engine',
     content: stateContent,
-    tokenCount: stateTokens,
+    tokenCount: estimateTokens(stateContent),
     injected: true,
+    virtual: true,
+    stability: 'dynamic',
   });
 
-  // ENGINE RULES tail
+  // --- Virtual: Memory Summaries ---
+  sections.push({
+    id: VIRTUAL_IDS.MEMORY,
+    label: 'Memory Summaries',
+    source: '引擎自动生成 · 压缩后变化',
+    role: 'engine',
+    content: '[Memory summaries / inherited summary — 运行时动态填充]',
+    tokenCount: 0,
+    injected: true,
+    virtual: true,
+    stability: 'dynamic',
+  });
+
+  // --- Virtual: Recent History ---
+  sections.push({
+    id: VIRTUAL_IDS.HISTORY,
+    label: 'Recent History',
+    source: '引擎自动生成 · 每轮增长',
+    role: 'engine',
+    content: '[Recent conversation history as messages — 运行时动态填充]',
+    tokenCount: 0,
+    injected: true,
+    virtual: true,
+    stability: 'dynamic',
+  });
+
+  // --- Virtual: ENGINE RULES ---
   const rulesContent =
     `---\n[ENGINE RULES]\n` +
     `你运行在互动叙事引擎中。你是GM，不是玩家。\n` +
@@ -146,51 +179,103 @@ function buildPreviewSections(
     `- 可用 update_state 更新状态变量，signal_input_needed 提供输入提示。\n` +
     `- 输出只包含叙事正文和工具调用，不要输出计划、分析或元叙述。\n` +
     `---`;
-  const rulesTokens = estimateTokens(rulesContent);
-
   sections.push({
-    id: '_engine_rules',
+    id: VIRTUAL_IDS.RULES,
     label: 'ENGINE RULES (tail reminder)',
-    source: 'engine auto-generated',
+    source: '引擎自动生成 · 固定',
     role: 'engine',
     content: rulesContent,
-    tokenCount: rulesTokens,
+    tokenCount: estimateTokens(rulesContent),
     injected: true,
+    virtual: true,
+    stability: 'stable',
   });
 
-  // Initial prompt (first user message)
+  // --- Virtual: Initial User Message ---
   if (initialPrompt) {
     sections.push({
-      id: '_initial_prompt',
+      id: VIRTUAL_IDS.INITIAL_PROMPT,
       label: 'Initial User Message',
-      source: 'manifest.initialPrompt',
+      source: 'manifest.initialPrompt · 首轮',
       role: 'engine',
       content: initialPrompt,
       tokenCount: estimateTokens(initialPrompt),
       injected: true,
+      virtual: true,
+      stability: 'stable',
     });
   }
 
-  // --- 3. Calculate budget usage for injected sections ---
-  let usedTokens = 0;
-  const budgetExceeded: string[] = [];
-  for (const sec of sections) {
-    if (!sec.injected) continue;
-    usedTokens += sec.tokenCount;
-    if (usedTokens > availableBudget) {
-      budgetExceeded.push(sec.id);
-    }
-  }
-
-  // Mark budget-exceeded sections
-  for (const sec of sections) {
-    if (budgetExceeded.includes(sec.id) && sec.injected) {
-      sec.injected = false;
-      sec.reason = 'token budget exceeded';
-    }
-  }
-
   return sections;
+}
+
+// ============================================================================
+// Default order (matches current context-assembler behavior)
+// ============================================================================
+
+function getDefaultOrder(sections: PreviewSection[]): string[] {
+  // Current assembler order: system segs → state → memory → context segs → rules → history → initial
+  const systemSegs = sections
+    .filter((s) => s.role === 'system' && !s.virtual)
+    .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
+  const contextSegs = sections
+    .filter((s) => s.role === 'context' && !s.virtual)
+    .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
+
+  return [
+    ...systemSegs.map((s) => s.id),
+    VIRTUAL_IDS.STATE,
+    VIRTUAL_IDS.MEMORY,
+    ...contextSegs.map((s) => s.id),
+    VIRTUAL_IDS.RULES,
+    VIRTUAL_IDS.HISTORY,
+    VIRTUAL_IDS.INITIAL_PROMPT,
+  ];
+}
+
+// ============================================================================
+// Auto-sort for prefix cache optimization
+// ============================================================================
+
+function getOptimalOrder(sections: PreviewSection[]): string[] {
+  // Optimal for prefix caching: all stable content first, dynamic content last
+  const stable = sections.filter((s) => s.injected && s.stability === 'stable');
+  const dynamic = sections.filter((s) => s.injected && s.stability === 'dynamic');
+
+  // Within stable: system first (by priority), then context (by priority), then engine
+  stable.sort((a, b) => {
+    const roleOrder = (r: string) => r === 'system' ? 0 : r === 'context' ? 1 : 2;
+    if (roleOrder(a.role) !== roleOrder(b.role)) return roleOrder(a.role) - roleOrder(b.role);
+    return (a.priority ?? 99) - (b.priority ?? 99);
+  });
+
+  // Within dynamic: state → memory → history (natural order)
+  const dynamicOrder: string[] = [VIRTUAL_IDS.STATE, VIRTUAL_IDS.MEMORY, VIRTUAL_IDS.HISTORY];
+  dynamic.sort((a, b) => {
+    const ia = dynamicOrder.indexOf(a.id);
+    const ib = dynamicOrder.indexOf(b.id);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+
+  return [...stable.map((s) => s.id), ...dynamic.map((s) => s.id)];
+}
+
+// ============================================================================
+// Sort sections by order
+// ============================================================================
+
+function sortByOrder(sections: PreviewSection[], order: string[]): PreviewSection[] {
+  const orderMap = new Map(order.map((id, i) => [id, i]));
+  const injected = sections.filter((s) => s.injected);
+  const skipped = sections.filter((s) => !s.injected);
+
+  injected.sort((a, b) => {
+    const ia = orderMap.get(a.id) ?? 999;
+    const ib = orderMap.get(b.id) ?? 999;
+    return ia - ib;
+  });
+
+  return [...injected, ...skipped];
 }
 
 // ============================================================================
@@ -202,17 +287,108 @@ export function PromptPreviewPanel({
   stateSchema,
   tokenBudget = 120000,
   initialPrompt,
+  assemblyOrder,
+  onOrderChange,
 }: PromptPreviewProps) {
-  const sections = useMemo(
-    () => buildPreviewSections(segments, stateSchema, tokenBudget, initialPrompt),
-    [segments, stateSchema, tokenBudget, initialPrompt],
+  const allSections = useMemo(
+    () => buildAllSections(segments, stateSchema, initialPrompt),
+    [segments, stateSchema, initialPrompt],
   );
 
-  const injectedSections = sections.filter((s) => s.injected);
-  const skippedSections = sections.filter((s) => !s.injected);
+  // Compute effective order
+  const effectiveOrder = useMemo(() => {
+    if (assemblyOrder && assemblyOrder.length > 0) {
+      // Merge: keep saved order, append any new sections not in the order
+      const existing = new Set(assemblyOrder);
+      const newIds = allSections.filter((s) => s.injected && !existing.has(s.id)).map((s) => s.id);
+      return [...assemblyOrder.filter((id) => allSections.some((s) => s.id === id)), ...newIds];
+    }
+    return getDefaultOrder(allSections);
+  }, [assemblyOrder, allSections]);
+
+  const sortedSections = useMemo(
+    () => sortByOrder(allSections, effectiveOrder),
+    [allSections, effectiveOrder],
+  );
+
+  const injectedSections = sortedSections.filter((s) => s.injected);
+  const skippedSections = sortedSections.filter((s) => !s.injected);
   const totalTokens = injectedSections.reduce((sum, s) => sum + s.tokenCount, 0);
   const availableBudget = tokenBudget - 4096;
   const usagePercent = Math.round((totalTokens / availableBudget) * 100);
+
+  // --- Drag state ---
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const dragCounterRef = useRef(0);
+
+  const handleDragStart = useCallback((id: string) => {
+    setDragId(id);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, id: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverId(id);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    dragCounterRef.current--;
+    if (dragCounterRef.current <= 0) {
+      setDragOverId(null);
+      dragCounterRef.current = 0;
+    }
+  }, []);
+
+  const handleDragEnter = useCallback(() => {
+    dragCounterRef.current++;
+  }, []);
+
+  const handleDrop = useCallback((targetId: string) => {
+    if (!dragId || dragId === targetId) {
+      setDragId(null);
+      setDragOverId(null);
+      return;
+    }
+
+    const injectedIds = injectedSections.map((s) => s.id);
+    const fromIdx = injectedIds.indexOf(dragId);
+    const toIdx = injectedIds.indexOf(targetId);
+    if (fromIdx === -1 || toIdx === -1) return;
+
+    const newOrder = [...injectedIds];
+    newOrder.splice(fromIdx, 1);
+    newOrder.splice(toIdx, 0, dragId);
+
+    onOrderChange?.(newOrder);
+    setDragId(null);
+    setDragOverId(null);
+    dragCounterRef.current = 0;
+  }, [dragId, injectedSections, onOrderChange]);
+
+  const handleDragEnd = useCallback(() => {
+    setDragId(null);
+    setDragOverId(null);
+    dragCounterRef.current = 0;
+  }, []);
+
+  // --- Auto sort ---
+  const handleAutoSort = useCallback(() => {
+    const optimal = getOptimalOrder(allSections);
+    onOrderChange?.(optimal);
+  }, [allSections, onOrderChange]);
+
+  // --- Reset to default ---
+  const handleResetOrder = useCallback(() => {
+    const defaultOrder = getDefaultOrder(allSections);
+    onOrderChange?.(defaultOrder);
+  }, [allSections, onOrderChange]);
+
+  // Check if current order differs from optimal
+  const isOptimal = useMemo(() => {
+    const optimal = getOptimalOrder(allSections);
+    return JSON.stringify(effectiveOrder) === JSON.stringify(optimal);
+  }, [effectiveOrder, allSections]);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -261,13 +437,51 @@ export function PromptPreviewPanel({
           </div>
         </div>
 
-        {/* Injected sections */}
+        {/* Sort controls */}
+        {onOrderChange && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleAutoSort}
+              disabled={isOptimal}
+              className={cn(
+                'text-[10px] px-2 py-1 rounded border transition-colors',
+                isOptimal
+                  ? 'border-zinc-800 text-zinc-600 cursor-default'
+                  : 'border-emerald-800/50 bg-emerald-950/30 text-emerald-400 hover:border-emerald-600',
+              )}
+            >
+              {isOptimal ? '已最优排序' : '自动排序（优化缓存）'}
+            </button>
+            <button
+              onClick={handleResetOrder}
+              className="text-[10px] px-2 py-1 rounded border border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600 transition-colors"
+            >
+              重置默认
+            </button>
+            <span className="text-[9px] text-zinc-600 ml-auto">拖拽调整顺序</span>
+          </div>
+        )}
+
+        {/* Injected sections (draggable) */}
         <div className="space-y-1">
           <h3 className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider">
-            Injected ({injectedSections.length})
+            Assembly Order ({injectedSections.length})
           </h3>
-          {injectedSections.map((sec) => (
-            <SectionCard key={sec.id} section={sec} />
+          {injectedSections.map((sec, idx) => (
+            <SectionCard
+              key={sec.id}
+              section={sec}
+              index={idx}
+              draggable={!!onOrderChange}
+              isDragging={dragId === sec.id}
+              isDragOver={dragOverId === sec.id}
+              onDragStart={() => handleDragStart(sec.id)}
+              onDragOver={(e) => handleDragOver(e, sec.id)}
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDrop={() => handleDrop(sec.id)}
+              onDragEnd={handleDragEnd}
+            />
           ))}
         </div>
 
@@ -288,31 +502,78 @@ export function PromptPreviewPanel({
 }
 
 // ============================================================================
-// SectionCard — 单个 section 展示
+// SectionCard
 // ============================================================================
 
-function SectionCard({ section }: { section: PreviewSection }) {
+function SectionCard({
+  section,
+  index,
+  draggable = false,
+  isDragging = false,
+  isDragOver = false,
+  onDragStart,
+  onDragOver,
+  onDragEnter,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
+}: {
+  section: PreviewSection;
+  index?: number;
+  draggable?: boolean;
+  isDragging?: boolean;
+  isDragOver?: boolean;
+  onDragStart?: () => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDragEnter?: () => void;
+  onDragLeave?: () => void;
+  onDrop?: () => void;
+  onDragEnd?: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className={cn(
-      'border rounded text-[11px]',
-      section.injected
-        ? 'border-zinc-800 bg-zinc-900/30'
-        : 'border-zinc-800/50 bg-zinc-950/50 opacity-60',
-    )}>
+    <div
+      draggable={draggable && section.injected}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDrop={(e) => { e.preventDefault(); onDrop?.(); }}
+      onDragEnd={onDragEnd}
+      className={cn(
+        'border rounded text-[11px] transition-all',
+        section.injected
+          ? 'border-zinc-800 bg-zinc-900/30'
+          : 'border-zinc-800/50 bg-zinc-950/50 opacity-60',
+        isDragging && 'opacity-40',
+        isDragOver && 'border-emerald-600 bg-emerald-950/20',
+        draggable && section.injected && 'cursor-grab active:cursor-grabbing',
+      )}
+    >
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full px-2.5 py-1.5 text-left flex items-start gap-2 hover:bg-zinc-800/30 transition-colors"
       >
+        {/* Order number + drag handle */}
+        {index !== undefined && section.injected && (
+          <span className="flex-none mt-0.5 text-[9px] text-zinc-600 w-3 text-right font-mono">
+            {index + 1}
+          </span>
+        )}
+
         {/* Status indicator */}
         <span className={cn(
           'flex-none mt-0.5 w-1.5 h-1.5 rounded-full',
-          section.injected ? 'bg-emerald-500' : 'bg-zinc-600',
+          section.injected
+            ? section.virtual
+              ? section.stability === 'dynamic' ? 'bg-amber-500' : 'bg-emerald-500'
+              : 'bg-emerald-500'
+            : 'bg-zinc-600',
         )} />
 
         <div className="flex-1 min-w-0">
-          {/* Label + role badge */}
+          {/* Label + role badge + stability */}
           <div className="flex items-center gap-1.5">
             <span className={cn(
               'font-medium truncate',
@@ -329,9 +590,14 @@ function SectionCard({ section }: { section: PreviewSection }) {
             )}>
               {section.role}
             </span>
-            {section.priority !== undefined && (
-              <span className="flex-none text-[9px] text-zinc-600">
-                P{section.priority}
+            {section.stability && section.injected && (
+              <span className={cn(
+                'flex-none text-[9px] px-1 py-0 rounded',
+                section.stability === 'stable'
+                  ? 'bg-emerald-950/50 text-emerald-600'
+                  : 'bg-amber-950/50 text-amber-600',
+              )}>
+                {section.stability === 'stable' ? '稳定' : '动态'}
               </span>
             )}
           </div>
@@ -340,7 +606,9 @@ function SectionCard({ section }: { section: PreviewSection }) {
           <div className="flex items-center gap-2 mt-0.5 text-[10px] text-zinc-500">
             <span className="truncate">{section.source}</span>
             <span className="flex-none font-mono">
-              ~{section.tokenCount.toLocaleString()} tok
+              {section.tokenCount > 0
+                ? `~${section.tokenCount.toLocaleString()} tok`
+                : '运行时'}
             </span>
           </div>
 

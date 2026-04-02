@@ -155,6 +155,7 @@ export function EditorPage() {
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [isPublished, setIsPublished] = useState(false);
+  const [promptAssemblyOrder, setPromptAssemblyOrder] = useState<string[] | undefined>(undefined);
 
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;
 
@@ -185,6 +186,7 @@ export function EditorPage() {
     setScriptLabel(record.label);
     setScriptDescription(record.description);
     setIsPublished(!!record.published);
+    setPromptAssemblyOrder(manifest.promptAssemblyOrder);
     setShowScriptLibrary(false);
   }, []);
 
@@ -203,6 +205,7 @@ export function EditorPage() {
         memoryConfig,
         enabledTools,
         initialPrompt: initialPrompt || undefined,
+        promptAssemblyOrder: promptAssemblyOrder,
         chapters: [{
           id: 'ch1',
           label: '第一章',
@@ -228,7 +231,7 @@ export function EditorPage() {
     } finally {
       setSaving(false);
     }
-  }, [loadedScriptId, scriptLabel, scriptDescription, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, refreshScriptList]);
+  }, [loadedScriptId, scriptLabel, scriptDescription, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, refreshScriptList]);
 
   // --- Delete a script from IndexedDB ---
   const handleDeleteScript = useCallback(async (id: string) => {
@@ -266,6 +269,7 @@ export function EditorPage() {
       memoryConfig,
       enabledTools,
       initialPrompt: initialPrompt || undefined,
+      promptAssemblyOrder: promptAssemblyOrder,
       chapters: [{
         id: 'ch1',
         label: '第一章',
@@ -312,6 +316,7 @@ export function EditorPage() {
       setLoadedScriptId(record.id);
       setScriptLabel(record.label);
       setScriptDescription(record.description);
+      setPromptAssemblyOrder(record.manifest.promptAssemblyOrder);
       setShowScriptLibrary(false);
     } catch (err) {
       alert('导入失败: ' + (err instanceof Error ? err.message : String(err)));
@@ -330,6 +335,7 @@ export function EditorPage() {
     setEnabledTools(['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood']);
     setInitialPrompt('开始测试');
     setIsPublished(false);
+    setPromptAssemblyOrder(undefined);
     setShowScriptLibrary(false);
   }, []);
 
@@ -517,6 +523,7 @@ export function EditorPage() {
       memoryConfig,
       enabledTools,
       initialPrompt: initialPrompt || undefined,
+      promptAssemblyOrder: promptAssemblyOrder,
       chapters: [{
         id: 'draft-ch1',
         label: '草稿章节',
@@ -524,7 +531,7 @@ export function EditorPage() {
         segments,
       }],
     };
-  }, [segments, initialPrompt, stateSchema, memoryConfig, enabledTools, loadedScriptId]);
+  }, [segments, initialPrompt, stateSchema, memoryConfig, enabledTools, loadedScriptId, promptAssemblyOrder]);
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
@@ -777,6 +784,8 @@ export function EditorPage() {
                 segments={segments}
                 stateSchema={stateSchema}
                 initialPrompt={initialPrompt}
+                assemblyOrder={promptAssemblyOrder}
+                onOrderChange={setPromptAssemblyOrder}
               />
             </div>
             <div className={cn('absolute inset-0', rightTab !== 'play' && 'hidden')}>
