@@ -151,6 +151,8 @@ export function EditorPage() {
   const [scriptList, setScriptList] = useState<ScriptListItem[]>([]);
   const [showScriptLibrary, setShowScriptLibrary] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [isPublished, setIsPublished] = useState(false);
 
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;
 
@@ -180,6 +182,7 @@ export function EditorPage() {
     setLoadedScriptId(scriptId);
     setScriptLabel(record.label);
     setScriptDescription(record.description);
+    setIsPublished(!!record.published);
     setShowScriptLibrary(false);
   }, []);
 
@@ -315,8 +318,27 @@ export function EditorPage() {
     setMemoryConfig(defaultMemoryConfig);
     setEnabledTools(['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood']);
     setInitialPrompt('开始测试');
+    setIsPublished(false);
     setShowScriptLibrary(false);
   }, []);
+
+  // --- Publish / unpublish script ---
+  const handlePublishScript = useCallback(async () => {
+    if (!loadedScriptId) return;  // must save first
+    setPublishing(true);
+    try {
+      if (isPublished) {
+        await scriptStorage.unpublish(loadedScriptId);
+        setIsPublished(false);
+      } else {
+        await scriptStorage.publish(loadedScriptId);
+        setIsPublished(true);
+      }
+      await refreshScriptList();
+    } finally {
+      setPublishing(false);
+    }
+  }, [loadedScriptId, isPublished, refreshScriptList]);
 
   // --- Create new empty .md file ---
   const handleNewFile = useCallback(() => {
@@ -485,6 +507,20 @@ export function EditorPage() {
           <span>{documents.length} 个文件</span>
           <span className="text-zinc-700">|</span>
           <span>~{segments.reduce((sum, s) => sum + s.tokenCount, 0).toLocaleString()} tokens</span>
+          <span className="text-zinc-700">|</span>
+          <button
+            onClick={handlePublishScript}
+            disabled={!loadedScriptId || publishing}
+            className={cn(
+              'px-2.5 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-40',
+              isPublished
+                ? 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+                : 'bg-emerald-700 text-white hover:bg-emerald-600',
+            )}
+            title={!loadedScriptId ? '请先保存剧本' : isPublished ? '取消发布' : '发布到首页'}
+          >
+            {publishing ? '...' : isPublished ? '已发布' : '发布'}
+          </button>
         </div>
       </header>
 
@@ -561,7 +597,10 @@ export function EditorPage() {
                           onClick={() => handleLoadScript(item.id)}
                         >
                           <div className="flex-1 min-w-0">
-                            <div className="text-xs text-zinc-300 truncate">{item.label}</div>
+                            <div className="text-xs text-zinc-300 truncate">
+                              {item.label}
+                              {item.published && <span className="ml-1 text-[9px] text-emerald-500">已发布</span>}
+                            </div>
                             <div className="text-[10px] text-zinc-600">
                               {item.fileCount} 文件 · {new Date(item.updatedAt).toLocaleDateString()}
                             </div>
