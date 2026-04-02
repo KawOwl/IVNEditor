@@ -12,9 +12,10 @@ import type { ScriptManifest } from '../../core/types';
 
 export interface PlayPageProps {
   manifest: ScriptManifest;
+  scriptId: string;
 }
 
-export function PlayPage({ manifest }: PlayPageProps) {
+export function PlayPage({ manifest, scriptId }: PlayPageProps) {
   const goHome = useAppStore((s) => s.goHome);
 
   const handleBack = useCallback(() => {
@@ -41,7 +42,7 @@ export function PlayPage({ manifest }: PlayPageProps) {
 
       {/* Play panel fills remaining space */}
       <div className="flex-1 min-h-0">
-        <PlayPanel manifest={manifest} showDebug />
+        <PlayPanel manifest={manifest} scriptId={scriptId} showDebug />
       </div>
     </div>
   );

@@ -21,6 +21,7 @@ import { LLMSettingsPanel } from '../settings/LLMSettingsPanel';
 import { estimateTokens } from '../../core/memory';
 import { ScriptStorage, exportScript, parseImportedScript } from '../../storage/script-storage';
 import type { ScriptRecord, ScriptListItem } from '../../storage/script-storage';
+import { getEngineMode, getBackendUrl } from '../../core/engine-mode';
 import { cn } from '../../lib/utils';
 import type {
   ScriptManifest,
@@ -327,12 +328,40 @@ export function EditorPage() {
     if (!loadedScriptId) return;  // must save first
     setPublishing(true);
     try {
-      if (isPublished) {
-        await scriptStorage.unpublish(loadedScriptId);
-        setIsPublished(false);
+      if (getEngineMode() === 'remote') {
+        // Remote mode: POST full record to backend
+        if (isPublished) {
+          // Unpublish: delete from backend
+          await fetch(`${getBackendUrl()}/api/scripts/${loadedScriptId}`, { method: 'DELETE' });
+          setIsPublished(false);
+        } else {
+          // Publish: send record to backend
+          const record = await scriptStorage.get(loadedScriptId);
+          if (!record) return;
+          await fetch(`${getBackendUrl()}/api/scripts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: record.id,
+              label: record.label,
+              description: record.description,
+              createdAt: record.createdAt,
+              updatedAt: Date.now(),
+              published: true,
+              manifest: record.manifest,
+            }),
+          });
+          setIsPublished(true);
+        }
       } else {
-        await scriptStorage.publish(loadedScriptId);
-        setIsPublished(true);
+        // Local mode: toggle in IndexedDB
+        if (isPublished) {
+          await scriptStorage.unpublish(loadedScriptId);
+          setIsPublished(false);
+        } else {
+          await scriptStorage.publish(loadedScriptId);
+          setIsPublished(true);
+        }
       }
       await refreshScriptList();
     } finally {
@@ -768,6 +797,7 @@ export function EditorPage() {
                 compact
                 showDebug={false}
                 showReasoning
+                forceLocal
               />
             </div>
             <div className={cn('absolute inset-0', rightTab !== 'debug' && 'hidden')}>
