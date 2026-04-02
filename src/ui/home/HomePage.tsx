@@ -2,14 +2,13 @@
  * HomePage — 首页
  *
  * 展示小说/剧本卡片网格，点击进入对话页。
- * Remote 模式下，编辑器按钮仅对管理员可见；普通用户可登录。
+ * Remote 模式下，编辑器按钮仅对管理员可见。
+ * 管理员登录通过全局快捷键 Ctrl+Shift+L 呼出（在 App.tsx 中注册）。
  */
 
-import { useState } from 'react';
 import { useAppStore } from '../../stores/app-store';
 import { useAuthStore } from '../../stores/auth-store';
 import { ScriptCard } from './ScriptCard';
-import { LoginModal } from '../auth/LoginModal';
 import { getEngineMode } from '../../core/engine-mode';
 
 const engineMode = getEngineMode();
@@ -20,7 +19,6 @@ export function HomePage() {
   const isAdmin = useAuthStore((s) => s.isAdmin);
   const username = useAuthStore((s) => s.username);
   const logout = useAuthStore((s) => s.logout);
-  const [showLogin, setShowLogin] = useState(false);
 
   // Local 模式总是显示编辑器按钮；Remote 模式仅管理员可见
   const canEdit = engineMode === 'local' || isAdmin;
@@ -39,26 +37,17 @@ export function HomePage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {/* Admin status / login / logout */}
-            {engineMode === 'remote' && (
-              isAdmin ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-emerald-400">{username}</span>
-                  <button
-                    onClick={logout}
-                    className="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
-                  >
-                    退出
-                  </button>
-                </div>
-              ) : (
+            {/* Admin info (only shown when logged in) */}
+            {engineMode === 'remote' && isAdmin && (
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-emerald-400">{username}</span>
                 <button
-                  onClick={() => setShowLogin(true)}
-                  className="text-xs px-3 py-1.5 rounded border border-zinc-700 text-zinc-500 hover:text-zinc-300 hover:border-zinc-500 transition-colors"
+                  onClick={logout}
+                  className="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
                 >
-                  管理员登录
+                  退出
                 </button>
-              )
+              </div>
             )}
 
             {canEdit && (
@@ -97,9 +86,6 @@ export function HomePage() {
           )}
         </div>
       </main>
-
-      {/* Login modal */}
-      {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
     </div>
   );
 }

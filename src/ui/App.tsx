@@ -13,12 +13,13 @@
  *   - remote: 首页从后端 API 读取 catalog，PlayPage 通过 WebSocket 连接后端引擎
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAppStore } from '../stores/app-store';
 import { useAuthStore } from '../stores/auth-store';
 import { HomePage } from './home/HomePage';
 import { PlayPage } from './play/PlayPage';
 import { EditorPage } from './editor/EditorPage';
+import { LoginModal } from './auth/LoginModal';
 import { ScriptStorage } from '../storage/script-storage';
 import { getEngineMode, getBackendUrl } from '../core/engine-mode';
 import type { ScriptManifest } from '../core/types';
@@ -31,6 +32,7 @@ export function App() {
   const setCatalog = useAppStore((s) => s.setCatalog);
   const checkToken = useAuthStore((s) => s.checkToken);
   const isAdmin = useAuthStore((s) => s.isAdmin);
+  const [showLogin, setShowLogin] = useState(false);
 
   // 启动时验证已存储的 token（仅 remote 模式）
   useEffect(() => {
@@ -38,6 +40,21 @@ export function App() {
       checkToken();
     }
   }, [checkToken]);
+
+  // 全局快捷键 Ctrl+Shift+L 呼出管理员登录弹窗
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.ctrlKey && e.shiftKey && e.key === 'L') {
+      e.preventDefault();
+      if (engineMode === 'remote' && !useAuthStore.getState().isAdmin) {
+        setShowLogin(true);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
 
   // Refresh published catalog when navigating to home
   const pageName = page.name;
@@ -72,22 +89,30 @@ export function App() {
     }
   }, [setCatalog, pageName]);
 
+  let content: React.ReactNode;
   switch (page.name) {
     case 'home':
-      return <HomePage />;
-
+      content = <HomePage />;
+      break;
     case 'play':
-      return <PlayPageLoader scriptId={page.scriptId} />;
-
+      content = <PlayPageLoader scriptId={page.scriptId} />;
+      break;
     case 'editor':
       // Local 模式不需要认证；Remote 模式需要管理员登录
       if (engineMode === 'remote' && !isAdmin) {
-        // 未登录，回到首页
         useAppStore.getState().goHome();
         return null;
       }
-      return <EditorPage />;
+      content = <EditorPage />;
+      break;
   }
+
+  return (
+    <>
+      {content}
+      {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
+    </>
+  );
 }
 
 /** Async loader: fetch manifest then render PlayPage */
