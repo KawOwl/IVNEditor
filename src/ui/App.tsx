@@ -4,7 +4,7 @@
  * 三个页面：
  *   - home: 首页卡片网格
  *   - play: 对话页（互动叙事）
- *   - editor: 编辑器
+ *   - editor: 编辑器（需管理员登录）
  *
  * 路由通过 Zustand app-store 管理，不引入 React Router。
  *
@@ -15,6 +15,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../stores/app-store';
+import { useAuthStore } from '../stores/auth-store';
 import { HomePage } from './home/HomePage';
 import { PlayPage } from './play/PlayPage';
 import { EditorPage } from './editor/EditorPage';
@@ -28,6 +29,15 @@ const engineMode = getEngineMode();
 export function App() {
   const page = useAppStore((s) => s.page);
   const setCatalog = useAppStore((s) => s.setCatalog);
+  const checkToken = useAuthStore((s) => s.checkToken);
+  const isAdmin = useAuthStore((s) => s.isAdmin);
+
+  // 启动时验证已存储的 token（仅 remote 模式）
+  useEffect(() => {
+    if (engineMode === 'remote') {
+      checkToken();
+    }
+  }, [checkToken]);
 
   // Refresh published catalog when navigating to home
   const pageName = page.name;
@@ -47,7 +57,6 @@ export function App() {
           })));
         })
         .catch(() => {
-          // Silently fail — show empty catalog
           setCatalog([]);
         });
     } else {
@@ -71,6 +80,12 @@ export function App() {
       return <PlayPageLoader scriptId={page.scriptId} />;
 
     case 'editor':
+      // Local 模式不需要认证；Remote 模式需要管理员登录
+      if (engineMode === 'remote' && !isAdmin) {
+        // 未登录，回到首页
+        useAppStore.getState().goHome();
+        return null;
+      }
       return <EditorPage />;
   }
 }

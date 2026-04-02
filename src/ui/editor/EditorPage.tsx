@@ -22,6 +22,7 @@ import { estimateTokens } from '../../core/memory';
 import { ScriptStorage, exportScript, parseImportedScript } from '../../storage/script-storage';
 import type { ScriptRecord, ScriptListItem } from '../../storage/script-storage';
 import { getEngineMode, getBackendUrl } from '../../core/engine-mode';
+import { useAuthStore } from '../../stores/auth-store';
 import { cn } from '../../lib/utils';
 import { uuid } from '../../lib/uuid';
 import type {
@@ -345,10 +346,14 @@ export function EditorPage() {
     setPublishing(true);
     try {
       if (getEngineMode() === 'remote') {
+        const authHeader = useAuthStore.getState().getAuthHeader();
         // Remote mode: POST full record to backend
         if (isPublished) {
           // Unpublish: delete from backend
-          await fetch(`${getBackendUrl()}/api/scripts/${loadedScriptId}`, { method: 'DELETE' });
+          await fetch(`${getBackendUrl()}/api/scripts/${loadedScriptId}`, {
+            method: 'DELETE',
+            headers: authHeader,
+          });
           setIsPublished(false);
         } else {
           // Publish: send record to backend
@@ -356,7 +361,7 @@ export function EditorPage() {
           if (!record) return;
           await fetch(`${getBackendUrl()}/api/scripts`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...authHeader },
             body: JSON.stringify({
               id: record.id,
               label: record.label,

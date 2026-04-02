@@ -1,23 +1,33 @@
 /**
- * Config Routes — 后端配置管理
+ * Config Routes — 后端配置管理（需管理员权限）
  *
- * GET  /api/config/llm     — 获取当前 LLM 配置（API key 掩码）
- * PUT  /api/config/llm     — 更新 LLM 配置（编剧推送，立即生效）
+ * GET  /api/config/llm       — 获取当前 LLM 配置（管理员可见完整 API key）
+ * PUT  /api/config/llm       — 更新 LLM 配置（编剧推送，立即生效）
  * POST /api/config/llm/reset — 重置为环境变量默认值
  */
 
 import { Elysia } from 'elysia';
-import { getLLMConfigSafe, updateLLMConfig, resetLLMConfig } from '../storage/llm-config-store';
+import { getLLMConfig, updateLLMConfig, resetLLMConfig } from '../storage/llm-config-store';
+import { extractAdmin } from '../auth';
 
 export const configRoutes = new Elysia({ prefix: '/api/config' })
 
-  // 获取当前配置（API key 掩码）
-  .get('/llm', () => {
-    return getLLMConfigSafe();
+  // 获取当前配置（管理员返回完整 API key）
+  .get('/llm', async ({ request }) => {
+    const admin = await extractAdmin(request);
+    if (!admin) {
+      return new Response(JSON.stringify({ error: '需要管理员权限' }), { status: 403 });
+    }
+    return getLLMConfig();
   })
 
-  // 更新配置
-  .put('/llm', ({ body }) => {
+  // 更新配置（需管理员）
+  .put('/llm', async ({ body, request }) => {
+    const admin = await extractAdmin(request);
+    if (!admin) {
+      return new Response(JSON.stringify({ error: '需要管理员权限' }), { status: 403 });
+    }
+
     const patch = body as Partial<{
       provider: string;
       baseUrl: string;
@@ -26,17 +36,16 @@ export const configRoutes = new Elysia({ prefix: '/api/config' })
       name: string;
     }>;
 
-    // 如果前端传了掩码 key（含 ...），忽略 apiKey 字段
-    if (patch.apiKey && patch.apiKey.includes('...')) {
-      delete patch.apiKey;
-    }
-
     updateLLMConfig(patch);
-    return { ok: true, config: getLLMConfigSafe() };
+    return { ok: true, config: getLLMConfig() };
   })
 
-  // 重置为默认值
-  .post('/llm/reset', () => {
+  // 重置为默认值（需管理员）
+  .post('/llm/reset', async ({ request }) => {
+    const admin = await extractAdmin(request);
+    if (!admin) {
+      return new Response(JSON.stringify({ error: '需要管理员权限' }), { status: 403 });
+    }
     resetLLMConfig();
-    return { ok: true, config: getLLMConfigSafe() };
+    return { ok: true, config: getLLMConfig() };
   });

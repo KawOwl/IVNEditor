@@ -13,6 +13,7 @@ import {
   useLLMSettingsStore,
   PROVIDER_OPTIONS,
 } from '../../stores/llm-settings-store';
+import { useAuthStore } from '../../stores/auth-store';
 import type { LLMProviderType } from '../../core/types';
 import { getEngineMode, getBackendUrl } from '../../core/engine-mode';
 import { cn } from '../../lib/utils';
@@ -88,23 +89,23 @@ function ServerSyncSection() {
     setSyncing(true);
     setMessage(null);
     try {
-      const res = await fetch(`${backendUrl}/api/config/llm`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const authHeader = useAuthStore.getState().getAuthHeader();
+      const res = await fetch(`${backendUrl}/api/config/llm`, {
+        headers: authHeader,
+      });
+      if (!res.ok) throw new Error(res.status === 403 ? '需要管理员权限' : `HTTP ${res.status}`);
       const cfg = await res.json();
 
-      // 更新本地 store（注意：apiKey 是掩码的，不覆盖本地）
+      // 管理员返回完整 API key，直接覆盖本地
       const patch: Record<string, string> = {};
       if (cfg.provider) patch.provider = cfg.provider;
       if (cfg.baseUrl) patch.baseUrl = cfg.baseUrl;
       if (cfg.model) patch.model = cfg.model;
       if (cfg.name) patch.name = cfg.name;
-      // apiKey 如果包含 ... 说明是掩码，不覆盖本地
-      if (cfg.apiKey && !cfg.apiKey.includes('...')) {
-        patch.apiKey = cfg.apiKey;
-      }
+      if (cfg.apiKey) patch.apiKey = cfg.apiKey;
 
       useLLMSettingsStore.getState().updateText(patch);
-      setMessage({ text: '已从服务器拉取配置（API Key 除外）', type: 'ok' });
+      setMessage({ text: '已从服务器拉取配置（含 API Key）', type: 'ok' });
     } catch (err) {
       setMessage({ text: `拉取失败: ${err}`, type: 'error' });
     } finally {
@@ -116,10 +117,11 @@ function ServerSyncSection() {
     setSyncing(true);
     setMessage(null);
     try {
+      const authHeader = useAuthStore.getState().getAuthHeader();
       const { text } = useLLMSettingsStore.getState();
       const res = await fetch(`${backendUrl}/api/config/llm`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader },
         body: JSON.stringify({
           provider: text.provider,
           baseUrl: text.baseUrl,
@@ -128,7 +130,7 @@ function ServerSyncSection() {
           name: text.name,
         }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(res.status === 403 ? '需要管理员权限' : `HTTP ${res.status}`);
       setMessage({ text: '已同步到服务器，新会话将使用此配置', type: 'ok' });
     } catch (err) {
       setMessage({ text: `同步失败: ${err}`, type: 'error' });
