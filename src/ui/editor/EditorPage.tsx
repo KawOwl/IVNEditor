@@ -514,7 +514,7 @@ export function EditorPage() {
                   className="flex-none text-[11px] px-1.5 py-1.5 rounded bg-emerald-800 hover:bg-emerald-700 text-white disabled:opacity-50 transition-colors"
                   title="保存剧本"
                 >
-                  {saving ? '...' : '存'}
+                  {saving ? '...' : '保存'}
                 </button>
               </div>
 
