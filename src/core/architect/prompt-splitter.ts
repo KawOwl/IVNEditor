@@ -61,7 +61,7 @@ const splitSchema = z.object({
     label: z.string(),
     content: z.string(),
     type: z.enum(['content', 'logic']),
-    role: z.enum(['system', 'context']),
+    role: z.enum(['system', 'context', 'draft']),
     priority: z.number(),
     sourceDoc: z.string(),
   })),

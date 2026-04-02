@@ -201,7 +201,7 @@ function SegmentEditForm({ segment, onSave }: {
           <Select label="类型" value={type} onChange={(v) => setType(v as SegmentType)}
             options={[['content', '内容'], ['logic', '逻辑']]} />
           <Select label="角色" value={role} onChange={(v) => setRole(v as SegmentRole)}
-            options={[['system', 'System'], ['context', 'Context']]} />
+            options={[['system', 'System'], ['context', 'Context'], ['draft', 'Draft']]} />
           <div>
             <span className="text-[10px] text-zinc-500 mr-1">优先级</span>
             <input

@@ -29,7 +29,7 @@ interface PreviewSection {
   id: string;
   label: string;
   source: string;       // 来源说明
-  role: 'system' | 'context' | 'engine';
+  role: 'system' | 'context' | 'engine' | 'draft';
   content: string;
   tokenCount: number;
   injected: boolean;
@@ -84,7 +84,11 @@ function buildPreviewSections(
     let injected = true;
     let reason: string | undefined;
 
-    if (seg.injectionRule) {
+    // Draft segments are never injected
+    if (seg.role === 'draft') {
+      injected = false;
+      reason = '草稿（不注入 prompt）';
+    } else if (seg.injectionRule) {
       injected = evaluateCondition(seg.injectionRule.condition, vars);
       if (!injected) {
         reason = `condition: ${seg.injectionRule.condition}`;
@@ -320,6 +324,7 @@ function SectionCard({ section }: { section: PreviewSection }) {
               'flex-none text-[9px] px-1 py-0 rounded',
               section.role === 'system' ? 'bg-purple-950 text-purple-400' :
               section.role === 'context' ? 'bg-cyan-950 text-cyan-400' :
+              section.role === 'draft' ? 'bg-zinc-800 text-zinc-500' :
               'bg-zinc-800 text-zinc-400',
             )}>
               {section.role}

@@ -103,6 +103,7 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
 
   // --- 1. Filter and sort segments by injection rules ---
   const activeSegments = segments.filter((seg) => {
+    if (seg.role === 'draft') return false; // draft segments are never injected
     if (!seg.injectionRule) return true; // no rule = always inject
     return evaluateCondition(seg.injectionRule.condition, vars);
   });

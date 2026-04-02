@@ -785,7 +785,9 @@ function FileListItem({
       {/* Role indicator dot */}
       <span className={cn(
         'flex-none mt-1.5 w-2 h-2 rounded-full',
-        doc.role === 'system' ? 'bg-purple-500' : 'bg-cyan-500',
+        doc.role === 'system' ? 'bg-purple-500' :
+        doc.role === 'draft' ? 'bg-zinc-500' :
+        'bg-cyan-500',
       )} />
 
       <div className="flex-1 min-w-0">
@@ -874,6 +876,7 @@ function DocMetaBar({
         >
           <option value="system">system</option>
           <option value="context">context</option>
+          <option value="draft">draft</option>
         </select>
       </label>
 

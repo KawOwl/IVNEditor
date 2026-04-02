@@ -46,7 +46,7 @@ export const promptSegmentSchema = z.object({
   type: z.enum(['content', 'logic']),
   sourceDoc: z.string(),
   sourceRange: z.tuple([z.number(), z.number()]).optional(),
-  role: z.enum(['system', 'context']),
+  role: z.enum(['system', 'context', 'draft']),
   priority: z.number(),
   injectionRule: injectionRuleSchema.optional(),
   tokenCount: z.number().int().nonnegative(),

@@ -34,7 +34,7 @@ export interface FlowEdge {
 // ============================================================================
 
 export type SegmentType = 'content' | 'logic';
-export type SegmentRole = 'system' | 'context';
+export type SegmentRole = 'system' | 'context' | 'draft';
 
 export interface PromptSegment {
   id: string;
