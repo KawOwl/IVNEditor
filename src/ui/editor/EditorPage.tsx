@@ -243,6 +243,17 @@ export function EditorPage() {
     await refreshScriptList();
   }, [loadedScriptId, refreshScriptList]);
 
+  // --- Rename a saved script ---
+  const handleRenameScript = useCallback(async (id: string, currentLabel: string) => {
+    const newLabel = prompt('输入新名称:', currentLabel);
+    if (!newLabel || newLabel === currentLabel) return;
+    await scriptStorage.rename(id, newLabel);
+    if (loadedScriptId === id) {
+      setScriptLabel(newLabel);
+    }
+    await refreshScriptList();
+  }, [loadedScriptId, refreshScriptList]);
+
   // --- Export current script as .ivn.json ---
   const handleExportScript = useCallback(async () => {
     // Build record from current state
@@ -635,6 +646,16 @@ export function EditorPage() {
                               {item.fileCount} 文件 · {new Date(item.updatedAt).toLocaleDateString()}
                             </div>
                           </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRenameScript(item.id, item.label);
+                            }}
+                            className="flex-none text-zinc-700 hover:text-zinc-300 opacity-0 group-hover:opacity-100 transition-all text-[10px]"
+                            title="重命名"
+                          >
+                            ✎
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();

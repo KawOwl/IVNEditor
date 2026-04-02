@@ -116,6 +116,17 @@ export class ScriptStorage {
     await db.put(SCRIPTS_STORE, record);
   }
 
+  /** Rename a script */
+  async rename(id: string, newLabel: string): Promise<void> {
+    const db = await getDB();
+    const record: ScriptRecord | undefined = await db.get(SCRIPTS_STORE, id);
+    if (!record) throw new Error(`Script not found: ${id}`);
+    record.label = newLabel;
+    record.manifest.label = newLabel;
+    record.updatedAt = Date.now();
+    await db.put(SCRIPTS_STORE, record);
+  }
+
   /** Delete a script */
   async delete(id: string): Promise<void> {
     const db = await getDB();
