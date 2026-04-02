@@ -75,6 +75,9 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
     required: true,
   };
 
+  // signal_input_needed 是终止工具：LLM 调用它时 SDK 直接停止 agentic loop，
+  // 不执行 execute、不把结果送回 LLM。参数（choices/hint）从 toolCall.args 中提取。
+  // execute 仅作为 ToolHandler 接口的占位，buildAISDKTools 会跳过它。
   tools['signal_input_needed'] = {
     description: 'Signal that the narrative has reached a point where player input is needed. Optionally provide choices for the player to pick from — the player can always type a custom response instead.',
     parameters: z.object({
@@ -83,10 +86,9 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
       choices: z.array(z.string()).optional()
         .describe('Optional list of suggested choices for the player. The player may also type freely instead of picking a choice.'),
     }),
-    execute: (args) => {
-      const { prompt_hint, choices } = args as { prompt_hint?: string; choices?: string[] };
-      ctx.onSignalInput?.({ hint: prompt_hint, choices });
-      return { success: true, waiting_for_input: true, choices_provided: choices?.length ?? 0 };
+    execute: () => {
+      // 终止工具：此函数不会被调用（AI SDK 不为 no-execute tool 执行 handler）
+      return { success: true };
     },
     required: true,
   };

@@ -7,7 +7,7 @@
  * AI SDK v6 uses `stopWhen` + `stepCountIs` instead of `maxSteps`.
  */
 
-import { streamText, stepCountIs, tool, zodSchema, type ToolSet } from 'ai';
+import { streamText, stepCountIs, hasToolCall, tool, zodSchema, type ToolSet } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ToolHandler } from './tool-executor';
 import type { ChatMessage } from './context-assembler';
@@ -42,11 +42,15 @@ export interface GenerateResult {
   finishReason: string;
   inputSignaled: boolean;     // whether signal_input_needed was called
   inputHint?: string;         // prompt_hint from signal_input_needed
+  inputChoices?: string[];    // choices from signal_input_needed
 }
 
 // ============================================================================
 // Convert ToolHandlers to AI SDK ToolSet
 // ============================================================================
+
+/** 终止工具名单：这些工具不定义 execute，LLM 调用时 SDK 直接终止循环 */
+const TERMINAL_TOOLS = new Set(['signal_input_needed']);
 
 function buildAISDKTools(
   handlers: Record<string, ToolHandler>,
@@ -54,13 +58,19 @@ function buildAISDKTools(
   const result: ToolSet = {};
 
   for (const [name, handler] of Object.entries(handlers)) {
-    // AI SDK v6: `parameters` → `inputSchema`
-    // Zod v4: must wrap with `zodSchema()` for correct JSON Schema conversion
-    result[name] = tool({
-      description: handler.description,
-      inputSchema: zodSchema(handler.parameters),
-      execute: async (args) => handler.execute(args),
-    });
+    if (TERMINAL_TOOLS.has(name)) {
+      // 终止工具：不提供 execute，SDK 收到调用后不执行、直接终止 agentic loop
+      result[name] = tool({
+        description: handler.description,
+        inputSchema: zodSchema(handler.parameters),
+      });
+    } else {
+      result[name] = tool({
+        description: handler.description,
+        inputSchema: zodSchema(handler.parameters),
+        execute: async (args) => handler.execute(args),
+      });
+    }
   }
 
   return result;
@@ -104,26 +114,7 @@ export class LLMClient {
       onToolResult: onToolResultCb,
     } = options;
 
-    // Track signal_input_needed
-    let inputSignaled = false;
-    let inputHint: string | undefined;
-
-    // Wrap signal_input_needed to capture the signal
-    const wrappedHandlers = { ...toolHandlers };
-    const originalSignal = wrappedHandlers['signal_input_needed'];
-    if (originalSignal) {
-      wrappedHandlers['signal_input_needed'] = {
-        ...originalSignal,
-        execute: (args) => {
-          inputSignaled = true;
-          const typedArgs = args as { prompt_hint?: string };
-          inputHint = typedArgs.prompt_hint;
-          return originalSignal.execute(args);
-        },
-      };
-    }
-
-    const aiTools = buildAISDKTools(wrappedHandlers);
+    const aiTools = buildAISDKTools(toolHandlers);
     const toolCallLog: Array<{ name: string; args: unknown; result: unknown }> = [];
 
     // Build AI SDK messages
@@ -137,7 +128,8 @@ export class LLMClient {
       system: systemPrompt,
       messages: aiMessages,
       tools: aiTools,
-      stopWhen: stepCountIs(maxSteps),
+      // 终止条件：达到 maxSteps 或 LLM 调了终止工具
+      stopWhen: [stepCountIs(maxSteps), hasToolCall('signal_input_needed')],
       maxOutputTokens,
       experimental_onToolCallStart: (event) => {
         const { toolName, input } = event.toolCall;
@@ -160,6 +152,7 @@ export class LLMClient {
     // Stream via fullStream to separate reasoning from text
     let fullText = '';
     let fullReasoning = '';
+
     for await (const part of result.fullStream) {
       if (part.type === 'text-delta') {
         fullText += part.text;
@@ -172,13 +165,21 @@ export class LLMClient {
     }
 
     const finalResult = await result;
+    const finishReason = await finalResult.finishReason;
+
+    // 从 toolCallLog 中提取终止工具的参数（signal_input_needed 没有 execute，
+    // 但 experimental_onToolCallStart 仍然会记录它的 args）
+    const signalCall = toolCallLog.find((tc) => tc.name === 'signal_input_needed');
+    const inputSignaled = !!signalCall;
+    const signalArgs = signalCall?.args as { prompt_hint?: string; choices?: string[] } | undefined;
 
     return {
       text: fullText,
       toolCalls: toolCallLog,
-      finishReason: await finalResult.finishReason,
+      finishReason,
       inputSignaled,
-      inputHint,
+      inputHint: signalArgs?.prompt_hint,
+      inputChoices: signalArgs?.choices,
     };
   }
 

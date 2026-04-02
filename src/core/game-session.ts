@@ -210,12 +210,9 @@ export class GameSession {
           stateStore: this.stateStore,
           memory: this.memory,
           segments: this.segments,
-          onSignalInput: ({ hint, choices }) => {
-            store.setInputHint(hint ?? null);
-            if (choices && choices.length > 0) {
-              store.setInputType('choice', choices);
-            }
-          },
+          // signal_input_needed 是终止工具（no-execute），
+          // choices/hint 从 generate() 返回值中提取，见下方
+          onSignalInput: () => {},
           onSetMood: (_mood) => {
             // TODO: connect to UI mood system
           },
@@ -308,6 +305,14 @@ export class GameSession {
 
         // Flush any buffered text in the reasoning filter
         textFilter.flush();
+
+        // 从 generate 返回值中提取 signal_input_needed 的参数（终止工具没有 execute）
+        if (result.inputSignaled) {
+          store.setInputHint(result.inputHint ?? null);
+          if (result.inputChoices && result.inputChoices.length > 0) {
+            store.setInputType('choice', result.inputChoices);
+          }
+        }
 
         // Stage finish reason
         store.stagePendingDebug({ finishReason: result.finishReason });
