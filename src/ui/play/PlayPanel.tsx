@@ -16,6 +16,7 @@ import { DebugPanel } from '../DebugPanel';
 import { useGameStore } from '../../stores/game-store';
 import { GameSession } from '../../core/game-session';
 import type { GameSessionConfig } from '../../core/game-session';
+import { createLocalEmitter } from '../../stores/local-session-emitter';
 import type { ScriptManifest } from '../../core/types';
 import { cn } from '../../lib/utils';
 
@@ -87,7 +88,7 @@ export function PlayPanel({ manifest, compact = false, showDebug = true, showRea
       llmConfig: getLLMConfig(),
     };
 
-    const session = new GameSession();
+    const session = new GameSession(createLocalEmitter());
     sessionRef.current = session;
     session.start(config);
   }, [manifest]);

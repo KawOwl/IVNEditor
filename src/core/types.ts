@@ -280,3 +280,42 @@ export interface ScriptVersionDiff {
   changes: SegmentChangeReport[];
   logicSegmentsChanged: boolean;      // 是否有 logic 类型 segment 变化
 }
+
+// ============================================================================
+// Session Types — 跨层共享的运行时类型
+// ============================================================================
+
+export interface NarrativeEntry {
+  id: string;
+  role: 'generate' | 'receive' | 'system';
+  content: string;
+  reasoning?: string;
+  toolCalls?: ToolCallEntry[];
+  promptSnapshot?: PromptSnapshot;
+  finishReason?: string;
+  timestamp: number;
+}
+
+export interface PromptSnapshot {
+  systemPrompt: string;
+  messages: Array<{ role: string; content: string }>;
+  tokenBreakdown: TokenBreakdownInfo;
+  activeSegmentIds: string[];
+}
+
+export interface ToolCallEntry {
+  name: string;
+  args: unknown;
+  result: unknown;
+  timestamp: number;
+}
+
+export interface TokenBreakdownInfo {
+  system: number;
+  state: number;
+  summaries: number;
+  recentHistory: number;
+  contextSegments: number;
+  total: number;
+  budget: number;
+}

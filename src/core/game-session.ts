@@ -2,12 +2,14 @@
  * GameSession — 端到端集成层
  *
  * 串联所有核心模块：
- *   StateStore, MemoryManager, ContextAssembler, ToolExecutor,
- *   LLMClient → Zustand GameStore
+ *   StateStore, MemoryManager, ContextAssembler, ToolExecutor, LLMClient
+ *
+ * 通过 SessionEmitter 接口向视图层推送事件，不直接依赖 Zustand。
+ * 这使得 GameSession 可以在前端或后端运行。
  *
  * 核心循环：Generate + Receive
  *   1. Generate: 组装 context → 调用 LLM（agentic tool loop）→ 追加记忆 → 按需压缩
- *   2. Receive: 若 LLM 调用了 signal_input_needed → 等待外部输入 → 追加记忆
+ *   2. Receive: 等待外部输入 → 追加记忆
  *   循环直到 session 被停止
  *
  * 对外只暴露简单的 API：
@@ -27,7 +29,7 @@ import { assembleContext } from './context-assembler';
 import { createTools, getEnabledTools } from './tool-executor';
 import { LLMClient } from './llm-client';
 import type { LLMConfig } from './llm-client';
-import { useGameStore } from '../stores/game-store';
+import type { SessionEmitter } from './session-emitter';
 
 // ============================================================================
 // ReasoningFilter — 启发式分离 LLM 推理文本与叙事正文
@@ -119,6 +121,8 @@ export interface GameSessionConfig {
 // ============================================================================
 
 export class GameSession {
+  private emitter: SessionEmitter;
+
   private stateStore!: StateStore;
   private memory!: MemoryManager;
   private llmClient!: LLMClient;
@@ -140,11 +144,14 @@ export class GameSession {
       .join('\n');
   };
 
+  constructor(emitter: SessionEmitter) {
+    this.emitter = emitter;
+  }
+
   /** Initialize and start the game session */
   async start(config: GameSessionConfig): Promise<void> {
-    const store = useGameStore.getState();
-    store.reset();
-    store.setStatus('loading');
+    this.emitter.reset();
+    this.emitter.setStatus('loading');
 
     try {
       // Initialize core modules
@@ -168,7 +175,7 @@ export class GameSession {
       await this.coreLoop();
     } catch (error) {
       if (this.active) {
-        store.setError(error instanceof Error ? error.message : String(error));
+        this.emitter.setError(error instanceof Error ? error.message : String(error));
       }
     }
   }
@@ -188,7 +195,7 @@ export class GameSession {
       this.inputResolve('');
       this.inputResolve = null;
     }
-    useGameStore.getState().setStatus('idle');
+    this.emitter.setStatus('idle');
   }
 
   // ============================================================================
@@ -196,11 +203,9 @@ export class GameSession {
   // ============================================================================
 
   private async coreLoop(): Promise<void> {
-    const store = useGameStore.getState();
-
     while (this.active) {
       // --- Generate Phase ---
-      store.setStatus('generating');
+      this.emitter.setStatus('generating');
       const turn = this.stateStore.getTurn() + 1;
       this.stateStore.setTurn(turn);
 
@@ -246,7 +251,7 @@ export class GameSession {
           .map((s) => s.id);
 
         // Update global debug state
-        store.updateDebug({
+        this.emitter.updateDebug({
           tokenBreakdown: context.tokenBreakdown,
           assembledSystemPrompt: context.systemPrompt,
           assembledMessages: context.messages.map((m) => ({ role: m.role, content: m.content })),
@@ -254,7 +259,7 @@ export class GameSession {
         });
 
         // Stage prompt snapshot for this generation entry
-        store.stagePendingDebug({
+        this.emitter.stagePendingDebug({
           promptSnapshot: {
             systemPrompt: context.systemPrompt,
             messages: context.messages.map((m) => ({ role: m.role, content: m.content })),
@@ -265,8 +270,8 @@ export class GameSession {
 
         // Call LLM (agentic tool loop)
         const textFilter = new ReasoningFilter(
-          (reasoning) => store.appendReasoningChunk(reasoning),
-          (text) => store.appendStreamingChunk(text),
+          (reasoning) => this.emitter.appendReasoningChunk(reasoning),
+          (text) => this.emitter.appendTextChunk(text),
         );
         const result = await this.llmClient.generate({
           systemPrompt: context.systemPrompt,
@@ -277,29 +282,15 @@ export class GameSession {
             textFilter.push(chunk);
           },
           onReasoningChunk: (chunk) => {
-            store.appendReasoningChunk(chunk);
+            this.emitter.appendReasoningChunk(chunk);
           },
           onToolCall: (name, args) => {
-            store.addToolCall({ name, args, result: undefined });
-            store.addPendingToolCall({ name, args, result: undefined });
+            this.emitter.addToolCall({ name, args, result: undefined });
+            this.emitter.addPendingToolCall({ name, args, result: undefined });
           },
           onToolResult: (name, toolResult) => {
-            // Update global tool call log
-            const calls = useGameStore.getState().toolCalls;
-            const lastCall = [...calls].reverse().find(
-              (c) => c.name === name && c.result === undefined,
-            );
-            if (lastCall) {
-              lastCall.result = toolResult;
-            }
-            // Update pending tool call for this entry
-            const pending = useGameStore.getState().pendingToolCalls;
-            const lastPending = [...pending].reverse().find(
-              (c) => c.name === name && c.result === undefined,
-            );
-            if (lastPending) {
-              lastPending.result = toolResult;
-            }
+            this.emitter.updateToolResult(name, toolResult);
+            this.emitter.updatePendingToolResult(name, toolResult);
           },
         });
 
@@ -308,17 +299,17 @@ export class GameSession {
 
         // 从 generate 返回值中提取 signal_input_needed 的参数（终止工具没有 execute）
         if (result.inputSignaled) {
-          store.setInputHint(result.inputHint ?? null);
+          this.emitter.setInputHint(result.inputHint ?? null);
           if (result.inputChoices && result.inputChoices.length > 0) {
-            store.setInputType('choice', result.inputChoices);
+            this.emitter.setInputType('choice', result.inputChoices);
           }
         }
 
         // Stage finish reason
-        store.stagePendingDebug({ finishReason: result.finishReason });
+        this.emitter.stagePendingDebug({ finishReason: result.finishReason });
 
         // Finalize streaming → append to narrative entries (with attached debug info)
-        store.finalizeStreaming();
+        this.emitter.finalizeStreaming();
 
         // Store LLM response in memory
         if (result.text) {
@@ -332,7 +323,7 @@ export class GameSession {
 
         // Check if memory needs compression
         if (this.memory.needsCompression()) {
-          store.setStatus('compressing');
+          this.emitter.setStatus('compressing');
           await this.memory.compress(this.compressFn);
         }
 
@@ -342,9 +333,9 @@ export class GameSession {
       } catch (error) {
         if (!this.active) break;
         // Finalize any partial streaming content so it's not lost
-        store.finalizeStreaming();
+        this.emitter.finalizeStreaming();
         // Show error banner but don't change status — Receive Phase will set waiting-input
-        useGameStore.setState({ error: error instanceof Error ? error.message : String(error) });
+        this.emitter.setError(error instanceof Error ? error.message : String(error));
         // Fall through to Receive Phase — player can re-send to retry
       }
 
@@ -352,16 +343,16 @@ export class GameSession {
       // 默认行为：回复结束 = 等待玩家输入（与 chat 一致）。
       // signal_input_needed 仅用于提供 prompt hint，不再是必需的。
       if (this.active) {
-        store.setStatus('waiting-input');
+        this.emitter.setStatus('waiting-input');
         const inputText = await this.waitForInput();
 
         if (!this.active) break; // stopped while waiting
 
         // Clear error banner on new input
-        useGameStore.setState({ error: null });
+        this.emitter.setError(null);
 
         if (inputText) {
-          store.appendEntry({ role: 'receive', content: inputText });
+          this.emitter.appendEntry({ role: 'receive', content: inputText });
 
           this.memory.appendTurn({
             turn,
@@ -371,8 +362,8 @@ export class GameSession {
           });
         }
 
-        store.setInputHint(null);
-        store.setInputType('freetext');
+        this.emitter.setInputHint(null);
+        this.emitter.setInputType('freetext');
       }
     }
   }
@@ -388,9 +379,7 @@ export class GameSession {
   }
 
   private syncDebugState(): void {
-    const store = useGameStore.getState();
-
-    store.updateDebug({
+    this.emitter.updateDebug({
       stateVars: this.stateStore.getAll(),
       totalTurns: this.stateStore.getTurn(),
       memoryEntryCount: this.memory.getAllEntries().length,

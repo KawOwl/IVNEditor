@@ -7,44 +7,24 @@
 
 import { create } from 'zustand';
 
+// Session types 定义在 core/types.ts，此处 re-export 供 UI 层使用
+export type {
+  NarrativeEntry,
+  PromptSnapshot,
+  ToolCallEntry,
+  TokenBreakdownInfo,
+} from '../core/types';
+
+import type {
+  NarrativeEntry,
+  PromptSnapshot,
+  ToolCallEntry,
+  TokenBreakdownInfo,
+} from '../core/types';
+
 // ============================================================================
 // Types
 // ============================================================================
-
-export interface NarrativeEntry {
-  id: string;
-  role: 'generate' | 'receive' | 'system';
-  content: string;
-  reasoning?: string;          // LLM reasoning/thinking (debug mode)
-  toolCalls?: ToolCallEntry[]; // tool calls made during this generation (debug mode)
-  promptSnapshot?: PromptSnapshot; // prompt used to generate this entry (debug mode)
-  finishReason?: string;       // LLM finish reason (debug mode)
-  timestamp: number;
-}
-
-export interface PromptSnapshot {
-  systemPrompt: string;
-  messages: Array<{ role: string; content: string }>;
-  tokenBreakdown: TokenBreakdownInfo;
-  activeSegmentIds: string[];
-}
-
-export interface ToolCallEntry {
-  name: string;
-  args: unknown;
-  result: unknown;
-  timestamp: number;
-}
-
-export interface TokenBreakdownInfo {
-  system: number;
-  state: number;
-  summaries: number;
-  recentHistory: number;
-  contextSegments: number;
-  total: number;
-  budget: number;
-}
 
 export interface GameState {
   // --- Session Status ---
