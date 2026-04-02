@@ -8,3 +8,5 @@ tsconfig.tsbuildinfo
 dist/
 scenario
 .DS_Store
+server/data/
+server/node_modules/

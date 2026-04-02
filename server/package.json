@@ -1,0 +1,22 @@
+{
+  "name": "ivn-server",
+  "version": "0.1.0",
+  "description": "Interactive Novel Engine — Backend Server",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "typecheck": "bun x tsc --noEmit"
+  },
+  "dependencies": {
+    "elysia": "^1.2.25",
+    "@elysiajs/cors": "^1.2.0",
+    "ai": "^6.0.141",
+    "@ai-sdk/openai-compatible": "^2.0.37",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.18",
+    "typescript": "^5.7.0"
+  }
+}
