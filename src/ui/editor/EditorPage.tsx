@@ -11,14 +11,15 @@
  *   - injectionRule（条件表达式）
  */
 
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useAppStore } from '../../stores/app-store';
 import { CodeEditor } from './CodeEditor';
 import { EditorDebugPanel } from './EditorDebugPanel';
 import { PromptPreviewPanel } from './PromptPreviewPanel';
 import { PlayPanel } from '../play/PlayPanel';
 import { estimateTokens } from '../../core/memory';
-import { getCatalog, getManifestById } from '../../fixtures/registry';
+import { ScriptStorage, exportScript, parseImportedScript } from '../../storage/script-storage';
+import type { ScriptRecord, ScriptListItem } from '../../storage/script-storage';
 import { cn } from '../../lib/utils';
 import type {
   ScriptManifest,
@@ -96,23 +97,21 @@ function manifestToDocuments(manifest: ScriptManifest): EditorDocument[] {
 }
 
 // ============================================================================
-// Default state schema (MODULE_7 aligned)
+// Default state schema
 // ============================================================================
 
 const defaultStateSchema: StateSchema = {
   variables: [
     { name: 'chapter', type: 'number', initial: 1, description: '当前章节' },
     { name: 'stage', type: 'number', initial: 1, description: '当前阶段序号' },
-    { name: 'route', type: 'string', initial: 'main', description: '路线状态' },
-    { name: 'player_type', type: 'string', initial: 'unknown', description: '分流类型' },
-    { name: 'player_knowledge', type: 'string', initial: 'unknown', description: '知识背景' },
-    { name: 'girl_language_level', type: 'number', initial: 0, description: '女孩语言状态' },
-    { name: 'player_tendency', type: 'string', initial: 'unknown', description: '行为倾向' },
-    { name: 'player_preference', type: 'string', initial: 'unknown', description: '偏好类型' },
-    { name: 'deviation_count', type: 'number', initial: 0, description: '连续偏离次数' },
-    { name: 'current_location', type: 'string', initial: 'wasteland', description: '当前位置' },
   ],
 };
+
+// ============================================================================
+// Script Storage singleton
+// ============================================================================
+
+const scriptStorage = new ScriptStorage();
 
 const defaultMemoryConfig: MemoryConfig = {
   contextBudget: 200000,
@@ -142,18 +141,34 @@ export function EditorPage() {
   const [memoryConfig, setMemoryConfig] = useState<MemoryConfig>(defaultMemoryConfig);
   const [enabledTools, setEnabledTools] = useState<string[]>(['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood']);
   const [loadedScriptId, setLoadedScriptId] = useState<string | null>(null);
+  const [scriptLabel, setScriptLabel] = useState('未命名剧本');
+  const [scriptDescription, setScriptDescription] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Script library state ---
+  const [scriptList, setScriptList] = useState<ScriptListItem[]>([]);
+  const [showScriptLibrary, setShowScriptLibrary] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;
 
-  // --- Available scripts from registry ---
-  const catalog = useMemo(() => getCatalog(), []);
+  // --- Load script list from IndexedDB on mount ---
+  const refreshScriptList = useCallback(async () => {
+    const list = await scriptStorage.list();
+    setScriptList(list);
+  }, []);
 
-  // --- Load a built-in script ---
-  const handleLoadScript = useCallback((scriptId: string) => {
-    const manifest = getManifestById(scriptId);
-    if (!manifest) return;
+  useEffect(() => {
+    refreshScriptList();
+  }, [refreshScriptList]);
 
+  // --- Load a script from IndexedDB ---
+  const handleLoadScript = useCallback(async (scriptId: string) => {
+    const record = await scriptStorage.get(scriptId);
+    if (!record) return;
+
+    const manifest = record.manifest;
     const docs = manifestToDocuments(manifest);
     setDocuments(docs);
     setSelectedDocId(docs.length > 0 ? docs[0]!.id : null);
@@ -162,6 +177,161 @@ export function EditorPage() {
     setEnabledTools(manifest.enabledTools);
     setInitialPrompt(manifest.initialPrompt ?? '开始测试');
     setLoadedScriptId(scriptId);
+    setScriptLabel(record.label);
+    setScriptDescription(record.description);
+    setShowScriptLibrary(false);
+  }, []);
+
+  // --- Save current editor state to IndexedDB ---
+  const handleSaveScript = useCallback(async () => {
+    setSaving(true);
+    try {
+      const id = loadedScriptId ?? 'script-' + Math.random().toString(36).slice(2, 8);
+      const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
+      const manifest: ScriptManifest = {
+        id,
+        version: '0.0.0',
+        label: scriptLabel,
+        description: scriptDescription,
+        stateSchema,
+        memoryConfig,
+        enabledTools,
+        initialPrompt: initialPrompt || undefined,
+        chapters: [{
+          id: 'ch1',
+          label: '第一章',
+          flowGraph,
+          segments: documents.map(docToSegment),
+        }],
+      };
+
+      const now = Date.now();
+      const existing = await scriptStorage.get(id);
+      const record: ScriptRecord = {
+        id,
+        label: scriptLabel,
+        description: scriptDescription,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+        manifest,
+      };
+
+      await scriptStorage.save(record);
+      setLoadedScriptId(id);
+      await refreshScriptList();
+    } finally {
+      setSaving(false);
+    }
+  }, [loadedScriptId, scriptLabel, scriptDescription, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, refreshScriptList]);
+
+  // --- Delete a script from IndexedDB ---
+  const handleDeleteScript = useCallback(async (id: string) => {
+    await scriptStorage.delete(id);
+    if (loadedScriptId === id) {
+      setLoadedScriptId(null);
+      setDocuments([]);
+      setSelectedDocId(null);
+      setScriptLabel('未命名剧本');
+      setScriptDescription('');
+    }
+    await refreshScriptList();
+  }, [loadedScriptId, refreshScriptList]);
+
+  // --- Export current script as .ivn.json ---
+  const handleExportScript = useCallback(async () => {
+    // Build record from current state
+    const id = loadedScriptId ?? 'export';
+    const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
+    const manifest: ScriptManifest = {
+      id,
+      version: '0.0.0',
+      label: scriptLabel,
+      description: scriptDescription,
+      stateSchema,
+      memoryConfig,
+      enabledTools,
+      initialPrompt: initialPrompt || undefined,
+      chapters: [{
+        id: 'ch1',
+        label: '第一章',
+        flowGraph,
+        segments: documents.map(docToSegment),
+      }],
+    };
+
+    const now = Date.now();
+    const record: ScriptRecord = {
+      id,
+      label: scriptLabel,
+      description: scriptDescription,
+      createdAt: now,
+      updatedAt: now,
+      manifest,
+    };
+
+    const json = exportScript(record);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${scriptLabel}.ivn.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [loadedScriptId, scriptLabel, scriptDescription, stateSchema, memoryConfig, enabledTools, initialPrompt, documents]);
+
+  // --- Import a .ivn.json file ---
+  const handleImportScript = useCallback(async (file: File) => {
+    try {
+      const json = await file.text();
+      const record = parseImportedScript(json);
+      await scriptStorage.save(record);
+      await refreshScriptList();
+      // Load the imported script
+      const docs = manifestToDocuments(record.manifest);
+      setDocuments(docs);
+      setSelectedDocId(docs.length > 0 ? docs[0]!.id : null);
+      setStateSchema(record.manifest.stateSchema);
+      setMemoryConfig(record.manifest.memoryConfig);
+      setEnabledTools(record.manifest.enabledTools);
+      setInitialPrompt(record.manifest.initialPrompt ?? '开始测试');
+      setLoadedScriptId(record.id);
+      setScriptLabel(record.label);
+      setScriptDescription(record.description);
+      setShowScriptLibrary(false);
+    } catch (err) {
+      alert('导入失败: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  }, [refreshScriptList]);
+
+  // --- Create new empty script ---
+  const handleNewScript = useCallback(() => {
+    setDocuments([]);
+    setSelectedDocId(null);
+    setLoadedScriptId(null);
+    setScriptLabel('未命名剧本');
+    setScriptDescription('');
+    setStateSchema(defaultStateSchema);
+    setMemoryConfig(defaultMemoryConfig);
+    setEnabledTools(['read_state', 'query_changelog', 'pin_memory', 'query_memory', 'set_mood']);
+    setInitialPrompt('开始测试');
+    setShowScriptLibrary(false);
+  }, []);
+
+  // --- Create new empty .md file ---
+  const handleNewFile = useCallback(() => {
+    const name = prompt('输入文件名（含 .md 后缀）:', '新文件.md');
+    if (!name) return;
+    const doc: EditorDocument = {
+      id: createDocId(),
+      filename: name.endsWith('.md') ? name : name + '.md',
+      content: '',
+      role: 'context',
+      priority: 5,
+      injectionCondition: '',
+      injectionDescription: '',
+    };
+    setDocuments((prev) => [...prev, doc]);
+    setSelectedDocId(doc.id);
   }, []);
 
   // --- Segments derived from documents ---
@@ -266,7 +436,7 @@ export function EditorPage() {
 
   const handleDocMetaChange = useCallback((
     id: string,
-    field: 'role' | 'priority' | 'injectionCondition' | 'injectionDescription',
+    field: 'role' | 'priority' | 'injectionCondition' | 'injectionDescription' | 'filename',
     value: string | number,
   ) => {
     setDocuments((prev) =>
@@ -306,6 +476,9 @@ export function EditorPage() {
             ← 返回
           </button>
           <h1 className="text-sm font-medium text-zinc-300">编剧编辑器</h1>
+          {loadedScriptId && (
+            <span className="text-xs text-zinc-500">— {scriptLabel}</span>
+          )}
         </div>
         <div className="flex items-center gap-3 text-xs text-zinc-500">
           <span>{documents.length} 个文件</span>
@@ -324,30 +497,122 @@ export function EditorPage() {
         <div className="flex-1 flex min-w-0">
           {/* File sidebar */}
           <div className="w-56 flex-none border-r border-zinc-800 flex flex-col">
-            {/* Script selector + Upload */}
+            {/* Script library + actions */}
             <div className="flex-none px-3 py-2 border-b border-zinc-800 space-y-2">
-              {/* Load built-in script */}
-              <select
-                value={loadedScriptId ?? ''}
+              {/* Current script name */}
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setShowScriptLibrary(!showScriptLibrary)}
+                  className="flex-1 text-left text-xs px-2 py-1.5 rounded bg-zinc-900 border border-zinc-700 text-zinc-300 hover:border-zinc-500 transition-colors truncate"
+                >
+                  {scriptLabel || '选择剧本...'}
+                  <span className="text-zinc-600 ml-1">{showScriptLibrary ? '▲' : '▼'}</span>
+                </button>
+                <button
+                  onClick={handleSaveScript}
+                  disabled={saving}
+                  className="flex-none text-[11px] px-1.5 py-1.5 rounded bg-emerald-800 hover:bg-emerald-700 text-white disabled:opacity-50 transition-colors"
+                  title="保存剧本"
+                >
+                  {saving ? '...' : '存'}
+                </button>
+              </div>
+
+              {/* Script library dropdown */}
+              {showScriptLibrary && (
+                <div className="bg-zinc-900 border border-zinc-700 rounded overflow-hidden">
+                  {/* Action buttons */}
+                  <div className="flex border-b border-zinc-800">
+                    <button
+                      onClick={handleNewScript}
+                      className="flex-1 text-[10px] py-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+                    >
+                      新建
+                    </button>
+                    <button
+                      onClick={() => importInputRef.current?.click()}
+                      className="flex-1 text-[10px] py-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors border-l border-zinc-800"
+                    >
+                      导入
+                    </button>
+                    <button
+                      onClick={handleExportScript}
+                      disabled={documents.length === 0}
+                      className="flex-1 text-[10px] py-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 disabled:opacity-30 transition-colors border-l border-zinc-800"
+                    >
+                      导出
+                    </button>
+                  </div>
+                  {/* Script list */}
+                  <div className="max-h-48 overflow-y-auto">
+                    {scriptList.length === 0 ? (
+                      <div className="px-2 py-3 text-center text-[10px] text-zinc-600">
+                        暂无保存的剧本
+                      </div>
+                    ) : (
+                      scriptList.map((item) => (
+                        <div
+                          key={item.id}
+                          className={cn(
+                            'group px-2 py-1.5 flex items-center gap-1.5 cursor-pointer hover:bg-zinc-800 transition-colors',
+                            item.id === loadedScriptId && 'bg-zinc-800/60',
+                          )}
+                          onClick={() => handleLoadScript(item.id)}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs text-zinc-300 truncate">{item.label}</div>
+                            <div className="text-[10px] text-zinc-600">
+                              {item.fileCount} 文件 · {new Date(item.updatedAt).toLocaleDateString()}
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`确认删除「${item.label}」？`)) {
+                                handleDeleteScript(item.id);
+                              }
+                            }}
+                            className="flex-none text-zinc-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all text-xs"
+                            title="删除"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Hidden import input */}
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".json,.ivn.json"
+                className="hidden"
                 onChange={(e) => {
-                  if (e.target.value) handleLoadScript(e.target.value);
+                  if (e.target.files?.[0]) {
+                    handleImportScript(e.target.files[0]);
+                    e.target.value = '';
+                  }
                 }}
-                className="w-full text-xs px-2 py-1.5 rounded bg-zinc-900 border border-zinc-700 text-zinc-300 focus:outline-none focus:border-zinc-500"
-              >
-                <option value="">选择内置剧本...</option>
-                {catalog.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {entry.label}
-                  </option>
-                ))}
-              </select>
-              {/* Upload files */}
-              <button
-                onClick={handleUploadClick}
-                className="w-full text-xs px-2 py-1.5 rounded border border-dashed border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                + 上传 .md 文件
-              </button>
+              />
+
+              {/* File actions: upload + new file */}
+              <div className="flex gap-1">
+                <button
+                  onClick={handleUploadClick}
+                  className="flex-1 text-[11px] px-2 py-1 rounded border border-dashed border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  上传 .md
+                </button>
+                <button
+                  onClick={handleNewFile}
+                  className="flex-1 text-[11px] px-2 py-1 rounded border border-dashed border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  新建文件
+                </button>
+              </div>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -364,7 +629,7 @@ export function EditorPage() {
                 <div className="px-3 py-8 text-center text-xs text-zinc-600">
                   拖拽 .md 文件到此处
                   <br />
-                  或点击上方按钮上传
+                  或点击上方按钮
                 </div>
               ) : (
                 <div className="py-1">
@@ -375,6 +640,7 @@ export function EditorPage() {
                       selected={doc.id === selectedDocId}
                       onSelect={() => setSelectedDocId(doc.id)}
                       onDelete={() => handleDeleteDoc(doc.id)}
+                      onRename={(name) => handleDocMetaChange(doc.id, 'filename', name)}
                     />
                   ))}
                 </div>
@@ -482,13 +748,31 @@ function FileListItem({
   selected,
   onSelect,
   onDelete,
+  onRename,
 }: {
   doc: EditorDocument;
   selected: boolean;
   onSelect: () => void;
   onDelete: () => void;
+  onRename: (name: string) => void;
 }) {
   const tokenCount = estimateTokens(doc.content);
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(doc.filename);
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditName(doc.filename);
+    setEditing(true);
+  }, [doc.filename]);
+
+  const handleRenameConfirm = useCallback(() => {
+    const trimmed = editName.trim();
+    if (trimmed && trimmed !== doc.filename) {
+      onRename(trimmed.endsWith('.md') ? trimmed : trimmed + '.md');
+    }
+    setEditing(false);
+  }, [editName, doc.filename, onRename]);
 
   return (
     <div
@@ -505,12 +789,31 @@ function FileListItem({
       )} />
 
       <div className="flex-1 min-w-0">
-        <div className={cn(
-          'text-xs truncate',
-          selected ? 'text-zinc-200' : 'text-zinc-400',
-        )}>
-          {doc.filename}
-        </div>
+        {editing ? (
+          <input
+            autoFocus
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={handleRenameConfirm}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleRenameConfirm();
+              if (e.key === 'Escape') setEditing(false);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full text-xs px-1 py-0 bg-zinc-800 border border-zinc-600 rounded text-zinc-200 focus:outline-none"
+          />
+        ) : (
+          <div
+            onDoubleClick={handleDoubleClick}
+            className={cn(
+              'text-xs truncate',
+              selected ? 'text-zinc-200' : 'text-zinc-400',
+            )}
+            title="双击重命名"
+          >
+            {doc.filename}
+          </div>
+        )}
         <div className="flex items-center gap-1.5 text-[10px] text-zinc-600">
           <span>{doc.role}</span>
           <span>P{doc.priority}</span>
