@@ -1,13 +1,15 @@
 /**
  * InputPanel — 玩家输入面板
  *
- * 输入模式：
- *   - freetext: 自由文本输入 + 动作类型按钮（思考/对话/行动/观察）
- *   - choice: 显示选项按钮 + 自由文本输入
- *     玩家可以点击选项，也可以忽略选项直接输入自由文本
+ * 交互模式：
+ *   1. 在输入框输入内容
+ *   2. 点击下方动作按钮（思考/对话/行动/观察）发送
+ *      - 无文本时按钮为灰色标签态，仅切换默认类型
+ *      - 有文本时按钮高亮为发送态，点击直接发送
+ *      - Enter 快捷键以当前选中类型发送
+ *   3. choice 模式下额外显示选项按钮，点击直接发送
  *
- * 输入时显示 prompt_hint（来自 signal_input_needed），无 hint 时显示默认提示。
- * 仅在 waiting-input 状态时可用。
+ * placeholder 随动作类型变化，引导用户输入。
  */
 
 import { useState, useCallback, type KeyboardEvent } from 'react';
@@ -22,15 +24,39 @@ interface ActionType {
   id: string;
   label: string;
   icon: string;
-  prefix: string;    // 发给 LLM 的前缀标记
-  color: string;      // button active color class
+  prefix: string;
+  placeholder: string;  // 输入框引导文字
+  // 标签态（无文本）
+  tagColor: string;
+  // 发送态（有文本）
+  sendColor: string;
 }
 
 const ACTION_TYPES: ActionType[] = [
-  { id: 'think',   label: '思考', icon: '💭', prefix: '[思考]', color: 'border-purple-600 text-purple-300 bg-purple-950/40' },
-  { id: 'speak',   label: '对话', icon: '💬', prefix: '[对话]', color: 'border-blue-600 text-blue-300 bg-blue-950/40' },
-  { id: 'act',     label: '行动', icon: '🎬', prefix: '[行动]', color: 'border-emerald-600 text-emerald-300 bg-emerald-950/40' },
-  { id: 'observe', label: '观察', icon: '👁', prefix: '[观察]', color: 'border-amber-600 text-amber-300 bg-amber-950/40' },
+  {
+    id: 'think', label: '思考', icon: '💭', prefix: '[思考]',
+    placeholder: '你在想什么...',
+    tagColor: 'border-purple-800/50 text-purple-500/70',
+    sendColor: 'border-purple-500 text-purple-200 bg-purple-900/60 shadow-sm shadow-purple-900/30',
+  },
+  {
+    id: 'speak', label: '对话', icon: '💬', prefix: '[对话]',
+    placeholder: '你想说什么...',
+    tagColor: 'border-blue-800/50 text-blue-500/70',
+    sendColor: 'border-blue-500 text-blue-200 bg-blue-900/60 shadow-sm shadow-blue-900/30',
+  },
+  {
+    id: 'act', label: '行动', icon: '🎬', prefix: '[行动]',
+    placeholder: '你想做什么...',
+    tagColor: 'border-emerald-800/50 text-emerald-500/70',
+    sendColor: 'border-emerald-500 text-emerald-200 bg-emerald-900/60 shadow-sm shadow-emerald-900/30',
+  },
+  {
+    id: 'observe', label: '观察', icon: '👁', prefix: '[观察]',
+    placeholder: '你想观察什么...',
+    tagColor: 'border-amber-800/50 text-amber-500/70',
+    sendColor: 'border-amber-500 text-amber-200 bg-amber-900/60 shadow-sm shadow-amber-900/30',
+  },
 ];
 
 const DEFAULT_HINT = '你想做什么？';
@@ -53,15 +79,19 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
 
   const isDisabled = status !== 'waiting-input';
   const hasChoices = inputType === 'choice' && choices && choices.length > 0;
+  const hasText = text.trim().length > 0;
   const currentAction = ACTION_TYPES.find((a) => a.id === activeAction) ?? ACTION_TYPES[2]!;
 
-  const handleSubmit = useCallback(() => {
+  const submitWithAction = useCallback((action: ActionType) => {
     const trimmed = text.trim();
     if (!trimmed || isDisabled) return;
-    // 拼接动作前缀：[行动] 走向那扇门
-    onSubmit(`${currentAction.prefix} ${trimmed}`);
+    onSubmit(`${action.prefix} ${trimmed}`);
     setText('');
-  }, [text, isDisabled, onSubmit, currentAction]);
+  }, [text, isDisabled, onSubmit]);
+
+  const handleSubmit = useCallback(() => {
+    submitWithAction(currentAction);
+  }, [submitWithAction, currentAction]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -124,7 +154,7 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
             ? '等待生成...'
             : hasChoices
               ? '或者输入自定义回应...'
-              : `${currentAction.icon} ${currentAction.label}...`
+              : currentAction.placeholder
         }
         rows={2}
         className={cn(
@@ -135,40 +165,47 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
         )}
       />
 
-      {/* Action type buttons row (below input) */}
+      {/* Action buttons row */}
       <div className="flex items-center gap-1.5">
-        {ACTION_TYPES.map((action) => (
-          <button
-            key={action.id}
-            onClick={() => {
-              setActiveAction(action.id);
-              // 如果有文字，直接以该动作类型发送
-              const trimmed = text.trim();
-              if (trimmed && !isDisabled) {
-                onSubmit(`${action.prefix} ${trimmed}`);
-                setText('');
-              }
-            }}
-            disabled={isDisabled}
-            className={cn(
-              'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border',
-              isDisabled
-                ? 'bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed'
-                : activeAction === action.id
-                  ? action.color
-                  : 'bg-zinc-900/50 border-zinc-800 text-zinc-500 hover:text-zinc-400 hover:border-zinc-700 cursor-pointer',
-            )}
-          >
-            {action.icon} {action.label}
-          </button>
-        ))}
+        {ACTION_TYPES.map((action) => {
+          const isActive = activeAction === action.id;
+          return (
+            <button
+              key={action.id}
+              onClick={() => {
+                setActiveAction(action.id);
+                if (hasText && !isDisabled) {
+                  submitWithAction(action);
+                }
+              }}
+              disabled={isDisabled}
+              className={cn(
+                'px-3 py-1.5 rounded-lg text-xs font-medium transition-all border',
+                isDisabled
+                  ? 'bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed'
+                  : hasText
+                    // 发送态：高亮、有存在感
+                    ? cn(
+                        action.sendColor,
+                        'cursor-pointer hover:brightness-110',
+                      )
+                    // 标签态：低调
+                    : isActive
+                      ? cn(action.tagColor, 'bg-zinc-900/50')
+                      : 'border-zinc-800/50 text-zinc-600 bg-transparent hover:text-zinc-500 hover:border-zinc-700 cursor-pointer',
+              )}
+            >
+              {action.icon} {action.label}{hasText && !isDisabled ? ' →' : ''}
+            </button>
+          );
+        })}
 
         <div className="flex-1" />
 
-        {/* Enter 快捷键提示 */}
-        {!isDisabled && text.trim() && (
+        {/* 快捷键提示 */}
+        {!isDisabled && hasText && (
           <span className="text-[10px] text-zinc-600">
-            Enter 发送 ({currentAction.label})
+            Enter = {currentAction.icon}{currentAction.label}
           </span>
         )}
       </div>
