@@ -110,14 +110,21 @@ info "服务端口: $PORT"
 # ============================================================================
 # 安装依赖 + 构建
 # ============================================================================
+
+# 构建执行 PATH：确保 su - 下 node/bun/pnpm 都可用
+EXEC_PATH="$(dirname "$BUN_PATH"):$NODE_DIR:$(dirname "$PNPM_PATH"):/usr/local/bin:/usr/bin:/bin"
+run_as_user() {
+  su - "$RUN_USER" -c "export PATH='$EXEC_PATH:\$PATH' && $1"
+}
+
 info "安装前端依赖..."
-su - "$RUN_USER" -c "cd '$PROJECT_DIR' && '$PNPM_PATH' install"
+run_as_user "cd '$PROJECT_DIR' && '$PNPM_PATH' install"
 
 info "构建前端..."
-su - "$RUN_USER" -c "cd '$PROJECT_DIR' && '$PNPM_PATH' build"
+run_as_user "cd '$PROJECT_DIR' && '$PNPM_PATH' build"
 
 info "安装后端依赖..."
-su - "$RUN_USER" -c "cd '$SERVER_DIR' && '$BUN_PATH' install"
+run_as_user "cd '$SERVER_DIR' && '$BUN_PATH' install"
 
 [ ! -d "$PROJECT_DIR/dist" ] && error "构建失败，dist/ 目录不存在"
 info "前端构建成功: $PROJECT_DIR/dist"
