@@ -190,7 +190,7 @@ export function EditorPage() {
   const handleSaveScript = useCallback(async () => {
     setSaving(true);
     try {
-      const id = loadedScriptId ?? 'script-' + Math.random().toString(36).slice(2, 8);
+      const id = loadedScriptId ?? crypto.randomUUID();
       const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
       const manifest: ScriptManifest = {
         id,
