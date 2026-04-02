@@ -23,8 +23,10 @@ export function App() {
   const page = useAppStore((s) => s.page);
   const setCatalog = useAppStore((s) => s.setCatalog);
 
-  // Load published scripts catalog on mount and when returning to home
+  // Refresh published catalog when navigating to home
+  const pageName = page.name;
   useEffect(() => {
+    if (pageName !== 'home') return;
     scriptStorage.listPublished().then((list) => {
       setCatalog(list.map((item) => ({
         id: item.id,
@@ -33,7 +35,7 @@ export function App() {
         chapterCount: item.fileCount,
       })));
     });
-  }, [setCatalog, page]);
+  }, [setCatalog, pageName]);
 
   switch (page.name) {
     case 'home':
