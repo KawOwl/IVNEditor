@@ -131,6 +131,29 @@ const defaultMemoryConfig: MemoryConfig = {
 type RightTab = 'prompt' | 'play' | 'debug' | 'settings' | 'info';
 
 // ============================================================================
+// Remote script merging types
+// ============================================================================
+
+type ScriptSource = 'local' | 'remote' | 'both';
+
+interface MergedScriptItem extends ScriptListItem {
+  source: ScriptSource;
+  localVersion?: string;
+  remoteVersion?: string;
+  newerOnServer?: boolean;
+}
+
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+  }
+  return 0;
+}
+
+// ============================================================================
 // EditorPage
 // ============================================================================
 
@@ -154,7 +177,7 @@ export function EditorPage() {
   const importInputRef = useRef<HTMLInputElement>(null);
 
   // --- Script library state ---
-  const [scriptList, setScriptList] = useState<ScriptListItem[]>([]);
+  const [scriptList, setScriptList] = useState<MergedScriptItem[]>([]);
   const [showScriptLibrary, setShowScriptLibrary] = useState(false);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -163,18 +186,96 @@ export function EditorPage() {
 
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;
 
-  // --- Load script list from IndexedDB on mount ---
+  // --- Load script list: local + remote merge ---
   const refreshScriptList = useCallback(async () => {
-    const list = await scriptStorage.list();
-    setScriptList(list);
+    const localList = await scriptStorage.list();
+
+    // Remote mode + admin: also fetch server catalog
+    if (getEngineMode() === 'remote' && useAuthStore.getState().isAdmin) {
+      try {
+        const authHeader = useAuthStore.getState().getAuthHeader();
+        const res = await fetch(`${getBackendUrl()}/api/scripts/catalog`, { headers: authHeader });
+        if (res.ok) {
+          const remoteCatalog: Array<{ id: string; label: string; description?: string; tags?: string[]; version?: string; chapterCount: number }> = await res.json();
+
+          const merged: MergedScriptItem[] = [];
+          const seenIds = new Set<string>();
+
+          // Process local items first
+          for (const local of localList) {
+            const remote = remoteCatalog.find((r) => r.id === local.id);
+            if (remote) {
+              // Exists on both sides
+              const lv = local.version ?? '0.0.0';
+              const rv = remote.version ?? '0.0.0';
+              merged.push({
+                ...local,
+                source: 'both',
+                localVersion: lv,
+                remoteVersion: rv,
+                newerOnServer: compareVersions(rv, lv) > 0,
+              });
+            } else {
+              // Local only
+              merged.push({ ...local, source: 'local' });
+            }
+            seenIds.add(local.id);
+          }
+
+          // Process remote-only items
+          for (const remote of remoteCatalog) {
+            if (seenIds.has(remote.id)) continue;
+            merged.push({
+              id: remote.id,
+              label: remote.label,
+              description: remote.description ?? '',
+              updatedAt: Date.now(),
+              fileCount: remote.chapterCount,
+              tags: remote.tags,
+              version: remote.version,
+              source: 'remote',
+              remoteVersion: remote.version,
+            });
+          }
+
+          setScriptList(merged);
+          return;
+        }
+      } catch {
+        // Fall through to local-only
+      }
+    }
+
+    // Local-only mode or fetch failed
+    setScriptList(localList.map((l) => ({ ...l, source: 'local' as ScriptSource })));
   }, []);
 
   useEffect(() => {
     refreshScriptList();
   }, [refreshScriptList]);
 
-  // --- Load a script from IndexedDB ---
+  // --- Load a script (local or from server) ---
   const handleLoadScript = useCallback(async (scriptId: string) => {
+    // Find merged item to check source
+    const mergedItem = scriptList.find((s) => s.id === scriptId);
+    const needsFetch = mergedItem && (mergedItem.source === 'remote' || mergedItem.newerOnServer);
+
+    // If remote-only or server has newer version, fetch from server first
+    if (needsFetch && getEngineMode() === 'remote') {
+      try {
+        const authHeader = useAuthStore.getState().getAuthHeader();
+        const res = await fetch(`${getBackendUrl()}/api/scripts/${scriptId}`, { headers: authHeader });
+        if (res.ok) {
+          const serverRecord: ScriptRecord = await res.json();
+          // Save to local IndexedDB
+          await scriptStorage.save(serverRecord);
+          await refreshScriptList();
+        }
+      } catch {
+        // If fetch fails, try loading from local
+      }
+    }
+
     const record = await scriptStorage.get(scriptId);
     if (!record) return;
 
@@ -194,7 +295,7 @@ export function EditorPage() {
     setIsPublished(!!record.published);
     setPromptAssemblyOrder(manifest.promptAssemblyOrder);
     setShowScriptLibrary(false);
-  }, []);
+  }, [scriptList, refreshScriptList]);
 
   // --- Save current editor state to IndexedDB ---
   const handleSaveScript = useCallback(async () => {
@@ -651,7 +752,7 @@ export function EditorPage() {
                   <div className="max-h-48 overflow-y-auto">
                     {scriptList.length === 0 ? (
                       <div className="px-2 py-3 text-center text-[10px] text-zinc-600">
-                        暂无保存的剧本
+                        {getEngineMode() === 'remote' ? '暂无剧本（本地和服务器均无）' : '暂无保存的剧本'}
                       </div>
                     ) : (
                       scriptList.map((item) => (
@@ -1034,7 +1135,7 @@ function ScriptListEntry({
   onRename,
   onDelete,
 }: {
-  item: ScriptListItem;
+  item: MergedScriptItem;
   isActive: boolean;
   onLoad: (id: string) => void;
   onRename: (id: string, newLabel: string) => void;
@@ -1087,35 +1188,50 @@ function ScriptListEntry({
           <div className="text-xs text-zinc-300 truncate">
             {item.label}
             {item.published && <span className="ml-1 text-[9px] text-emerald-500">已发布</span>}
+            {item.source === 'remote' && (
+              <span className="ml-1 text-[9px] text-cyan-400">云端</span>
+            )}
+            {item.source === 'both' && item.newerOnServer && (
+              <span className="ml-1 text-[9px] text-amber-400">有更新</span>
+            )}
+            {item.source === 'both' && !item.newerOnServer && (
+              <span className="ml-1 text-[9px] text-zinc-500">已同步</span>
+            )}
           </div>
         )}
         <div className="text-[10px] text-zinc-600">
-          {item.fileCount} 文件 · {new Date(item.updatedAt).toLocaleDateString()}
+          {item.source === 'remote' ? `${item.fileCount} 章` : `${item.fileCount} 文件`}
+          {item.version && <span className="ml-1">v{item.version}</span>}
+          {item.source !== 'remote' && <span> · {new Date(item.updatedAt).toLocaleDateString()}</span>}
         </div>
       </div>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          setEditValue(item.label);
-          setEditing(true);
-        }}
-        className="flex-none text-zinc-600 hover:text-zinc-300 transition-colors text-[10px]"
-        title="重命名"
-      >
-        ✎
-      </button>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          if (confirm(`确认删除「${item.label}」？`)) {
-            onDelete(item.id);
-          }
-        }}
-        className="flex-none text-zinc-600 hover:text-red-400 transition-colors text-xs"
-        title="删除"
-      >
-        ×
-      </button>
+      {item.source !== 'remote' && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setEditValue(item.label);
+            setEditing(true);
+          }}
+          className="flex-none text-zinc-600 hover:text-zinc-300 transition-colors text-[10px]"
+          title="重命名"
+        >
+          ✎
+        </button>
+      )}
+      {item.source !== 'remote' && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (confirm(`确认删除「${item.label}」？`)) {
+              onDelete(item.id);
+            }
+          }}
+          className="flex-none text-zinc-600 hover:text-red-400 transition-colors text-xs"
+          title="删除"
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 }
