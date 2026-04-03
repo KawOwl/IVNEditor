@@ -28,7 +28,7 @@ export function PlayPage({ manifest, scriptId }: PlayPageProps) {
   const [showSettings, setShowSettings] = useState(false);
 
   return (
-    <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
+    <div className="h-full bg-zinc-950 text-zinc-100 flex flex-col">
       {/* Header */}
       <header className="flex-none px-6 py-3 border-b border-zinc-800 flex items-center justify-between">
         <div className="flex items-center gap-3">

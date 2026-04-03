@@ -42,7 +42,7 @@ export function HomePage() {
   }, []);
 
   return (
-    <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col">
+    <div className="h-full bg-zinc-950 text-zinc-100 flex flex-col">
       {/* Header */}
       <header className="flex-none px-8 py-5 border-b border-zinc-800">
         <div className="max-w-6xl mx-auto flex items-center justify-between">

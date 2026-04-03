@@ -148,7 +148,7 @@ function PlayPageLoader({ scriptId }: { scriptId: string }) {
 
   if (error) {
     return (
-      <div className="h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
+      <div className="h-full bg-zinc-950 text-zinc-100 flex items-center justify-center">
         <div className="text-center">
           <p className="text-zinc-400 mb-4">找不到剧本: {scriptId}</p>
           <button
@@ -164,7 +164,7 @@ function PlayPageLoader({ scriptId }: { scriptId: string }) {
 
   if (!manifest) {
     return (
-      <div className="h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
+      <div className="h-full bg-zinc-950 text-zinc-100 flex items-center justify-center">
         <p className="text-zinc-500 text-sm">加载中...</p>
       </div>
     );

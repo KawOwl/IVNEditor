@@ -121,10 +121,24 @@
   * {
     @apply border-border outline-ring/50;
     }
-  body {
-    @apply bg-background text-foreground;
-    }
   html {
     @apply font-sans;
+    height: 100%;
+    overflow: hidden;
+    }
+  body {
+    @apply bg-background text-foreground;
+    height: 100%;
+    overflow: hidden;
+    /* iOS safe area insets */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+  #root {
+    height: 100%;
+    overflow: hidden;
+    }
+  /* iOS Safari 输入框防缩放：强制所有 input/textarea/select 至少 16px */
+  input, textarea, select {
+    font-size: max(16px, 1em) !important;
     }
 }
