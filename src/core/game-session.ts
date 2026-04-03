@@ -147,6 +147,9 @@ export class GameSession {
   // 用于中断进行中的 generate()（停止/重置时防挂死）
   private abortController: AbortController | null = null;
 
+  // ReasoningFilter flush 回调：signal_input_needed 触发时需要先 flush 缓冲区
+  private flushTextFilter: (() => void) | null = null;
+
   // Compress function for memory
   private compressFn = async (entries: import('./types').MemoryEntry[]): Promise<string> => {
     // Simple concatenation fallback — in production, this would use LLM
@@ -323,6 +326,8 @@ export class GameSession {
           (reasoning) => this.emitter.appendReasoningChunk(reasoning),
           (text) => this.emitter.appendTextChunk(text),
         );
+        // 存 flush 引用，供 createWaitForPlayerInput() 在挂起前刷出缓冲文本
+        this.flushTextFilter = () => textFilter.flush();
         const result = await this.llmClient.generate({
           systemPrompt: context.systemPrompt,
           messages: context.messages,
@@ -421,6 +426,9 @@ export class GameSession {
   /** 创建 waitForPlayerInput 回调，供 signal_input_needed 的 execute 使用 */
   private createWaitForPlayerInput(): (options: SignalInputOptions) => Promise<string> {
     return (options: SignalInputOptions) => {
+      // 先 flush ReasoningFilter 缓冲区，确保所有文本都写进 streamingText
+      this.flushTextFilter?.();
+
       // 更新 UI：显示选项和提示
       this.emitter.setInputHint(options.hint ?? null);
       if (options.choices && options.choices.length > 0) {
@@ -428,7 +436,7 @@ export class GameSession {
       }
       this.emitter.setStatus('waiting-input');
 
-      // 把已积累的流式文本刷到 UI（玩家先看到叙事，再看到选项）
+      // 把 streamingText 刷到 entries（玩家先看到叙事，再看到选项）
       this.emitter.finalizeStreaming();
 
       // 返回挂起 Promise，等 submitInput() 调用时 resolve
