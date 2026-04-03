@@ -17,6 +17,92 @@ import { useGameStore } from '../stores/game-store';
 import type { NarrativeEntry as NarrativeEntryType, ToolCallEntry, PromptSnapshot } from '../stores/game-store';
 import { cn } from '../lib/utils';
 
+// ============================================================================
+// 打字机速度设置（localStorage 持久化）
+// ============================================================================
+
+const LS_TYPEWRITER_KEY = 'ivn-typewriter-speed';
+
+/** 每秒最大字符数。0 = 无限速（即时显示） */
+export function getTypewriterSpeed(): number {
+  const raw = localStorage.getItem(LS_TYPEWRITER_KEY);
+  if (raw) {
+    const n = Number(raw);
+    if (!isNaN(n) && n >= 0) return n;
+  }
+  return 60; // 默认每秒 60 字
+}
+
+export function setTypewriterSpeed(cps: number): void {
+  localStorage.setItem(LS_TYPEWRITER_KEY, String(Math.max(0, Math.round(cps))));
+}
+
+// ============================================================================
+// useTypewriter — 打字机节流 hook
+// ============================================================================
+
+/**
+ * 接收实时的完整文本，返回按打字机速度逐步"追赶"的显示文本。
+ * cps = 0 时直接返回原文（无节流）。
+ */
+function useTypewriter(fullText: string, cps: number): string {
+  const [visibleLen, setVisibleLen] = useState(0);
+  const rafRef = useRef<number>(0);
+  const lastTimeRef = useRef<number>(0);
+
+  // 当 fullText 缩短时（重置），同步重置 visibleLen
+  useEffect(() => {
+    if (fullText.length < visibleLen) {
+      setVisibleLen(fullText.length);
+    }
+  }, [fullText, visibleLen]);
+
+  useEffect(() => {
+    if (cps <= 0) {
+      // 无限速
+      setVisibleLen(fullText.length);
+      return;
+    }
+
+    const msPerChar = 1000 / cps;
+
+    const tick = (now: number) => {
+      if (!lastTimeRef.current) lastTimeRef.current = now;
+      const elapsed = now - lastTimeRef.current;
+      const charsToAdd = Math.floor(elapsed / msPerChar);
+
+      if (charsToAdd > 0) {
+        lastTimeRef.current += charsToAdd * msPerChar;
+        setVisibleLen((prev) => {
+          const next = Math.min(prev + charsToAdd, fullText.length);
+          return next;
+        });
+      }
+
+      // 还没追上，继续
+      setVisibleLen((prev) => {
+        if (prev < fullText.length) {
+          rafRef.current = requestAnimationFrame(tick);
+        }
+        return prev;
+      });
+    };
+
+    // 如果还没追上，启动动画
+    if (visibleLen < fullText.length) {
+      if (!lastTimeRef.current) lastTimeRef.current = performance.now();
+      rafRef.current = requestAnimationFrame(tick);
+    }
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [fullText, cps, visibleLen]);
+
+  if (cps <= 0) return fullText;
+  return fullText.slice(0, visibleLen);
+}
+
 interface NarrativeViewProps {
   showReasoning?: boolean;
 }
@@ -160,6 +246,10 @@ function StreamingBlock({
   toolCalls: ToolCallEntry[];
   debug: boolean;
 }) {
+  const [cps] = useState(() => getTypewriterSpeed());
+  const displayText = useTypewriter(text, cps);
+  const isCatchingUp = displayText.length < text.length;
+
   return (
     <div className="max-w-3xl space-y-2">
       {/* Reasoning (debug, streaming) */}
@@ -172,11 +262,13 @@ function StreamingBlock({
         </div>
       )}
 
-      {/* Text (streaming) */}
-      {text && (
+      {/* Text (streaming with typewriter throttle) */}
+      {displayText && (
         <div className="text-zinc-100 prose prose-invert prose-sm max-w-none whitespace-pre-wrap leading-relaxed">
-          {text}
-          <span className="inline-block w-0.5 h-4 bg-zinc-400 ml-0.5 animate-pulse" />
+          {displayText}
+          {isCatchingUp && (
+            <span className="inline-block w-0.5 h-4 bg-zinc-400 ml-0.5 animate-pulse" />
+          )}
         </div>
       )}
 

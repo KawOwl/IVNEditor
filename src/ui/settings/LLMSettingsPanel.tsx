@@ -16,6 +16,7 @@ import {
 import { useAuthStore } from '../../stores/auth-store';
 import type { LLMProviderType } from '../../core/types';
 import { getEngineMode, getBackendUrl } from '../../core/engine-mode';
+import { getTypewriterSpeed, setTypewriterSpeed } from '../NarrativeView';
 import { cn } from '../../lib/utils';
 
 // ============================================================================
@@ -71,6 +72,9 @@ export function LLMSettingsPanel() {
           />
         )}
       </div>
+
+      {/* Typewriter speed */}
+      <TypewriterSpeedSection />
     </div>
   );
 }
@@ -78,6 +82,65 @@ export function LLMSettingsPanel() {
 // ============================================================================
 // ServerSyncSection — 服务器配置同步（仅 remote 模式）
 // ============================================================================
+
+function TypewriterSpeedSection() {
+  const [speed, setSpeed] = useState(() => getTypewriterSpeed());
+
+  const handleChange = (value: number) => {
+    setSpeed(value);
+    setTypewriterSpeed(value);
+  };
+
+  const presets = [
+    { label: '慢', value: 20 },
+    { label: '中', value: 60 },
+    { label: '快', value: 150 },
+    { label: '即时', value: 0 },
+  ];
+
+  return (
+    <fieldset className="space-y-2.5">
+      <legend className="text-xs font-medium text-zinc-300">打字机速度</legend>
+      <div className="flex items-center gap-3">
+        <input
+          type="range"
+          min={0}
+          max={200}
+          value={speed === 0 ? 200 : speed}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            handleChange(v >= 200 ? 0 : v);
+          }}
+          className="flex-1 accent-emerald-500 h-1"
+        />
+        <span className="text-xs text-zinc-400 font-mono w-20 text-right">
+          {speed === 0 ? '即时' : `${speed} 字/秒`}
+        </span>
+      </div>
+      <div className="flex gap-1.5">
+        {presets.map((p) => (
+          <button
+            key={p.label}
+            onClick={() => handleChange(p.value)}
+            className={cn(
+              'text-[10px] px-2 py-0.5 rounded border transition-colors',
+              speed === p.value
+                ? 'border-emerald-600 text-emerald-400 bg-emerald-950/30'
+                : 'border-zinc-700 text-zinc-500 hover:text-zinc-300 hover:border-zinc-500',
+            )}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <p className="text-[10px] text-zinc-600">
+        控制叙事文本的流式显示速度。设为"即时"则跟随 LLM 输出速度。
+        <br />
+        修改后在下一段生成时生效。
+      </p>
+    </fieldset>
+  );
+}
 
 function ServerSyncSection() {
   const [syncing, setSyncing] = useState(false);
