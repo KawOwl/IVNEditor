@@ -42,7 +42,8 @@ export interface ToolExecutorContext {
   stateStore: StateStore;
   memory: MemoryManager;
   segments: PromptSegment[];
-  onSignalInput?: (options: SignalInputOptions) => void;
+  /** 挂起模式：返回 Promise，等玩家输入后 resolve */
+  waitForPlayerInput?: (options: SignalInputOptions) => Promise<string>;
   onSetMood?: (mood: string) => void;
   onShowImage?: (assetId: string) => void;
 }
@@ -75,9 +76,8 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
     required: true,
   };
 
-  // signal_input_needed 是终止工具：LLM 调用它时 SDK 直接停止 agentic loop，
-  // 不执行 execute、不把结果送回 LLM。参数（choices/hint）从 toolCall.args 中提取。
-  // execute 仅作为 ToolHandler 接口的占位，buildAISDKTools 会跳过它。
+  // signal_input_needed 是挂起工具：execute 返回 Promise，等玩家输入后 resolve。
+  // LLM 调用后 agentic loop 暂停等待 execute 完成，玩家输入作为 tool result 返回给 LLM。
   tools['signal_input_needed'] = {
     description: 'Signal that the narrative has reached a point where player input is needed. You MUST provide choices as a list of 2-4 options for the player to choose from. The player can also type freely.',
     parameters: z.object({
@@ -86,9 +86,13 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
       choices: z.array(z.string())
         .describe('List of 2-4 suggested choices for the player, e.g. ["探索洞穴","返回村庄","休息一下"]. REQUIRED.'),
     }),
-    execute: () => {
-      // 终止工具：此函数不会被调用（AI SDK 不为 no-execute tool 执行 handler）
-      return { success: true };
+    execute: async (args) => {
+      const { prompt_hint, choices } = args as { prompt_hint: string; choices: string[] };
+      if (!ctx.waitForPlayerInput) {
+        return { success: false, error: 'No input handler registered' };
+      }
+      const playerChoice = await ctx.waitForPlayerInput({ hint: prompt_hint, choices });
+      return { success: true, playerChoice };
     },
     required: true,
   };

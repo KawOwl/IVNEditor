@@ -9,7 +9,9 @@
  *
  * 核心循环：Generate + Receive
  *   1. Generate: 组装 context → 调用 LLM（agentic tool loop）→ 追加记忆 → 按需压缩
- *   2. Receive: 等待外部输入 → 追加记忆
+ *      - signal_input_needed 使用挂起模式：execute 挂起等玩家输入，LLM 拿到结果后继续
+ *      - 一次 generate() 内可能有 0 次、1 次或多次玩家互动
+ *   2. Receive: LLM 自然停止后，等待玩家输入（fallback，不经过 signal_input_needed）
  *   循环直到 session 被停止
  *
  * 对外只暴露简单的 API：
@@ -27,6 +29,7 @@ import { StateStore } from './state-store';
 import { MemoryManager, estimateTokens } from './memory';
 import { assembleContext } from './context-assembler';
 import { createTools, getEnabledTools } from './tool-executor';
+import type { SignalInputOptions } from './tool-executor';
 import { LLMClient } from './llm-client';
 import type { LLMConfig } from './llm-client';
 import type { SessionEmitter } from './session-emitter';
@@ -135,8 +138,14 @@ export class GameSession {
   // Session lifecycle
   private active = false;
 
-  // Player input promise resolution
+  // 外循环 Receive 阶段的挂起 Promise（LLM 自然停止后等玩家输入）
   private inputResolve: ((text: string) => void) | null = null;
+
+  // 内循环挂起 Promise（signal_input_needed 等玩家输入）
+  private signalInputResolve: ((text: string) => void) | null = null;
+
+  // 用于中断进行中的 generate()（停止/重置时防挂死）
+  private abortController: AbortController | null = null;
 
   // Compress function for memory
   private compressFn = async (entries: import('./types').MemoryEntry[]): Promise<string> => {
@@ -183,9 +192,34 @@ export class GameSession {
     }
   }
 
-  /** Submit player input (resolves the pending input promise) */
+  /** Submit player input — 分两路：挂起中（signal_input_needed）或外循环（Receive 阶段） */
   submitInput(text: string): void {
-    if (this.inputResolve) {
+    if (this.signalInputResolve) {
+      // 挂起模式：signal_input_needed 正在等玩家输入
+      const resolve = this.signalInputResolve;
+      this.signalInputResolve = null;
+
+      // 清 UI 状态，恢复生成中
+      this.emitter.setInputHint(null);
+      this.emitter.setInputType('freetext');
+      this.emitter.setStatus('generating');
+
+      // 显示玩家输入到叙事流
+      this.emitter.appendEntry({ role: 'receive', content: text });
+
+      // 记录到记忆
+      const turn = this.stateStore.getTurn();
+      this.memory.appendTurn({
+        turn,
+        role: 'receive',
+        content: text,
+        tokenCount: estimateTokens(text),
+      });
+
+      // resolve → agentic loop 继续
+      resolve(text);
+    } else if (this.inputResolve) {
+      // 外循环 Receive 阶段
       this.inputResolve(text);
       this.inputResolve = null;
     }
@@ -194,10 +228,21 @@ export class GameSession {
   /** Stop the session */
   stop(): void {
     this.active = false;
+
+    // 中断进行中的 generate()
+    this.abortController?.abort();
+    this.abortController = null;
+
+    // resolve 所有 pending Promise（防挂死）
+    if (this.signalInputResolve) {
+      this.signalInputResolve('');
+      this.signalInputResolve = null;
+    }
     if (this.inputResolve) {
       this.inputResolve('');
       this.inputResolve = null;
     }
+
     this.emitter.setStatus('idle');
   }
 
@@ -213,14 +258,12 @@ export class GameSession {
       this.stateStore.setTurn(turn);
 
       try {
-        // Create tools with callbacks
+        // Create tools with suspend-mode waitForPlayerInput
         const allTools = createTools({
           stateStore: this.stateStore,
           memory: this.memory,
           segments: this.segments,
-          // signal_input_needed 是终止工具（no-execute），
-          // choices/hint 从 generate() 返回值中提取，见下方
-          onSignalInput: () => {},
+          waitForPlayerInput: this.createWaitForPlayerInput(),
           onSetMood: (_mood) => {
             // TODO: connect to UI mood system
           },
@@ -272,7 +315,10 @@ export class GameSession {
           },
         });
 
-        // Call LLM (agentic tool loop)
+        // Create abort controller for this generate() call
+        this.abortController = new AbortController();
+
+        // Call LLM (agentic tool loop — signal_input_needed 会挂起等玩家)
         const textFilter = new ReasoningFilter(
           (reasoning) => this.emitter.appendReasoningChunk(reasoning),
           (text) => this.emitter.appendTextChunk(text),
@@ -281,7 +327,8 @@ export class GameSession {
           systemPrompt: context.systemPrompt,
           messages: context.messages,
           tools: enabledToolSet,
-          maxSteps: 10,
+          maxSteps: 30,
+          abortSignal: this.abortController.signal,
           onTextChunk: (chunk) => {
             textFilter.push(chunk);
           },
@@ -298,16 +345,10 @@ export class GameSession {
           },
         });
 
+        this.abortController = null;
+
         // Flush any buffered text in the reasoning filter
         textFilter.flush();
-
-        // 从 generate 返回值中提取 signal_input_needed 的参数（终止工具没有 execute）
-        if (result.inputSignaled) {
-          this.emitter.setInputHint(result.inputHint ?? null);
-          if (result.inputChoices && result.inputChoices.length > 0) {
-            this.emitter.setInputType('choice', result.inputChoices);
-          }
-        }
 
         // Stage finish reason
         this.emitter.stagePendingDebug({ finishReason: result.finishReason });
@@ -343,9 +384,10 @@ export class GameSession {
         // Fall through to Receive Phase — player can re-send to retry
       }
 
-      // --- Receive Phase ---
-      // 默认行为：回复结束 = 等待玩家输入（与 chat 一致）。
-      // signal_input_needed 仅用于提供 prompt hint，不再是必需的。
+      // --- Receive Phase (fallback) ---
+      // LLM 自然停止后（没有通过 signal_input_needed 请求输入），等玩家输入再开始下一轮。
+      // 如果 LLM 在 generate 过程中已经通过 signal_input_needed 获取了玩家输入，
+      // 这里仍然需要等——因为 LLM 停下意味着这一轮叙事结束了，需要玩家推动下一轮。
       if (this.active) {
         this.emitter.setStatus('waiting-input');
         const inputText = await this.waitForInput();
@@ -375,6 +417,26 @@ export class GameSession {
   // ============================================================================
   // Helpers
   // ============================================================================
+
+  /** 创建 waitForPlayerInput 回调，供 signal_input_needed 的 execute 使用 */
+  private createWaitForPlayerInput(): (options: SignalInputOptions) => Promise<string> {
+    return (options: SignalInputOptions) => {
+      // 更新 UI：显示选项和提示
+      this.emitter.setInputHint(options.hint ?? null);
+      if (options.choices && options.choices.length > 0) {
+        this.emitter.setInputType('choice', options.choices);
+      }
+      this.emitter.setStatus('waiting-input');
+
+      // 把已积累的流式文本刷到 UI（玩家先看到叙事，再看到选项）
+      this.emitter.finalizeStreaming();
+
+      // 返回挂起 Promise，等 submitInput() 调用时 resolve
+      return new Promise<string>((resolve) => {
+        this.signalInputResolve = resolve;
+      });
+    };
+  }
 
   private waitForInput(): Promise<string> {
     return new Promise<string>((resolve) => {

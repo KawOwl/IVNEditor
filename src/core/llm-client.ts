@@ -4,10 +4,11 @@
  * Wraps Vercel AI SDK's streamText with tool support.
  * Handles the agentic loop: text → tool_call → execute → continue → text.
  *
- * AI SDK v6 uses `stopWhen` + `stepCountIs` instead of `maxSteps`.
+ * signal_input_needed 使用挂起模式：execute 返回 Promise，等玩家输入后 resolve，
+ * LLM 拿到 tool result 后自然继续生成。不需要 hasToolCall 终止。
  */
 
-import { streamText, stepCountIs, hasToolCall, tool, zodSchema, type ToolSet } from 'ai';
+import { streamText, stepCountIs, tool, zodSchema, type ToolSet } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ToolHandler } from './tool-executor';
 import type { ChatMessage } from './context-assembler';
@@ -28,8 +29,9 @@ export interface GenerateOptions {
   systemPrompt: string;
   messages: ChatMessage[];
   tools: Record<string, ToolHandler>;
-  maxSteps?: number;         // max tool call rounds (default: 10)
+  maxSteps?: number;         // max agentic steps (default: 30)
   maxOutputTokens?: number;   // max output tokens
+  abortSignal?: AbortSignal;  // 用于外部中断（停止/重置）
   onTextChunk?: (text: string) => void;
   onReasoningChunk?: (text: string) => void;
   onToolCall?: (name: string, args: unknown) => void;
@@ -40,9 +42,6 @@ export interface GenerateResult {
   text: string;               // full accumulated text
   toolCalls: Array<{ name: string; args: unknown; result: unknown }>;
   finishReason: string;
-  inputSignaled: boolean;     // whether signal_input_needed was called
-  inputHint?: string;         // prompt_hint from signal_input_needed
-  inputChoices?: string[];    // choices from signal_input_needed
 }
 
 // ============================================================================
@@ -50,9 +49,8 @@ export interface GenerateResult {
 // ============================================================================
 
 /**
- * 构建 AI SDK ToolSet。所有工具（包括 signal_input_needed）都有 execute，
- * 以确保 SDK 正确解析参数。signal_input_needed 通过 hasToolCall 终止循环，
- * 但它的 execute 也会被调用，用来记录 choices/hint 参数。
+ * 构建 AI SDK ToolSet。所有工具都有 execute。
+ * signal_input_needed 的 execute 会挂起等玩家输入（由 tool-executor 实现）。
  */
 function buildAISDKTools(
   handlers: Record<string, ToolHandler>,
@@ -100,8 +98,9 @@ export class LLMClient {
       systemPrompt,
       messages,
       tools: toolHandlers,
-      maxSteps = 10,
+      maxSteps = 30,
       maxOutputTokens,
+      abortSignal,
       onTextChunk,
       onReasoningChunk,
       onToolCall: onToolCallCb,
@@ -122,9 +121,9 @@ export class LLMClient {
       system: systemPrompt,
       messages: aiMessages,
       tools: aiTools,
-      // 终止条件：达到 maxSteps 或 LLM 调了终止工具
-      stopWhen: [stepCountIs(maxSteps), hasToolCall('signal_input_needed')],
+      stopWhen: [stepCountIs(maxSteps)],
       maxOutputTokens,
+      abortSignal,
       experimental_onToolCallStart: (event) => {
         const { toolName, input } = event.toolCall;
         onToolCallCb?.(toolName, input);
@@ -154,35 +153,17 @@ export class LLMClient {
       } else if (part.type === 'reasoning-delta') {
         fullReasoning += part.text;
         onReasoningChunk?.(part.text);
-      } else if (part.type === 'tool-call') {
-        // 补充记录 fullStream 中的工具调用（兜底，防止 experimental 回调漏掉）
-        const toolInput = (part as Record<string, unknown>).args ?? (part as Record<string, unknown>).input;
-        const exists = toolCallLog.some(
-          (e) => e.name === part.toolName && JSON.stringify(e.args) === JSON.stringify(toolInput),
-        );
-        if (!exists) {
-          onToolCallCb?.(part.toolName, toolInput);
-          toolCallLog.push({ name: part.toolName, args: toolInput, result: undefined });
-        }
       }
+      // tool-call and tool-result are handled by experimental_onToolCall* callbacks
     }
 
     const finalResult = await result;
     const finishReason = await finalResult.finishReason;
 
-    // 从 toolCallLog 中提取终止工具的参数（signal_input_needed 没有 execute，
-    // 但 experimental_onToolCallStart 仍然会记录它的 args）
-    const signalCall = toolCallLog.find((tc) => tc.name === 'signal_input_needed');
-    const inputSignaled = !!signalCall;
-    const signalArgs = signalCall?.args as { prompt_hint?: string; choices?: string[] } | undefined;
-
     return {
       text: fullText,
       toolCalls: toolCallLog,
       finishReason,
-      inputSignaled,
-      inputHint: signalArgs?.prompt_hint,
-      inputChoices: signalArgs?.choices,
     };
   }
 
