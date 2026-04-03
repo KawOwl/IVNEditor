@@ -79,12 +79,12 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
   // 不执行 execute、不把结果送回 LLM。参数（choices/hint）从 toolCall.args 中提取。
   // execute 仅作为 ToolHandler 接口的占位，buildAISDKTools 会跳过它。
   tools['signal_input_needed'] = {
-    description: 'Signal that the narrative has reached a point where player input is needed. Optionally provide choices for the player to pick from — the player can always type a custom response instead.',
+    description: 'Signal that the narrative has reached a point where player input is needed. You MUST provide choices as a list of 2-4 options for the player to choose from. The player can also type freely.',
     parameters: z.object({
-      prompt_hint: z.string().optional()
-        .describe('Optional hint text to display to the player'),
-      choices: z.array(z.string()).optional()
-        .describe('Optional list of suggested choices for the player. The player may also type freely instead of picking a choice.'),
+      prompt_hint: z.string()
+        .describe('Hint text to display to the player, e.g. "你想做什么？"'),
+      choices: z.array(z.string())
+        .describe('List of 2-4 suggested choices for the player, e.g. ["探索洞穴","返回村庄","休息一下"]. REQUIRED.'),
     }),
     execute: () => {
       // 终止工具：此函数不会被调用（AI SDK 不为 no-execute tool 执行 handler）

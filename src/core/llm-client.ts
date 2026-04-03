@@ -49,28 +49,22 @@ export interface GenerateResult {
 // Convert ToolHandlers to AI SDK ToolSet
 // ============================================================================
 
-/** 终止工具名单：这些工具不定义 execute，LLM 调用时 SDK 直接终止循环 */
-const TERMINAL_TOOLS = new Set(['signal_input_needed']);
-
+/**
+ * 构建 AI SDK ToolSet。所有工具（包括 signal_input_needed）都有 execute，
+ * 以确保 SDK 正确解析参数。signal_input_needed 通过 hasToolCall 终止循环，
+ * 但它的 execute 也会被调用，用来记录 choices/hint 参数。
+ */
 function buildAISDKTools(
   handlers: Record<string, ToolHandler>,
 ): ToolSet {
   const result: ToolSet = {};
 
   for (const [name, handler] of Object.entries(handlers)) {
-    if (TERMINAL_TOOLS.has(name)) {
-      // 终止工具：不提供 execute，SDK 收到调用后不执行、直接终止 agentic loop
-      result[name] = tool({
-        description: handler.description,
-        inputSchema: zodSchema(handler.parameters),
-      });
-    } else {
-      result[name] = tool({
-        description: handler.description,
-        inputSchema: zodSchema(handler.parameters),
-        execute: async (args) => handler.execute(args),
-      });
-    }
+    result[name] = tool({
+      description: handler.description,
+      inputSchema: zodSchema(handler.parameters),
+      execute: async (args) => handler.execute(args),
+    });
   }
 
   return result;
@@ -160,8 +154,17 @@ export class LLMClient {
       } else if (part.type === 'reasoning-delta') {
         fullReasoning += part.text;
         onReasoningChunk?.(part.text);
+      } else if (part.type === 'tool-call') {
+        // 补充记录 fullStream 中的工具调用（兜底，防止 experimental 回调漏掉）
+        const toolInput = (part as Record<string, unknown>).args ?? (part as Record<string, unknown>).input;
+        const exists = toolCallLog.some(
+          (e) => e.name === part.toolName && JSON.stringify(e.args) === JSON.stringify(toolInput),
+        );
+        if (!exists) {
+          onToolCallCb?.(part.toolName, toolInput);
+          toolCallLog.push({ name: part.toolName, args: toolInput, result: undefined });
+        }
       }
-      // tool-call and tool-result are handled by experimental_onToolCall* callbacks
     }
 
     const finalResult = await result;
