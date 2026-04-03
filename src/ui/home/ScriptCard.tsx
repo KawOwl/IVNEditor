@@ -26,86 +26,81 @@ export function ScriptCard({ entry, onClick, onUnpublish }: ScriptCardProps) {
         'flex flex-col',
       )}
     >
-      {/* Cover image area */}
-      <div className="aspect-[3/4] bg-gradient-to-br from-zinc-800 to-zinc-900 relative overflow-hidden">
-        {entry.coverImage ? (
-          <img
-            src={entry.coverImage}
-            alt={entry.label}
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          /* Placeholder cover with decorative pattern */
-          <div className="w-full h-full flex items-center justify-center">
-            <div className="absolute inset-0 opacity-10">
-              <div className="absolute top-4 left-4 w-20 h-20 rounded-full border border-zinc-500" />
-              <div className="absolute bottom-8 right-6 w-32 h-32 rounded-full border border-zinc-500" />
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full border-2 border-zinc-400" />
+      {/* Card body — cover image as background */}
+      <div
+        className="aspect-[9/16] relative overflow-hidden flex flex-col"
+        style={entry.coverImage ? {
+          backgroundImage: `url(${entry.coverImage})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+        } : undefined}
+      >
+        {/* Dark overlay for readability (always present) */}
+        <div className={cn(
+          'absolute inset-0',
+          entry.coverImage
+            ? 'bg-gradient-to-b from-black/80 via-black/50 to-black/70'
+            : 'bg-gradient-to-br from-zinc-800 to-zinc-900',
+        )} />
+
+        {/* Text content */}
+        <div className="relative z-10 p-4 flex-1 flex flex-col gap-2">
+          <h3 className="text-base font-semibold text-zinc-100 group-hover:text-white transition-colors line-clamp-2 leading-snug">
+            {entry.label}
+          </h3>
+
+          {entry.description && (
+            <p className="text-xs text-zinc-400 leading-relaxed flex-1 overflow-hidden">
+              {entry.description}
+            </p>
+          )}
+
+          {/* Spacer when no description */}
+          {!entry.description && <div className="flex-1" />}
+
+          {/* Tags — always above badges */}
+          {entry.tags && entry.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {entry.tags.slice(0, 3).map((tag) => (
+                <span
+                  key={tag}
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/60 text-zinc-400"
+                >
+                  {tag}
+                </span>
+              ))}
             </div>
-            <span className="text-3xl font-bold text-zinc-600 z-10">
-              {entry.label.charAt(0)}
-            </span>
+          )}
+
+          {/* Bottom row: badges + author */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              {entry.version && (
+                <span className="bg-black/60 backdrop-blur-sm rounded-full px-2 py-0.5 text-[10px] text-zinc-400 font-mono">
+                  v{entry.version}
+                </span>
+              )}
+              <span className="bg-black/60 backdrop-blur-sm rounded-full px-2 py-0.5 text-[10px] text-zinc-300">
+                {entry.chapterCount} 章
+              </span>
+            </div>
+            {entry.author && (
+              <span className="text-[10px] text-zinc-500">
+                by {entry.author}
+              </span>
+            )}
           </div>
-        )}
-
-        {/* Gradient overlay at bottom */}
-        <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-zinc-900 to-transparent" />
-
-        {/* Chapter count badge */}
-        <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-sm rounded-full px-2 py-0.5 text-[10px] text-zinc-300">
-          {entry.chapterCount} 章
         </div>
 
-        {/* Version badge */}
-        {entry.version && (
-          <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm rounded-full px-2 py-0.5 text-[10px] text-zinc-400 font-mono">
-            v{entry.version}
-          </div>
-        )}
-
-        {/* Unpublish button (admin only) */}
+        {/* Unpublish button (admin only) — top-right corner, visible on hover */}
         {onUnpublish && (
           <button
             onClick={(e) => { e.stopPropagation(); onUnpublish(); }}
-            className="absolute bottom-2 right-2 z-10 bg-red-900/80 backdrop-blur-sm text-red-300 hover:bg-red-800 hover:text-red-200 rounded px-2 py-0.5 text-[10px] transition-colors"
+            className="absolute top-3 right-3 z-20 opacity-0 group-hover:opacity-100 bg-red-900/80 backdrop-blur-sm text-red-300 hover:bg-red-800 hover:text-red-200 rounded px-2 py-0.5 text-[10px] transition-all"
             title="下架此剧本"
           >
             下架
           </button>
-        )}
-      </div>
-
-      {/* Info area */}
-      <div className="p-4 flex-1 flex flex-col gap-2">
-        <h3 className="text-sm font-medium text-zinc-200 group-hover:text-white transition-colors line-clamp-1">
-          {entry.label}
-        </h3>
-
-        {entry.description && (
-          <p className="text-xs text-zinc-500 line-clamp-2 leading-relaxed">
-            {entry.description}
-          </p>
-        )}
-
-        {/* Tags */}
-        {entry.tags && entry.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-auto pt-2">
-            {entry.tags.slice(0, 3).map((tag) => (
-              <span
-                key={tag}
-                className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400"
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* Author */}
-        {entry.author && (
-          <div className="text-[10px] text-zinc-600 mt-1">
-            by {entry.author}
-          </div>
         )}
       </div>
     </div>
