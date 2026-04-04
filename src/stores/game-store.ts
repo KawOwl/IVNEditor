@@ -76,6 +76,8 @@ export interface GameState {
   setError: (error: string | null) => void;
   setInputHint: (hint: string | null) => void;
   setInputType: (type: 'freetext' | 'choice', choices?: string[] | null) => void;
+  /** 标记某个 entry 的打字机播放完毕 */
+  setTypewriterDone: (entryId: string) => void;
   updateDebug: (debug: Partial<DebugUpdate>) => void;
   addToolCall: (entry: Omit<ToolCallEntry, 'timestamp'>) => void;
   reset: () => void;
@@ -142,7 +144,7 @@ export const useGameStore = create<GameState>((set) => ({
     set((state) => ({
       entries: [
         ...state.entries,
-        { ...entry, id: generateId(), timestamp: Date.now() },
+        { ...entry, id: generateId(), timestamp: Date.now(), typewriterDone: true },
       ],
     })),
 
@@ -194,6 +196,7 @@ export const useGameStore = create<GameState>((set) => ({
             promptSnapshot: state.pendingPromptSnapshot ?? undefined,
             finishReason: state.pendingFinishReason ?? undefined,
             timestamp: Date.now(),
+            typewriterDone: false,  // EntryBlock 打字机播完后设为 true
           },
         ],
         streamingText: '',
@@ -212,6 +215,13 @@ export const useGameStore = create<GameState>((set) => ({
   setInputHint: (inputHint) => set({ inputHint }),
 
   setInputType: (inputType, choices = null) => set({ inputType, choices }),
+
+  setTypewriterDone: (entryId) =>
+    set((state) => ({
+      entries: state.entries.map((e) =>
+        e.id === entryId ? { ...e, typewriterDone: true } : e,
+      ),
+    })),
 
   updateDebug: (debug) => set(debug),
 

@@ -321,6 +321,8 @@ export interface NarrativeEntry {
   promptSnapshot?: PromptSnapshot;
   finishReason?: string;
   timestamp: number;
+  /** false = 打字机正在播放中，true = 已播放完毕或不需要打字机。由 store 管理。 */
+  typewriterDone?: boolean;
 }
 
 export interface PromptSnapshot {

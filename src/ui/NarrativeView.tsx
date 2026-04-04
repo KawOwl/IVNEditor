@@ -307,6 +307,31 @@ function EntryBlock({
   }
 
   // role === 'generate'
+  return <GenerateEntryBlock entry={entry} debug={debug} />;
+}
+
+/** generate entry 独立组件——需要打字机时用 useTypewriter */
+function GenerateEntryBlock({
+  entry,
+  debug,
+}: {
+  entry: NarrativeEntryType;
+  debug: boolean;
+}) {
+  const setTypewriterDone = useGameStore((s) => s.setTypewriterDone);
+  const needsTypewriter = entry.typewriterDone === false;
+  const [cps] = useState(() => getTypewriterSpeed());
+  const displayText = useTypewriter(entry.content, needsTypewriter ? cps : 0);
+
+  // 打字机追完 → 标记 done
+  useEffect(() => {
+    if (needsTypewriter && displayText.length >= entry.content.length && entry.content.length > 0) {
+      setTypewriterDone(entry.id);
+    }
+  }, [needsTypewriter, displayText.length, entry.content.length, entry.id, setTypewriterDone]);
+
+  const isPlaying = needsTypewriter && displayText.length < entry.content.length;
+
   return (
     <div className="max-w-3xl space-y-2">
       {/* Prompt snapshot (debug, collapsed by default) */}
@@ -328,9 +353,12 @@ function EntryBlock({
         </CollapsibleBlock>
       )}
 
-      {/* Narrative text (always shown) */}
+      {/* Narrative text — typewriter or full */}
       <div className="text-zinc-100 prose prose-invert prose-sm max-w-none whitespace-pre-wrap leading-relaxed">
-        {entry.content}
+        {needsTypewriter ? displayText : entry.content}
+        {isPlaying && (
+          <span className="inline-block w-0.5 h-4 bg-zinc-400 ml-0.5 animate-pulse" />
+        )}
       </div>
 
       {/* Tool calls (debug) */}
@@ -363,10 +391,6 @@ function StreamingBlock({
   toolCalls: ToolCallEntry[];
   debug: boolean;
 }) {
-  const [cps] = useState(() => getTypewriterSpeed());
-  const displayText = useTypewriter(text, cps);
-  const isCatchingUp = displayText.length < text.length;
-
   return (
     <div className="max-w-3xl space-y-2">
       {/* Reasoning (debug, streaming) */}
@@ -379,13 +403,11 @@ function StreamingBlock({
         </div>
       )}
 
-      {/* Text (streaming with typewriter throttle) */}
-      {displayText && (
+      {/* Text (pure streaming, no typewriter — typewriter happens in EntryBlock after finalize) */}
+      {text && (
         <div className="text-zinc-100 prose prose-invert prose-sm max-w-none whitespace-pre-wrap leading-relaxed">
-          {displayText}
-          {isCatchingUp && (
-            <span className="inline-block w-0.5 h-4 bg-zinc-400 ml-0.5 animate-pulse" />
-          )}
+          {text}
+          <span className="inline-block w-0.5 h-4 bg-zinc-400 ml-0.5 animate-pulse" />
         </div>
       )}
 
