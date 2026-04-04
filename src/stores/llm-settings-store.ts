@@ -44,33 +44,38 @@ export interface LLMSettingsState {
   text: ModelEndpoint;
   embedding: ModelEndpoint;
   embeddingEnabled: boolean;
+  /** 启用模型内置思考模式（DeepSeek enable_thinking 等） */
+  thinkingEnabled: boolean;
 
   // Actions
   updateText: (patch: Partial<ModelEndpoint>) => void;
   updateEmbedding: (patch: Partial<ModelEndpoint>) => void;
   setEmbeddingEnabled: (enabled: boolean) => void;
+  setThinkingEnabled: (enabled: boolean) => void;
 }
 
-function loadFromStorage(): Pick<LLMSettingsState, 'text' | 'embedding' | 'embeddingEnabled'> {
+function loadFromStorage(): Pick<LLMSettingsState, 'text' | 'embedding' | 'embeddingEnabled' | 'thinkingEnabled'> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { text: DEFAULT_TEXT_ENDPOINT, embedding: DEFAULT_EMBEDDING_ENDPOINT, embeddingEnabled: false };
+    if (!raw) return { text: DEFAULT_TEXT_ENDPOINT, embedding: DEFAULT_EMBEDDING_ENDPOINT, embeddingEnabled: false, thinkingEnabled: false };
     const parsed = JSON.parse(raw);
     return {
       text: { ...DEFAULT_TEXT_ENDPOINT, ...parsed.text },
       embedding: { ...DEFAULT_EMBEDDING_ENDPOINT, ...parsed.embedding },
       embeddingEnabled: parsed.embeddingEnabled ?? false,
+      thinkingEnabled: parsed.thinkingEnabled ?? false,
     };
   } catch {
-    return { text: DEFAULT_TEXT_ENDPOINT, embedding: DEFAULT_EMBEDDING_ENDPOINT, embeddingEnabled: false };
+    return { text: DEFAULT_TEXT_ENDPOINT, embedding: DEFAULT_EMBEDDING_ENDPOINT, embeddingEnabled: false, thinkingEnabled: false };
   }
 }
 
-function saveToStorage(state: Pick<LLMSettingsState, 'text' | 'embedding' | 'embeddingEnabled'>) {
+function saveToStorage(state: Pick<LLMSettingsState, 'text' | 'embedding' | 'embeddingEnabled' | 'thinkingEnabled'>) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     text: state.text,
     embedding: state.embedding,
     embeddingEnabled: state.embeddingEnabled,
+    thinkingEnabled: state.thinkingEnabled,
   }));
 }
 
@@ -93,6 +98,11 @@ export const useLLMSettingsStore = create<LLMSettingsState>((set, get) => ({
     set({ embeddingEnabled: enabled });
     saveToStorage({ ...get(), embeddingEnabled: enabled });
   },
+
+  setThinkingEnabled: (enabled) => {
+    set({ thinkingEnabled: enabled });
+    saveToStorage({ ...get(), thinkingEnabled: enabled });
+  },
 }));
 
 // ============================================================================
@@ -110,12 +120,14 @@ export function getProviderConfig(): ProviderConfig {
 
 /** 从 ModelEndpoint 转换为 LLMClient 所需的 LLMConfig */
 export function endpointToLLMConfig(endpoint: ModelEndpoint): LLMConfig {
+  const { thinkingEnabled } = useLLMSettingsStore.getState();
   return {
     provider: endpoint.provider,
     baseURL: endpoint.baseUrl,
     apiKey: endpoint.apiKey,
     model: endpoint.model,
     name: endpoint.name,
+    thinkingEnabled,
   };
 }
 

@@ -27,9 +27,11 @@ export function LLMSettingsPanel() {
   const text = useLLMSettingsStore((s) => s.text);
   const embedding = useLLMSettingsStore((s) => s.embedding);
   const embeddingEnabled = useLLMSettingsStore((s) => s.embeddingEnabled);
+  const thinkingEnabled = useLLMSettingsStore((s) => s.thinkingEnabled);
   const updateText = useLLMSettingsStore((s) => s.updateText);
   const updateEmbedding = useLLMSettingsStore((s) => s.updateEmbedding);
   const setEmbeddingEnabled = useLLMSettingsStore((s) => s.setEmbeddingEnabled);
+  const setThinkingEnabled = useLLMSettingsStore((s) => s.setThinkingEnabled);
 
   const [showTextKey, setShowTextKey] = useState(false);
   const [showEmbeddingKey, setShowEmbeddingKey] = useState(false);
@@ -72,6 +74,17 @@ export function LLMSettingsPanel() {
           />
         )}
       </div>
+
+      {/* Thinking mode */}
+      <label className="flex items-center gap-2 text-xs text-zinc-400">
+        <input
+          type="checkbox"
+          checked={thinkingEnabled}
+          onChange={(e) => setThinkingEnabled(e.target.checked)}
+          className="rounded border-zinc-600 bg-zinc-900"
+        />
+        启用思考模式（DeepSeek enable_thinking）
+      </label>
 
       {/* Typewriter speed */}
       <TypewriterSpeedSection />
