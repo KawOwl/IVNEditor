@@ -183,7 +183,24 @@ function ConversationMinimap({
   entries: NarrativeEntryType[];
   onScrollTo: (id: string) => void;
 }) {
-  const [hovered, setHovered] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭
+  useEffect(() => {
+    if (!expanded) return;
+    const handler = (e: MouseEvent | TouchEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setExpanded(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    document.addEventListener('touchstart', handler);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('touchstart', handler);
+    };
+  }, [expanded]);
 
   // 只显示有实际内容的条目
   const items = entries.filter((e) => e.content.trim().length > 0);
@@ -191,48 +208,68 @@ function ConversationMinimap({
 
   return (
     <div
-      className={cn(
-        'absolute right-1 top-0 bottom-0 z-20 flex flex-col justify-center gap-1.5 py-4 transition-all duration-200',
-        hovered ? 'w-48 bg-zinc-900/90 backdrop-blur-sm rounded-l-lg px-2 right-0' : 'w-5 px-1',
-      )}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onTouchStart={() => setHovered(true)}
-      onTouchEnd={() => setTimeout(() => setHovered(false), 2000)}
+      ref={panelRef}
+      className="absolute right-0 top-0 bottom-0 z-20 flex flex-col items-end"
     >
-      {items.map((entry) => (
-        <button
-          key={entry.id}
-          onClick={() => { onScrollTo(entry.id); setHovered(false); }}
-          className={cn(
-            'flex items-center transition-all duration-150 text-left',
-            hovered ? 'gap-2 py-1 hover:bg-zinc-800/60 rounded px-1' : 'justify-end',
-          )}
-          title={!hovered ? entry.content.slice(0, 30) : undefined}
+      {/* 收起态：短横线指示器 */}
+      {!expanded && (
+        <div
+          className="flex flex-col justify-center gap-1.5 py-4 px-1 w-5 h-full cursor-pointer"
+          onClick={() => setExpanded(true)}
         >
-          {/* 短横线指示器 */}
-          <span className={cn(
-            'flex-none rounded-full transition-all',
-            entry.role === 'receive'
-              ? 'bg-blue-400'
-              : entry.role === 'system'
-              ? 'bg-zinc-600'
-              : 'bg-zinc-500',
-            hovered ? 'w-1.5 h-1.5' : 'w-3 h-[2px]',
-          )} />
+          {items.map((entry) => (
+            <span
+              key={entry.id}
+              className={cn(
+                'block w-3 h-[2px] rounded-full ml-auto',
+                entry.role === 'receive'
+                  ? 'bg-blue-400/70'
+                  : entry.role === 'system'
+                  ? 'bg-zinc-600'
+                  : 'bg-zinc-500/40',
+              )}
+            />
+          ))}
+        </div>
+      )}
 
-          {/* hover 展开：显示内容预览 */}
-          {hovered && (
-            <span className={cn(
-              'flex-1 text-[10px] truncate leading-tight',
-              entry.role === 'receive' ? 'text-blue-300' : 'text-zinc-500',
-            )}>
-              {entry.role === 'receive' ? '你: ' : ''}
-              {entry.content.slice(0, 40)}
-            </span>
-          )}
-        </button>
-      ))}
+      {/* 展开态：浮层目录 */}
+      {expanded && (
+        <div className="w-52 max-h-full overflow-y-auto bg-zinc-900/95 backdrop-blur-sm rounded-l-lg border-l border-zinc-700/50 py-2 shadow-xl">
+          <div className="px-3 pb-1.5 text-[9px] text-zinc-600 uppercase tracking-wider">
+            对话目录
+          </div>
+          {items.map((entry, i) => (
+            <button
+              key={entry.id}
+              onClick={() => { onScrollTo(entry.id); setExpanded(false); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-zinc-800/60 active:bg-zinc-800 transition-colors"
+            >
+              {/* 圆点 */}
+              <span className={cn(
+                'flex-none w-1.5 h-1.5 rounded-full',
+                entry.role === 'receive'
+                  ? 'bg-blue-400'
+                  : entry.role === 'system'
+                  ? 'bg-zinc-600'
+                  : 'bg-zinc-500',
+              )} />
+              {/* 序号 */}
+              <span className="flex-none text-[9px] text-zinc-600 font-mono w-3">
+                {i + 1}
+              </span>
+              {/* 预览 */}
+              <span className={cn(
+                'flex-1 text-[10px] truncate leading-tight',
+                entry.role === 'receive' ? 'text-blue-300' : 'text-zinc-400',
+              )}>
+                {entry.role === 'receive' ? '你: ' : ''}
+                {entry.content.slice(0, 30)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
