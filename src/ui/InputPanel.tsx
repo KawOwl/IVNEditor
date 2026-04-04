@@ -89,8 +89,12 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
         </div>
       )}
 
-      {/* Text input + send button */}
-      <div className="flex gap-2 items-end">
+      {/* Text input with inline send button */}
+      <div className={cn(
+        'relative bg-zinc-900 border border-zinc-700 rounded-lg overflow-hidden transition-colors',
+        !isDisabled && 'focus-within:border-zinc-500',
+        isDisabled && 'opacity-50',
+      )}>
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -105,23 +109,25 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
           }
           rows={2}
           className={cn(
-            'flex-1 bg-zinc-900 border border-zinc-700 rounded px-3 py-2',
+            'w-full bg-transparent px-3 py-2 pr-12',
             'text-zinc-100 placeholder:text-zinc-600 resize-none text-sm',
-            'focus:outline-none focus:border-zinc-500 transition-colors',
-            isDisabled && 'opacity-50 cursor-not-allowed',
+            'focus:outline-none',
+            isDisabled && 'cursor-not-allowed',
           )}
         />
         <button
           onClick={handleSubmit}
           disabled={isDisabled || !hasText}
           className={cn(
-            'flex-none px-4 py-2 rounded text-sm font-medium transition-colors',
+            'absolute right-2 bottom-2 w-7 h-7 rounded-md flex items-center justify-center transition-colors',
             isDisabled || !hasText
               ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
-              : 'bg-emerald-700 text-white hover:bg-emerald-600 cursor-pointer',
+              : 'bg-emerald-600 text-white hover:bg-emerald-500 cursor-pointer',
           )}
         >
-          发送
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 19V5M5 12l7-7 7 7" />
+          </svg>
         </button>
       </div>
     </div>
