@@ -319,18 +319,20 @@ function GenerateEntryBlock({
   debug: boolean;
 }) {
   const setTypewriterDone = useGameStore((s) => s.setTypewriterDone);
-  const needsTypewriter = entry.typewriterDone === false;
+  // 用 ref 锁定初始状态，避免 store 更新导致重播
+  const shouldAnimate = useRef(entry.typewriterDone === false);
   const [cps] = useState(() => getTypewriterSpeed());
-  const displayText = useTypewriter(entry.content, needsTypewriter ? cps : 0);
+  const displayText = useTypewriter(entry.content, shouldAnimate.current ? cps : 0);
 
-  // 打字机追完 → 标记 done
+  // 打字机追完 → 标记 done（只执行一次）
   useEffect(() => {
-    if (needsTypewriter && displayText.length >= entry.content.length && entry.content.length > 0) {
+    if (shouldAnimate.current && displayText.length >= entry.content.length && entry.content.length > 0) {
+      shouldAnimate.current = false;
       setTypewriterDone(entry.id);
     }
-  }, [needsTypewriter, displayText.length, entry.content.length, entry.id, setTypewriterDone]);
+  }, [displayText.length, entry.content.length, entry.id, setTypewriterDone]);
 
-  const isPlaying = needsTypewriter && displayText.length < entry.content.length;
+  const isPlaying = shouldAnimate.current && displayText.length < entry.content.length;
 
   return (
     <div className="max-w-3xl space-y-2">
@@ -355,7 +357,7 @@ function GenerateEntryBlock({
 
       {/* Narrative text — typewriter or full */}
       <div className="text-zinc-100 prose prose-invert prose-sm max-w-none whitespace-pre-wrap leading-relaxed">
-        {needsTypewriter ? displayText : entry.content}
+        {shouldAnimate.current ? displayText : entry.content}
         {isPlaying && (
           <span className="inline-block w-0.5 h-4 bg-zinc-400 ml-0.5 animate-pulse" />
         )}
