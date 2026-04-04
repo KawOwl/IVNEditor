@@ -405,11 +405,11 @@ function StreamingBlock({
         </div>
       )}
 
-      {/* Text (pure streaming, no typewriter — typewriter happens in EntryBlock after finalize) */}
+      {/* 生成中指示器（文本由 EntryBlock 在 finalize 后用打字机播放） */}
       {text && (
-        <div className="text-zinc-100 prose prose-invert prose-sm max-w-none whitespace-pre-wrap leading-relaxed">
-          {text}
-          <span className="inline-block w-0.5 h-4 bg-zinc-400 ml-0.5 animate-pulse" />
+        <div className="text-zinc-500 text-sm flex items-center gap-2">
+          <span className="inline-block w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+          生成中...
         </div>
       )}
 
