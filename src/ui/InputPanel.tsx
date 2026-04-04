@@ -47,14 +47,11 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
   const inputHint = useGameStore((s) => s.inputHint);
   const inputType = useGameStore((s) => s.inputType);
   const choices = useGameStore((s) => s.choices);
-  const streamingText = useGameStore((s) => s.streamingText);
   const [text, setText] = useState('');
   const [activeAction, setActiveAction] = useState<string>('act');
 
-  // 打字机还在播放中：streamingText 不为空 = 有未 finalize 的流式内容
-  const typewriterPlaying = streamingText.length > 0;
-  const isDisabled = status !== 'waiting-input' || typewriterPlaying;
-  const hasChoices = inputType === 'choice' && choices && choices.length > 0 && !typewriterPlaying;
+  const isDisabled = status !== 'waiting-input';
+  const hasChoices = inputType === 'choice' && choices && choices.length > 0;
   const hasText = text.trim().length > 0;
   const currentAction = ACTION_TYPES.find((a) => a.id === activeAction) ?? ACTION_TYPES[2]!;
 
@@ -91,8 +88,8 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
 
   return (
     <div className="border-t border-zinc-800 px-4 py-3 space-y-2">
-      {/* Hint — 打字机播完后才显示 */}
-      {status === 'waiting-input' && !typewriterPlaying && (
+      {/* Hint */}
+      {status === 'waiting-input' && (
         <div className="text-sm text-zinc-400 italic">
           {displayHint}
         </div>
