@@ -32,7 +32,7 @@ export function LoginModal({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <form
         onSubmit={handleSubmit}
-        className="w-80 bg-zinc-900 border border-zinc-700 rounded-lg p-5 space-y-4 shadow-2xl"
+        className="w-80 bg-zinc-900 border border-zinc-700 rounded p-5 space-y-4 shadow-2xl"
       >
         <h2 className="text-sm font-medium text-zinc-200 text-center">管理员登录</h2>
 

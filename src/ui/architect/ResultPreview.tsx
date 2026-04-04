@@ -93,7 +93,7 @@ export function ResultPreview({ onConfirm, onBack }: ResultPreviewProps) {
         </button>
         <button
           onClick={handleConfirm}
-          className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-500 transition-colors"
+          className="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-500 transition-colors"
         >
           确认，生成剧本配置
         </button>
@@ -113,7 +113,7 @@ function StatePreview({ result }: { result: ArchitectResult }) {
       <Reasoning text={reasoning} />
       <div className="space-y-2">
         {schema.variables.map((v) => (
-          <div key={v.name} className="bg-zinc-900 rounded-lg px-4 py-3">
+          <div key={v.name} className="bg-zinc-900 rounded px-4 py-3">
             <div className="flex items-center gap-2">
               <span className="text-sm font-mono text-blue-400">{v.name}</span>
               <span className="text-xs bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-400">{v.type}</span>
@@ -135,7 +135,7 @@ function FlowPreview({ result }: { result: ArchitectResult }) {
       <div className="space-y-2">
         <h4 className="text-sm text-zinc-400">节点 ({graph.nodes.length})</h4>
         {graph.nodes.map((n) => (
-          <div key={n.id} className="bg-zinc-900 rounded-lg px-4 py-2 flex items-center gap-3">
+          <div key={n.id} className="bg-zinc-900 rounded px-4 py-2 flex items-center gap-3">
             <span className="text-sm text-zinc-200">{n.label}</span>
             <span className="text-xs text-zinc-600 font-mono">{n.id}</span>
             {n.description && <span className="text-xs text-zinc-500">{n.description}</span>}
@@ -143,7 +143,7 @@ function FlowPreview({ result }: { result: ArchitectResult }) {
         ))}
         <h4 className="text-sm text-zinc-400 mt-4">边 ({graph.edges.length})</h4>
         {graph.edges.map((e, i) => (
-          <div key={i} className="bg-zinc-900 rounded-lg px-4 py-2 text-sm">
+          <div key={i} className="bg-zinc-900 rounded px-4 py-2 text-sm">
             <span className="text-zinc-300">{e.from}</span>
             <span className="text-zinc-600 mx-2">→</span>
             <span className="text-zinc-300">{e.to}</span>
@@ -164,7 +164,7 @@ function SegmentsPreview({ result }: { result: ArchitectResult }) {
       <Reasoning text={reasoning} />
       <div className="space-y-2">
         {segments.map((s) => (
-          <div key={s.id} className="bg-zinc-900 rounded-lg px-4 py-3">
+          <div key={s.id} className="bg-zinc-900 rounded px-4 py-3">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-sm text-zinc-200">{s.label}</span>
               <span className={cn(
@@ -194,7 +194,7 @@ function RulesPreview({ result }: { result: ArchitectResult }) {
       <Reasoning text={reasoning} />
       <div className="space-y-2">
         {rules.map((r, i) => (
-          <div key={i} className="bg-zinc-900 rounded-lg px-4 py-3">
+          <div key={i} className="bg-zinc-900 rounded px-4 py-3">
             <div className="text-sm text-zinc-200">{r.description}</div>
             <div className="text-xs text-yellow-400 font-mono mt-1">condition: {r.condition}</div>
           </div>
@@ -234,7 +234,7 @@ function MemoryPreview({ result }: { result: ArchitectResult }) {
   return (
     <div className="space-y-3">
       <Reasoning text={reasoning} />
-      <div className="bg-zinc-900 rounded-lg px-4 py-3 space-y-2 text-sm">
+      <div className="bg-zinc-900 rounded px-4 py-3 space-y-2 text-sm">
         <Row label="上下文预算" value={`${config.contextBudget.toLocaleString()} tokens`} />
         <Row label="压缩阈值" value={`${config.compressionThreshold.toLocaleString()} tokens`} />
         <Row label="保留最近" value={`${config.recencyWindow} 轮`} />

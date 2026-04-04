@@ -123,7 +123,7 @@ export function InheritancePanel({
             key={field.name}
             onClick={() => toggleField(field.name)}
             className={cn(
-              'flex items-center gap-3 px-4 py-2.5 rounded-lg cursor-pointer transition-colors',
+              'flex items-center gap-3 px-4 py-2.5 rounded cursor-pointer transition-colors',
               field.inherited ? 'bg-zinc-800/70' : 'bg-zinc-900/30',
               'hover:bg-zinc-800',
             )}
@@ -177,7 +177,7 @@ export function InheritancePanel({
         </span>
         <button
           onClick={handleConfirm}
-          className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-500 transition-colors"
+          className="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-500 transition-colors"
         >
           确认继承配置
         </button>

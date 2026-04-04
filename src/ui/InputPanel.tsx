@@ -91,7 +91,7 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
 
       {/* Text input with inline send button */}
       <div className={cn(
-        'relative bg-zinc-900 border border-zinc-700 rounded-lg overflow-hidden transition-colors',
+        'relative bg-zinc-900 border border-zinc-700 rounded overflow-hidden transition-colors',
         !isDisabled && 'focus-within:border-zinc-500',
         isDisabled && 'opacity-50',
       )}>
@@ -119,7 +119,7 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
           onClick={handleSubmit}
           disabled={isDisabled || !hasText}
           className={cn(
-            'absolute right-2 bottom-2 w-7 h-7 rounded-md flex items-center justify-center transition-colors',
+            'absolute right-2 bottom-2 w-7 h-7 rounded flex items-center justify-center transition-colors',
             isDisabled || !hasText
               ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
               : 'bg-emerald-600 text-white hover:bg-emerald-500 cursor-pointer',

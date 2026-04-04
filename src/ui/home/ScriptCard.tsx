@@ -19,7 +19,7 @@ export function ScriptCard({ entry, onClick, onUnpublish }: ScriptCardProps) {
     <div
       onClick={onClick}
       className={cn(
-        'group relative rounded-xl overflow-hidden',
+        'group relative rounded overflow-hidden',
         'bg-zinc-900 border border-zinc-800',
         'hover:border-zinc-600 hover:shadow-lg hover:shadow-zinc-900/50',
         'transition-all duration-200 text-left cursor-pointer',
@@ -76,11 +76,11 @@ export function ScriptCard({ entry, onClick, onUnpublish }: ScriptCardProps) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               {entry.version && (
-                <span className="bg-black/60 backdrop-blur-sm rounded-full px-2 py-0.5 text-[10px] text-zinc-400 font-mono">
+                <span className="bg-black/60 backdrop-blur-sm rounded px-2 py-0.5 text-[10px] text-zinc-400 font-mono">
                   v{entry.version}
                 </span>
               )}
-              <span className="bg-black/60 backdrop-blur-sm rounded-full px-2 py-0.5 text-[10px] text-zinc-300">
+              <span className="bg-black/60 backdrop-blur-sm rounded px-2 py-0.5 text-[10px] text-zinc-300">
                 {entry.chapterCount} 章
               </span>
             </div>

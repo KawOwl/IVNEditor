@@ -289,7 +289,7 @@ function EntryBlock({
     return (
       <div className="max-w-3xl ml-auto text-right">
         <div className="text-xs text-zinc-500 mb-1">你</div>
-        <div className="text-blue-200 bg-blue-950/30 rounded-lg px-4 py-2 inline-block text-left whitespace-pre-wrap leading-relaxed">
+        <div className="text-blue-200 bg-blue-950/30 rounded px-4 py-2 inline-block text-left whitespace-pre-wrap leading-relaxed">
           {entry.content}
         </div>
       </div>

@@ -32,7 +32,7 @@ import { cn } from '../../lib/utils';
 function GameNode({ data }: { data: { label: string; description?: string; gameNode: GameFlowNode } }) {
   return (
     <div className={cn(
-      'px-4 py-2 rounded-lg border-2 min-w-[140px] shadow-lg',
+      'px-4 py-2 rounded border-2 min-w-[140px] shadow-lg',
       'bg-zinc-900 border-zinc-600',
     )}>
       <Handle type="target" position={Position.Top} className="!bg-zinc-400" />

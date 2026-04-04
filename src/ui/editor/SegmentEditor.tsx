@@ -227,7 +227,7 @@ function SegmentEditForm({ segment, onSave }: {
         {/* Slash command menu */}
         {showSlashMenu && filteredTools.length > 0 && (
           <div
-            className="absolute bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl py-1 z-10 w-64"
+            className="absolute bg-zinc-800 border border-zinc-700 rounded shadow-xl py-1 z-10 w-64"
             style={{ top: slashPos.top, left: slashPos.left + 16 }}
           >
             {filteredTools.map((tool) => (

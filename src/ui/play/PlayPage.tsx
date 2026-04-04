@@ -102,7 +102,7 @@ function TypewriterPopover({ onClose }: { onClose: () => void }) {
   return (
     <div
       ref={ref}
-      className="absolute top-full right-0 mt-1 w-64 bg-zinc-900 border border-zinc-700 rounded-lg p-3 shadow-xl z-50 space-y-3"
+      className="absolute top-full right-0 mt-1 w-64 bg-zinc-900 border border-zinc-700 rounded p-3 shadow-xl z-50 space-y-3"
     >
       <div className="text-xs font-medium text-zinc-300">打字机速度</div>
       <div className="flex items-center gap-3">
