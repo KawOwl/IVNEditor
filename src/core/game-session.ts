@@ -354,6 +354,7 @@ export class GameSession {
 
         // Flush any buffered text in the reasoning filter
         textFilter.flush();
+        this.flushTextFilter = null;
 
         // Stage finish reason
         this.emitter.stagePendingDebug({ finishReason: result.finishReason });

@@ -141,4 +141,27 @@
   input, textarea, select {
     font-size: max(16px, 1em) !important;
     }
+
+  /* 自定义滚动条 — 深色、窄、贴合暗色主题 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(113, 113, 122, 0.3) transparent;
+    }
+  *::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+    }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+    }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(113, 113, 122, 0.25);
+    border-radius: 4px;
+    }
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(113, 113, 122, 0.5);
+    }
+  *::-webkit-scrollbar-thumb:active {
+    background: rgba(113, 113, 122, 0.7);
+    }
 }
