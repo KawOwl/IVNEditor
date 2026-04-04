@@ -115,6 +115,7 @@ export function NarrativeView({ showReasoning = false }: NarrativeViewProps) {
   const status = useGameStore((s) => s.status);
   const pendingToolCalls = useGameStore((s) => s.pendingToolCalls);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const entryRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -123,36 +124,115 @@ export function NarrativeView({ showReasoning = false }: NarrativeViewProps) {
     }
   }, [entries, streamingText, streamingReasoning]);
 
+  const scrollToEntry = (id: string) => {
+    const el = entryRefs.current.get(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  return (
+    <div className="relative flex-1 min-h-0">
+      <div
+        ref={scrollRef}
+        className="h-full overflow-y-auto px-6 py-4 space-y-4"
+      >
+        {entries.length === 0 && !isStreaming && status === 'idle' && (
+          <div className="text-zinc-500 text-center py-12">
+            等待开始...
+          </div>
+        )}
+
+        {entries.map((entry) => (
+          <div
+            key={entry.id}
+            ref={(el) => { if (el) entryRefs.current.set(entry.id, el); }}
+          >
+            <EntryBlock
+              entry={entry}
+              debug={showReasoning}
+            />
+          </div>
+        ))}
+
+        {/* Streaming entry (currently generating) */}
+        {isStreaming && (streamingText || streamingReasoning || pendingToolCalls.length > 0) && (
+          <StreamingBlock
+            text={streamingText}
+            reasoning={streamingReasoning}
+            toolCalls={pendingToolCalls}
+            debug={showReasoning}
+          />
+        )}
+      </div>
+
+      {/* Conversation minimap */}
+      {entries.length > 1 && (
+        <ConversationMinimap entries={entries} onScrollTo={scrollToEntry} />
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// ConversationMinimap — 对话小地图（常驻短横线，hover 展开目录）
+// ============================================================================
+
+function ConversationMinimap({
+  entries,
+  onScrollTo,
+}: {
+  entries: NarrativeEntryType[];
+  onScrollTo: (id: string) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+
+  // 只显示有实际内容的条目
+  const items = entries.filter((e) => e.content.trim().length > 0);
+  if (items.length === 0) return null;
+
   return (
     <div
-      ref={scrollRef}
-      className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4"
+      className={cn(
+        'absolute right-1 top-0 bottom-0 z-20 flex flex-col justify-center gap-1.5 py-4 transition-all duration-200',
+        hovered ? 'w-48 bg-zinc-900/90 backdrop-blur-sm rounded-l-lg px-2 right-0' : 'w-5 px-1',
+      )}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onTouchStart={() => setHovered(true)}
+      onTouchEnd={() => setTimeout(() => setHovered(false), 2000)}
     >
-      {entries.length === 0 && !isStreaming && status === 'idle' && (
-        <div className="text-zinc-500 text-center py-12">
-          等待开始...
-        </div>
-      )}
-
-      {entries.map((entry) => (
-        <EntryBlock
+      {items.map((entry) => (
+        <button
           key={entry.id}
-          entry={entry}
-          debug={showReasoning}
-        />
+          onClick={() => { onScrollTo(entry.id); setHovered(false); }}
+          className={cn(
+            'flex items-center transition-all duration-150 text-left',
+            hovered ? 'gap-2 py-1 hover:bg-zinc-800/60 rounded px-1' : 'justify-end',
+          )}
+          title={!hovered ? entry.content.slice(0, 30) : undefined}
+        >
+          {/* 短横线指示器 */}
+          <span className={cn(
+            'flex-none rounded-full transition-all',
+            entry.role === 'receive'
+              ? 'bg-blue-400'
+              : entry.role === 'system'
+              ? 'bg-zinc-600'
+              : 'bg-zinc-500',
+            hovered ? 'w-1.5 h-1.5' : 'w-3 h-[2px]',
+          )} />
+
+          {/* hover 展开：显示内容预览 */}
+          {hovered && (
+            <span className={cn(
+              'flex-1 text-[10px] truncate leading-tight',
+              entry.role === 'receive' ? 'text-blue-300' : 'text-zinc-500',
+            )}>
+              {entry.role === 'receive' ? '你: ' : ''}
+              {entry.content.slice(0, 40)}
+            </span>
+          )}
+        </button>
       ))}
-
-      {/* Streaming entry (currently generating) */}
-      {isStreaming && (streamingText || streamingReasoning || pendingToolCalls.length > 0) && (
-        <StreamingBlock
-          text={streamingText}
-          reasoning={streamingReasoning}
-          toolCalls={pendingToolCalls}
-          debug={showReasoning}
-        />
-      )}
-
-      {/* Loading indicator removed — status bar already shows "生成中..." */}
     </div>
   );
 }

@@ -202,6 +202,9 @@ export class GameSession {
       const resolve = this.signalInputResolve;
       this.signalInputResolve = null;
 
+      // 先将打字机播放中的流式文本 finalize 为 entry
+      this.emitter.finalizeStreaming();
+
       // 清 UI 状态，恢复生成中
       this.emitter.setInputHint(null);
       this.emitter.setInputType('freetext');
@@ -354,7 +357,6 @@ export class GameSession {
 
         // Flush any buffered text in the reasoning filter
         textFilter.flush();
-        this.flushTextFilter = null;
 
         // Stage finish reason
         this.emitter.stagePendingDebug({ finishReason: result.finishReason });
@@ -437,8 +439,8 @@ export class GameSession {
       }
       this.emitter.setStatus('waiting-input');
 
-      // 把 streamingText 刷到 entries（玩家先看到叙事，再看到选项）
-      this.emitter.finalizeStreaming();
+      // 不调用 finalizeStreaming()——让打字机效果继续播放。
+      // finalize 推迟到 submitInput() 中，玩家提交时再将流式文本转为 entry。
 
       // 返回挂起 Promise，等 submitInput() 调用时 resolve
       return new Promise<string>((resolve) => {
