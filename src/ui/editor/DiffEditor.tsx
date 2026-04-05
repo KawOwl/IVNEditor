@@ -29,10 +29,11 @@ function sharedExtensions() {
     EditorState.readOnly.of(true),
     EditorView.editable.of(false),
     EditorView.theme({
-      '&': { fontSize: '12px' },
+      '&': { fontSize: '12px', height: '100%' },
       '.cm-scroller': {
         fontFamily: '"Geist Mono", "SF Mono", "Fira Code", monospace',
         lineHeight: '1.5',
+        overflow: 'auto',
       },
       '.cm-gutters': {
         backgroundColor: 'transparent',
@@ -88,7 +89,7 @@ export function DiffEditor({ original, modified, className }: DiffEditorProps) {
     <div
       ref={containerRef}
       className={className}
-      style={{ height: '100%', overflow: 'hidden' }}
+      style={{ height: '100%', overflow: 'auto' }}
     />
   );
 }
