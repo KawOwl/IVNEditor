@@ -14,6 +14,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useAppStore } from '../../stores/app-store';
 import { CodeEditor } from './CodeEditor';
+import { DiffEditor } from './DiffEditor';
 import { EditorDebugPanel } from './EditorDebugPanel';
 import { PromptPreviewPanel } from './PromptPreviewPanel';
 import { PlayPanel } from '../play/PlayPanel';
@@ -947,7 +948,7 @@ ${doc.content}
                     <div className="flex-1 min-h-0 border-l border-zinc-800 flex flex-col">
                       <div className="flex-none px-3 py-1.5 border-b border-zinc-800 flex items-center justify-between">
                         <span className="text-[10px] text-violet-400 font-medium">
-                          AI 衍生版本 (Diff)
+                          原文 vs AI 衍生版
                         </span>
                         <button
                           onClick={() => setDocuments((prev) =>
@@ -961,9 +962,10 @@ ${doc.content}
                           删除衍生
                         </button>
                       </div>
-                      <LineDiffView
+                      <DiffEditor
                         original={selectedDoc.content}
-                        derived={selectedDoc.derivedContent}
+                        modified={selectedDoc.derivedContent}
+                        className="flex-1 min-h-0"
                       />
                     </div>
                   )}
@@ -1377,88 +1379,3 @@ function ScriptListEntry({
   );
 }
 
-// ============================================================================
-// LineDiffView — 逐行 Diff 高亮显示
-// ============================================================================
-
-type DiffLine = { type: 'same' | 'add' | 'del'; text: string };
-
-/** 简单 LCS 逐行 diff */
-function computeLineDiff(original: string, derived: string): DiffLine[] {
-  const a = original.split('\n');
-  const b = derived.split('\n');
-  const m = a.length;
-  const n = b.length;
-
-  // LCS DP（行级）
-  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i]![j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1]![j - 1]! + 1
-        : Math.max(dp[i - 1]![j]!, dp[i]![j - 1]!);
-    }
-  }
-
-  // Backtrack
-  const result: DiffLine[] = [];
-  let i = m, j = n;
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
-      result.push({ type: 'same', text: a[i - 1]! });
-      i--; j--;
-    } else if (j > 0 && (i === 0 || dp[i]![j - 1]! >= dp[i - 1]![j]!)) {
-      result.push({ type: 'add', text: b[j - 1]! });
-      j--;
-    } else {
-      result.push({ type: 'del', text: a[i - 1]! });
-      i--;
-    }
-  }
-  return result.reverse();
-}
-
-function LineDiffView({ original, derived }: { original: string; derived: string }) {
-  const lines = useMemo(() => computeLineDiff(original, derived), [original, derived]);
-  const stats = useMemo(() => {
-    let add = 0, del = 0;
-    for (const l of lines) {
-      if (l.type === 'add') add++;
-      else if (l.type === 'del') del++;
-    }
-    return { add, del };
-  }, [lines]);
-
-  return (
-    <div className="flex-1 overflow-y-auto">
-      {/* Stats bar */}
-      <div className="sticky top-0 px-3 py-1 bg-zinc-900/95 border-b border-zinc-800 text-[10px] text-zinc-500 flex gap-3">
-        <span className="text-emerald-500">+{stats.add} 新增</span>
-        <span className="text-red-500">-{stats.del} 删除</span>
-        <span>{lines.length - stats.add - stats.del} 不变</span>
-      </div>
-      <div className="p-2 text-xs font-mono leading-relaxed">
-        {lines.map((line, i) => (
-          <div
-            key={i}
-            className={cn(
-              'px-2 py-0 whitespace-pre-wrap rounded-sm',
-              line.type === 'add' && 'bg-emerald-950/40 text-emerald-300',
-              line.type === 'del' && 'bg-red-950/40 text-red-400 line-through opacity-60',
-              line.type === 'same' && 'text-zinc-400',
-            )}
-          >
-            <span className={cn(
-              'inline-block w-4 mr-2 text-[10px] select-none',
-              line.type === 'add' ? 'text-emerald-600' :
-              line.type === 'del' ? 'text-red-700' : 'text-zinc-700',
-            )}>
-              {line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' '}
-            </span>
-            {line.text || '\u00A0'}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
