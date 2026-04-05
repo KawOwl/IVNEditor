@@ -26,6 +26,8 @@ import { getEngineMode, getBackendUrl } from '../../core/engine-mode';
 import { useAuthStore } from '../../stores/auth-store';
 import { cn } from '../../lib/utils';
 import { uuid } from '../../lib/uuid';
+import { getTextLLMConfig } from '../../stores/llm-settings-store';
+import { LLMClient } from '../../core/llm-client';
 import type {
   ScriptManifest,
   PromptSegment,
@@ -48,6 +50,8 @@ interface EditorDocument {
   priority: number;
   injectionCondition: string;   // empty = always inject
   injectionDescription: string;
+  derivedContent?: string;      // LLM 改写的衍生版本
+  useDerived?: boolean;         // 组装时使用衍生版本
 }
 
 function createDocId(): string {
@@ -76,6 +80,8 @@ function docToSegment(doc: EditorDocument): PromptSegment {
       ? { description: doc.injectionDescription || doc.injectionCondition, condition: doc.injectionCondition }
       : undefined,
     tokenCount: estimateTokens(doc.content),
+    derivedContent: doc.derivedContent,
+    useDerived: doc.useDerived,
   };
 }
 
@@ -95,6 +101,8 @@ function manifestToDocuments(manifest: ScriptManifest): EditorDocument[] {
         priority: seg.priority,
         injectionCondition: seg.injectionRule?.condition ?? '',
         injectionDescription: seg.injectionRule?.description ?? '',
+        derivedContent: seg.derivedContent,
+        useDerived: seg.useDerived,
       });
     }
   }
@@ -183,6 +191,7 @@ export function EditorPage() {
   const [publishing, setPublishing] = useState(false);
   const [isPublished, setIsPublished] = useState(false);
   const [promptAssemblyOrder, setPromptAssemblyOrder] = useState<string[] | undefined>(undefined);
+  const [disabledAssemblySections, setDisabledAssemblySections] = useState<string[]>([]);
 
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;
 
@@ -294,6 +303,7 @@ export function EditorPage() {
     setScriptTags(manifest.tags ?? []);
     setIsPublished(!!record.published);
     setPromptAssemblyOrder(manifest.promptAssemblyOrder);
+    setDisabledAssemblySections(manifest.disabledAssemblySections ?? []);
     setShowScriptLibrary(false);
   }, [scriptList, refreshScriptList]);
 
@@ -319,6 +329,7 @@ export function EditorPage() {
         enabledTools,
         initialPrompt: initialPrompt || undefined,
         promptAssemblyOrder: promptAssemblyOrder,
+        disabledAssemblySections: disabledAssemblySections.length > 0 ? disabledAssemblySections : undefined,
         chapters: [{
           id: 'ch1',
           label: '第一章',
@@ -344,7 +355,7 @@ export function EditorPage() {
     } finally {
       setSaving(false);
     }
-  }, [loadedScriptId, scriptLabel, scriptDescription, scriptVersion, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, refreshScriptList]);
+  }, [loadedScriptId, scriptLabel, scriptDescription, scriptVersion, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, disabledAssemblySections, refreshScriptList]);
 
   // --- Delete a script from IndexedDB ---
   const handleDeleteScript = useCallback(async (id: string) => {
@@ -433,6 +444,7 @@ export function EditorPage() {
       setScriptVersion(record.manifest.version ?? '0.0.0');
       setScriptTags(record.manifest.tags ?? []);
       setPromptAssemblyOrder(record.manifest.promptAssemblyOrder);
+      setDisabledAssemblySections(record.manifest.disabledAssemblySections ?? []);
       setShowScriptLibrary(false);
     } catch (err) {
       alert('导入失败: ' + (err instanceof Error ? err.message : String(err)));
@@ -454,6 +466,7 @@ export function EditorPage() {
     setInitialPrompt('开始测试');
     setIsPublished(false);
     setPromptAssemblyOrder(undefined);
+    setDisabledAssemblySections([]);
     setShowScriptLibrary(false);
   }, []);
 
@@ -626,13 +639,74 @@ export function EditorPage() {
 
   const handleDocMetaChange = useCallback((
     id: string,
-    field: 'role' | 'priority' | 'injectionCondition' | 'injectionDescription' | 'filename',
-    value: string | number,
+    field: 'role' | 'priority' | 'injectionCondition' | 'injectionDescription' | 'filename' | 'useDerived',
+    value: string | number | boolean,
   ) => {
     setDocuments((prev) =>
       prev.map((d) => d.id === id ? { ...d, [field]: value } : d),
     );
   }, []);
+
+  // --- AI Rewrite for system segments ---
+  const [rewritingDocId, setRewritingDocId] = useState<string | null>(null);
+
+  const handleAIRewrite = useCallback(async (docId: string) => {
+    const doc = documents.find((d) => d.id === docId);
+    if (!doc || doc.role !== 'system') return;
+
+    setRewritingDocId(docId);
+    try {
+      const llmConfig = getTextLLMConfig();
+      const client = new LLMClient(llmConfig);
+
+      const rewritePrompt = `你是一位互动叙事引擎的 prompt 优化专家。你的任务是改写下面的 system prompt，使其更好地利用引擎提供的工具系统。
+
+## 引擎提供的工具
+
+1. **update_state(patch)** — 更新游戏状态变量（如：好感度、章节进度、物品库存等）
+2. **signal_input_needed(prompt_hint, choices)** — 在叙事到达分支点时，向玩家提供 2-4 个可点击的选项按钮
+3. **read_state(keys?)** — 读取当前状态变量
+4. **query_changelog(filter)** — 查询状态变更历史
+5. **pin_memory(content, tags?)** — 固定重要记忆（防止被压缩丢失）
+6. **query_memory(query)** — 搜索历史记忆
+
+## 改写要求
+
+1. **不要改变原文的叙事风格、世界观设定和角色描述**
+2. **在适当位置添加工具调用指引**，例如��
+   - 在描述需要玩家做选择的情节时，提示使用 signal_input_needed
+   - 在描述会影响数值/状态的情节时，提示使用 update_state
+   - 在描述重要信息揭示时，提示使用 pin_memory
+3. **用 {{tool:工具名}} 格式标注工具引用**
+4. **保持原文结构和段落划分**
+5. **输出完整改写后的 prompt，不要输出解释或说明**
+
+## 原始 Prompt
+
+${doc.content}
+
+## 改写后的 Prompt（直接输出，不要加任何前缀说明）`;
+
+      const result = await client.generate({
+        systemPrompt: '你是 prompt 改写助手。只输出改写后的 prompt 全文，不要输出任何额外说明。',
+        messages: [{ role: 'user', content: rewritePrompt }],
+        tools: {},
+      });
+
+      if (result.text) {
+        setDocuments((prev) =>
+          prev.map((d) => d.id === docId
+            ? { ...d, derivedContent: result.text, useDerived: false }
+            : d,
+          ),
+        );
+      }
+    } catch (err) {
+      alert('AI 改写失败: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setRewritingDocId(null);
+    }
+  }, [documents]);
 
   // --- Build manifest for play panel ---
   const playManifest = useMemo<ScriptManifest>(() => {
@@ -646,6 +720,7 @@ export function EditorPage() {
       enabledTools,
       initialPrompt: initialPrompt || undefined,
       promptAssemblyOrder: promptAssemblyOrder,
+      disabledAssemblySections: disabledAssemblySections.length > 0 ? disabledAssemblySections : undefined,
       chapters: [{
         id: 'draft-ch1',
         label: '草稿章节',
@@ -653,7 +728,7 @@ export function EditorPage() {
         segments,
       }],
     };
-  }, [segments, initialPrompt, stateSchema, memoryConfig, enabledTools, loadedScriptId, promptAssemblyOrder]);
+  }, [segments, initialPrompt, stateSchema, memoryConfig, enabledTools, loadedScriptId, promptAssemblyOrder, disabledAssemblySections]);
 
   return (
     <div className="h-full bg-zinc-950 text-zinc-100 flex flex-col">
@@ -856,14 +931,41 @@ export function EditorPage() {
                 <DocMetaBar
                   doc={selectedDoc}
                   onMetaChange={(field, value) => handleDocMetaChange(selectedDoc.id, field, value)}
+                  onRewrite={() => handleAIRewrite(selectedDoc.id)}
+                  rewriting={rewritingDocId === selectedDoc.id}
                 />
-                {/* Code editor */}
-                <div className="flex-1 min-h-0">
-                  <CodeEditor
-                    value={selectedDoc.content}
-                    onChange={handleContentChange}
-                    stateVars={stateVars}
-                  />
+                {/* Code editor + derived diff */}
+                <div className="flex-1 min-h-0 flex">
+                  <div className={cn('min-h-0', selectedDoc.derivedContent ? 'flex-1' : 'w-full')}>
+                    <CodeEditor
+                      value={selectedDoc.content}
+                      onChange={handleContentChange}
+                      stateVars={stateVars}
+                    />
+                  </div>
+                  {selectedDoc.derivedContent && (
+                    <div className="flex-1 min-h-0 border-l border-zinc-800 flex flex-col">
+                      <div className="flex-none px-3 py-1.5 border-b border-zinc-800 flex items-center justify-between">
+                        <span className="text-[10px] text-violet-400 font-medium">
+                          AI 衍生版本
+                        </span>
+                        <button
+                          onClick={() => setDocuments((prev) =>
+                            prev.map((d) => d.id === selectedDoc.id
+                              ? { ...d, derivedContent: undefined, useDerived: false }
+                              : d,
+                            ),
+                          )}
+                          className="text-[10px] text-zinc-600 hover:text-red-400 transition-colors"
+                        >
+                          删除衍生
+                        </button>
+                      </div>
+                      <pre className="flex-1 overflow-y-auto p-3 text-xs text-zinc-300 font-mono whitespace-pre-wrap leading-relaxed">
+                        {selectedDoc.derivedContent}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
@@ -909,6 +1011,8 @@ export function EditorPage() {
                 initialPrompt={initialPrompt}
                 assemblyOrder={promptAssemblyOrder}
                 onOrderChange={setPromptAssemblyOrder}
+                disabledSections={disabledAssemblySections}
+                onDisabledChange={setDisabledAssemblySections}
               />
             </div>
             <div className={cn('absolute inset-0', rightTab !== 'play' && 'hidden')}>
@@ -1064,12 +1168,16 @@ function FileListItem({
 function DocMetaBar({
   doc,
   onMetaChange,
+  onRewrite,
+  rewriting,
 }: {
   doc: EditorDocument;
   onMetaChange: (
-    field: 'role' | 'priority' | 'injectionCondition' | 'injectionDescription',
-    value: string | number,
+    field: 'role' | 'priority' | 'injectionCondition' | 'injectionDescription' | 'useDerived',
+    value: string | number | boolean,
   ) => void;
+  onRewrite?: () => void;
+  rewriting?: boolean;
 }) {
   const tokenCount = estimateTokens(doc.content);
 
@@ -1106,6 +1214,38 @@ function DocMetaBar({
           max={99}
         />
       </label>
+
+      {/* AI Rewrite button (system segments only) */}
+      {doc.role === 'system' && onRewrite && (
+        <>
+          <span className="text-zinc-700">|</span>
+          <button
+            onClick={onRewrite}
+            disabled={rewriting}
+            className={cn(
+              'px-2 py-0.5 rounded border text-[10px] font-medium transition-colors',
+              rewriting
+                ? 'border-zinc-700 text-zinc-500 cursor-wait'
+                : 'border-violet-800/50 bg-violet-950/30 text-violet-400 hover:border-violet-600',
+            )}
+          >
+            {rewriting ? 'AI 改写中...' : doc.derivedContent ? 'AI 重新改写' : 'AI 改写'}
+          </button>
+          {doc.derivedContent && (
+            <label className="flex items-center gap-1 text-zinc-500 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={doc.useDerived ?? false}
+                onChange={(e) => onMetaChange('useDerived', e.target.checked)}
+                className="accent-violet-500"
+              />
+              <span className={doc.useDerived ? 'text-violet-400' : ''}>
+                使用衍生版
+              </span>
+            </label>
+          )}
+        </>
+      )}
 
       {/* Injection condition */}
       <label className="flex items-center gap-1 text-zinc-500 flex-1 min-w-0">

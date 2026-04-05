@@ -52,6 +52,7 @@ export interface AssembleOptions {
   outputReserve?: number;   // tokens reserved for LLM output (default: 4096)
   initialPrompt?: string;   // 首轮 user message（等效于 prompt.txt）
   assemblyOrder?: string[]; // 自定义组装顺序（section ID 列表，含虚拟 section）
+  disabledSections?: string[]; // 被禁用的 section ID 列表（不参与组装）
 }
 
 // ============================================================================
@@ -105,8 +106,22 @@ const ENGINE_RULES_CONTENT =
   `- 你的回复结束后，引擎会自动等待玩家输入（和聊天一样）。\n` +
   `- 叙事到达需要等待玩家的时刻时，正常结束你的回复即可。\n` +
   `- 可用 update_state 更新状态变量。\n` +
-  `- 当需要玩家做选择时，**必须**调用 signal_input_needed 工具并在 choices 参数中提供选项列表。这会在玩家界面显示可点击的选项按钮。\n` +
   `- 输出只包含叙事正文和工具调用，不要输出计划、分析或元叙述。\n` +
+  `\n## signal_input_needed 工具使用指南\n` +
+  `此工具在玩家界面显示可点击的选项按钮，引导玩家做出选择。\n` +
+  `**何时必须调用：**\n` +
+  `1. 剧本 prompt 明确要求提供选项时；\n` +
+  `2. 叙事到达分支点——玩家面临多条行动路线（如：战斗/逃跑/谈判、前往A/前往B、答应/拒绝）；\n` +
+  `3. NPC 向玩家提问或提出要求，需要玩家回应；\n` +
+  `4. 场景描述完毕，玩家需要决定下一步行动；\n` +
+  `5. 对话中出现立场分歧，玩家需要表态。\n` +
+  `**即使剧本 prompt 没有提到选项，只要叙事情境符合上述任一条件，你也应该主动调用此工具提供选项。**\n` +
+  `**调用要求：**\n` +
+  `- 在叙事正文写完后调用，choices 参数提供 2-4 个选项\n` +
+  `- 选项要简洁（每个不超过 15 字），代表不同的行动或态度方向\n` +
+  `- 至少包含一个有创意或大胆的选项，不要全是保守选择\n` +
+  `- 让玩家感到自己的选择会影响故事走向\n` +
+  `**不必提供选项的情况：** 玩家正在自由探索、描述具体行为细节、或当前场景更适合开放式回应时。\n` +
   `---`;
 
 export function assembleContext(options: AssembleOptions): AssembledContext {
@@ -117,15 +132,18 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
     tokenBudget,
     outputReserve = 4096,
     assemblyOrder,
+    disabledSections,
   } = options;
 
   const availableBudget = tokenBudget - outputReserve;
   const vars = stateStore.getAll();
   let usedTokens = 0;
+  const disabledSet = new Set(disabledSections ?? []);
 
-  // --- 1. Filter active segments by injection rules ---
+  // --- 1. Filter active segments by injection rules + disabled list ---
   const activeSegments = segments.filter((seg) => {
     if (seg.role === 'draft') return false;
+    if (disabledSet.has(seg.id)) return false;
     if (!seg.injectionRule) return true;
     return evaluateCondition(seg.injectionRule.condition, vars);
   });
@@ -135,10 +153,12 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
   const sectionContent = new Map<string, string>();
   const sectionTokens = new Map<string, number>();
 
-  // User segments
+  // User segments (use derivedContent if useDerived)
   for (const seg of activeSegments) {
-    sectionContent.set(seg.id, seg.content);
-    sectionTokens.set(seg.id, seg.tokenCount);
+    const content = (seg.useDerived && seg.derivedContent) ? seg.derivedContent : seg.content;
+    const tokens = estimateTokens(content);
+    sectionContent.set(seg.id, content);
+    sectionTokens.set(seg.id, tokens);
   }
 
   // State YAML
@@ -162,9 +182,11 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
     sectionTokens.set(VIRTUAL_IDS.MEMORY, summaryTokenCount);
   }
 
-  // Engine rules
-  sectionContent.set(VIRTUAL_IDS.RULES, ENGINE_RULES_CONTENT);
-  sectionTokens.set(VIRTUAL_IDS.RULES, estimateTokens(ENGINE_RULES_CONTENT));
+  // Engine rules (can be disabled)
+  if (!disabledSet.has(VIRTUAL_IDS.RULES)) {
+    sectionContent.set(VIRTUAL_IDS.RULES, ENGINE_RULES_CONTENT);
+    sectionTokens.set(VIRTUAL_IDS.RULES, estimateTokens(ENGINE_RULES_CONTENT));
+  }
 
   // --- 3. Determine assembly order ---
   let orderedIds: string[];

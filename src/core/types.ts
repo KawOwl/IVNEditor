@@ -71,6 +71,10 @@ export interface PromptSegment {
   assemblyOrder?: number;     // 组装顺序（用于 prompt 前缀缓存优化，越小越前）
   injectionRule?: InjectionRule;
   tokenCount: number;
+  /** LLM 改写后的衍生内容（仅 system segment 可用） */
+  derivedContent?: string;
+  /** 组装时使用衍生版本还是原文 */
+  useDerived?: boolean;
 }
 
 export interface InjectionRule {
@@ -135,6 +139,8 @@ export interface ScriptManifest {
   // --- 组装顺序 ---
   /** Prompt 组装顺序：section ID 列表，决定各部分在 prompt 中的排列位置 */
   promptAssemblyOrder?: string[];
+  /** 被禁用的 section ID 列表（不参与组装） */
+  disabledAssemblySections?: string[];
 }
 
 /** 首页卡片用的轻量目录条目 */

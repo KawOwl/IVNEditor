@@ -118,6 +118,7 @@ export interface GameSessionConfig {
   inheritedSummary?: string;     // from previous chapter
   initialPrompt?: string;        // 首轮 user message（等效于 prompt.txt）
   assemblyOrder?: string[];      // 自定义 prompt 组装顺序
+  disabledSections?: string[];   // 被禁用的 section ID 列表
 }
 
 // ============================================================================
@@ -135,6 +136,7 @@ export class GameSession {
   private tokenBudget!: number;
   private initialPrompt?: string;
   private assemblyOrder?: string[];
+  private disabledSections?: string[];
   // Session lifecycle
   private active = false;
 
@@ -177,6 +179,7 @@ export class GameSession {
       this.tokenBudget = config.tokenBudget ?? 120000;
       this.initialPrompt = config.initialPrompt;
       this.assemblyOrder = config.assemblyOrder;
+      this.disabledSections = config.disabledSections;
 
       if (config.inheritedSummary) {
         this.memory.setInheritedSummary(config.inheritedSummary);
@@ -284,6 +287,7 @@ export class GameSession {
           tokenBudget: this.tokenBudget,
           initialPrompt: this.initialPrompt,
           assemblyOrder: this.assemblyOrder,
+          disabledSections: this.disabledSections,
         });
 
         // Compute active segment IDs

@@ -112,6 +112,7 @@ export function PlayPanel({
         enabledTools: manifest.enabledTools,
         initialPrompt: manifest.initialPrompt,
         assemblyOrder: manifest.promptAssemblyOrder,
+        disabledSections: manifest.disabledAssemblySections,
         llmConfig: getTextLLMConfig(),
       };
 

@@ -115,14 +115,30 @@ export function NarrativeView({ showReasoning = false }: NarrativeViewProps) {
   const status = useGameStore((s) => s.status);
   const pendingToolCalls = useGameStore((s) => s.pendingToolCalls);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const entryRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-  // Auto-scroll to bottom
+  // Auto-scroll: 用 ResizeObserver 监听内容高度变化（覆盖打字机动画期间）
+  const prevScrollHeightRef = useRef(0);
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [entries, streamingText, streamingReasoning]);
+    const scrollEl = scrollRef.current;
+    const contentEl = contentRef.current;
+    if (!scrollEl || !contentEl) return;
+
+    prevScrollHeightRef.current = scrollEl.scrollHeight;
+
+    const observer = new ResizeObserver(() => {
+      // 内容增长前用户是否在底部附近（用增长前的 scrollHeight 判断）
+      const wasAtBottom =
+        prevScrollHeightRef.current - scrollEl.scrollTop - scrollEl.clientHeight < 60;
+      prevScrollHeightRef.current = scrollEl.scrollHeight;
+      if (wasAtBottom) {
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+      }
+    });
+    observer.observe(contentEl);
+    return () => observer.disconnect();
+  }, []);
 
   const scrollToEntry = (id: string) => {
     const el = entryRefs.current.get(id);
@@ -133,8 +149,9 @@ export function NarrativeView({ showReasoning = false }: NarrativeViewProps) {
     <div className="relative flex-1 min-h-0">
       <div
         ref={scrollRef}
-        className="h-full overflow-y-auto px-6 py-4 space-y-4"
+        className="h-full overflow-y-auto px-6 py-4"
       >
+      <div ref={contentRef} className="space-y-4">
         {entries.length === 0 && !isStreaming && status === 'idle' && (
           <div className="text-zinc-500 text-center py-12">
             等待开始...
@@ -162,6 +179,7 @@ export function NarrativeView({ showReasoning = false }: NarrativeViewProps) {
             debug={showReasoning}
           />
         )}
+      </div>
       </div>
 
       {/* Conversation minimap */}
@@ -310,6 +328,11 @@ function EntryBlock({
   return <GenerateEntryBlock entry={entry} debug={debug} />;
 }
 
+/**
+ * 已播放打字机的 entry ID 集合（模块级，防止组件重挂载导致打字机重播）。
+ */
+const typewriterPlayed = new Set<string>();
+
 /** generate entry 独立组件——需要打字机时用 useTypewriter */
 function GenerateEntryBlock({
   entry,
@@ -319,8 +342,14 @@ function GenerateEntryBlock({
   debug: boolean;
 }) {
   const setTypewriterDone = useGameStore((s) => s.setTypewriterDone);
-  // 用 ref 锁定初始状态，避免 store 更新导致重播
-  const shouldAnimate = useRef(entry.typewriterDone === false);
+
+  // 判断是否需要动画：entry 未完成 且 还没播放过
+  const needsAnimation = entry.typewriterDone === false && !typewriterPlayed.has(entry.id);
+  const shouldAnimate = useRef(needsAnimation);
+  if (needsAnimation) {
+    typewriterPlayed.add(entry.id);
+  }
+
   const [cps] = useState(() => getTypewriterSpeed());
   const displayText = useTypewriter(entry.content, shouldAnimate.current ? cps : 0);
 
