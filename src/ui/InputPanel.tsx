@@ -62,15 +62,15 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
 
   return (
     <div className="border-t border-zinc-800 px-4 py-3 space-y-2">
-      {/* Hint */}
-      {status === 'waiting-input' && (
+      {/* Hint — 打字机播放完毕后才显示 */}
+      {status === 'waiting-input' && !isTypewriterPlaying && (
         <div className="text-sm text-zinc-400 italic">
           {displayHint}
         </div>
       )}
 
-      {/* Choice buttons */}
-      {hasChoices && (
+      {/* Choice buttons — 打字机播放完毕后才显示 */}
+      {hasChoices && !isTypewriterPlaying && (
         <div className="flex flex-wrap gap-2">
           {choices!.map((choice, i) => (
             <button
