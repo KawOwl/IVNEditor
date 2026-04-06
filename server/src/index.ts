@@ -19,6 +19,7 @@ import { scriptRoutes } from './routes/scripts';
 import { sessionRoutes } from './routes/sessions';
 import { configRoutes } from './routes/config';
 import { authRoutes } from './routes/auth';
+import { testConnection } from './db';
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -78,6 +79,12 @@ if (HAS_DIST) {
 } else {
   console.log(`⚠️  No dist/ found — run 'pnpm build' in project root to enable frontend hosting`);
 }
+
+// 启动时测试数据库连接
+testConnection().catch((err) => {
+  console.error('[DB] Connection failed:', err.message);
+  console.error('[DB] Server will continue without database — playthrough persistence disabled');
+});
 
 app.listen(PORT);
 
