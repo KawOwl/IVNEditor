@@ -19,6 +19,7 @@ import { scriptRoutes } from './routes/scripts';
 import { sessionRoutes } from './routes/sessions';
 import { configRoutes } from './routes/config';
 import { authRoutes } from './routes/auth';
+import { playthroughRoutes } from './routes/playthroughs';
 import { testConnection } from './db';
 
 const PORT = Number(process.env.PORT) || 3001;
@@ -51,6 +52,7 @@ const app = new Elysia()
   .use(sessionRoutes)
   .use(configRoutes)
   .use(authRoutes)
+  .use(playthroughRoutes)
   .get('/health', () => ({ ok: true, timestamp: Date.now() }));
 
 // 托管前端静态资源（仅在 dist/ 存在时启用）
@@ -68,11 +70,16 @@ if (HAS_DIST) {
     });
   });
 
-  // SPA fallback: 非 API 路由返回 index.html
-  app.get('*', () => {
-    return new Response(Bun.file(join(DIST_DIR, 'index.html')), {
-      headers: { 'Content-Type': 'text/html' },
-    });
+  // SPA fallback: 非 API 的 404 路由返回 index.html
+  app.onError(({ request, code }) => {
+    if (code === 'NOT_FOUND') {
+      const url = new URL(request.url);
+      if (!url.pathname.startsWith('/api/') && url.pathname !== '/health') {
+        return new Response(Bun.file(join(DIST_DIR, 'index.html')), {
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+    }
   });
 
   console.log(`📦 Serving frontend from ${DIST_DIR}`);
