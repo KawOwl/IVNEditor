@@ -26,13 +26,10 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
   const inputHint = useGameStore((s) => s.inputHint);
   const inputType = useGameStore((s) => s.inputType);
   const choices = useGameStore((s) => s.choices);
-  const entries = useGameStore((s) => s.entries);
   const [text, setText] = useState('');
 
-  // 打字机还在播放中 → 禁用输入（typewriterDone 为 false 或 undefined 都视为未完成，但 undefined 默认为完成）
-  const typewriterPlaying = entries.some((e) => e.typewriterDone === false);
-  const isDisabled = status !== 'waiting-input' || typewriterPlaying;
-  const hasChoices = inputType === 'choice' && choices && choices.length > 0 && !typewriterPlaying;
+  const isDisabled = status !== 'waiting-input';
+  const hasChoices = inputType === 'choice' && choices && choices.length > 0;
   const hasText = text.trim().length > 0;
 
   const handleSubmit = useCallback(() => {

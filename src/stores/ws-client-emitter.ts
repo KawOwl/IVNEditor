@@ -141,16 +141,20 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
       store().setError(msg.error as string | null);
       break;
 
+    case 'begin-streaming':
+      store().beginStreamingEntry();
+      break;
+
     case 'text-chunk':
-      store().appendStreamingChunk(msg.text as string);
+      store().appendToStreamingEntry(msg.text as string);
       break;
 
     case 'reasoning-chunk':
-      store().appendReasoningChunk(msg.text as string);
+      store().appendReasoningToStreamingEntry(msg.text as string);
       break;
 
     case 'finalize':
-      store().finalizeStreaming();
+      store().finalizeStreamingEntry();
       break;
 
     case 'entry':

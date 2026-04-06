@@ -1,12 +1,13 @@
 /**
- * NarrativeView — 流式叙事显示组件
+ * NarrativeView — 统一叙事显示组件
  *
- * 显示 LLM 生成的叙事和玩家输入的对话历史。
- * 支持流式打字机效果（显示正在生成的文本）。
- * 自动滚动到底部。
+ * 所有内容（流式 + 已完成）都在 entries[] 中。
+ * generate entry 使用打字机效果"追赶"内容缓冲区：
+ *   - streaming=true 时，content 持续增长，typewriter 按 CPS 追赶
+ *   - streaming=false 后，typewriter 继续追完剩余文字
  *
  * debug 模式下额外显示：
- *   - 可折叠的 Prompt 快照（该轮发给 LLM 的完整上下文）
+ *   - 可折叠的 Prompt 快照
  *   - Reasoning 文本
  *   - Tool Call / Result 记录
  *   - Finish Reason
@@ -38,19 +39,21 @@ export function setTypewriterSpeed(cps: number): void {
 }
 
 // ============================================================================
-// useTypewriter — 打字机节流 hook
+// useTypewriter — 打字机"追赶"hook
 // ============================================================================
 
 /**
- * 接收实时的完整文本，返回按打字机速度逐步"追赶"的显示文本。
- * cps = 0 时直接返回原文（无节流）。
+ * 接收持续增长的文本缓冲区，返回按 CPS 逐步"追赶"的显示文本。
+ * - buffer 增长时，typewriter 匀速追赶
+ * - typewriter 追上 buffer 后停下等待新 chunk
+ * - cps = 0 时直接返回原文（无节流）
  */
 function useTypewriter(fullText: string, cps: number): string {
   const [visibleLen, setVisibleLen] = useState(0);
   const rafRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
 
-  // 当 fullText 缩短时（重置），同步重置 visibleLen
+  // fullText 缩短时（新 entry / reset），同步重置
   useEffect(() => {
     if (fullText.length < visibleLen) {
       setVisibleLen(fullText.length);
@@ -59,7 +62,6 @@ function useTypewriter(fullText: string, cps: number): string {
 
   useEffect(() => {
     if (cps <= 0) {
-      // 无限速
       setVisibleLen(fullText.length);
       return;
     }
@@ -73,13 +75,10 @@ function useTypewriter(fullText: string, cps: number): string {
 
       if (charsToAdd > 0) {
         lastTimeRef.current += charsToAdd * msPerChar;
-        setVisibleLen((prev) => {
-          const next = Math.min(prev + charsToAdd, fullText.length);
-          return next;
-        });
+        setVisibleLen((prev) => Math.min(prev + charsToAdd, fullText.length));
       }
 
-      // 还没追上，继续
+      // 还没追上 → 继续
       setVisibleLen((prev) => {
         if (prev < fullText.length) {
           rafRef.current = requestAnimationFrame(tick);
@@ -88,7 +87,7 @@ function useTypewriter(fullText: string, cps: number): string {
       });
     };
 
-    // 如果还没追上，启动动画
+    // 还没追上 → 启动/重启动画
     if (visibleLen < fullText.length) {
       if (!lastTimeRef.current) lastTimeRef.current = performance.now();
       rafRef.current = requestAnimationFrame(tick);
@@ -96,6 +95,8 @@ function useTypewriter(fullText: string, cps: number): string {
 
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      // 重置时间戳，避免下次 fullText 增长后因为间隔太长而一次性追赶大量字符
+      lastTimeRef.current = 0;
     };
   }, [fullText, cps, visibleLen]);
 
@@ -103,22 +104,22 @@ function useTypewriter(fullText: string, cps: number): string {
   return fullText.slice(0, visibleLen);
 }
 
+// ============================================================================
+// NarrativeView
+// ============================================================================
+
 interface NarrativeViewProps {
   showReasoning?: boolean;
 }
 
 export function NarrativeView({ showReasoning = false }: NarrativeViewProps) {
   const entries = useGameStore((s) => s.entries);
-  const streamingText = useGameStore((s) => s.streamingText);
-  const streamingReasoning = useGameStore((s) => s.streamingReasoning);
-  const isStreaming = useGameStore((s) => s.isStreaming);
   const status = useGameStore((s) => s.status);
-  const pendingToolCalls = useGameStore((s) => s.pendingToolCalls);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const entryRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-  // Auto-scroll: 用 ResizeObserver 监听内容高度变化（覆盖打字机动画期间）
+  // Auto-scroll: ResizeObserver 监听内容高度变化（覆盖打字机动画期间）
   const prevScrollHeightRef = useRef(0);
   useEffect(() => {
     const scrollEl = scrollRef.current;
@@ -128,7 +129,6 @@ export function NarrativeView({ showReasoning = false }: NarrativeViewProps) {
     prevScrollHeightRef.current = scrollEl.scrollHeight;
 
     const observer = new ResizeObserver(() => {
-      // 内容增长前用户是否在底部附近（用增长前的 scrollHeight 判断）
       const wasAtBottom =
         prevScrollHeightRef.current - scrollEl.scrollTop - scrollEl.clientHeight < 60;
       prevScrollHeightRef.current = scrollEl.scrollHeight;
@@ -151,35 +151,22 @@ export function NarrativeView({ showReasoning = false }: NarrativeViewProps) {
         ref={scrollRef}
         className="h-full overflow-y-auto px-6 py-4"
       >
-      <div ref={contentRef} className="space-y-4">
-        {entries.length === 0 && !isStreaming && status === 'idle' && (
-          <div className="text-zinc-500 text-center py-12">
-            等待开始...
-          </div>
-        )}
+        <div ref={contentRef} className="space-y-4">
+          {entries.length === 0 && status === 'idle' && (
+            <div className="text-zinc-500 text-center py-12">
+              等待开始...
+            </div>
+          )}
 
-        {entries.map((entry) => (
-          <div
-            key={entry.id}
-            ref={(el) => { if (el) entryRefs.current.set(entry.id, el); }}
-          >
-            <EntryBlock
-              entry={entry}
-              debug={showReasoning}
-            />
-          </div>
-        ))}
-
-        {/* Streaming entry (currently generating) */}
-        {isStreaming && (streamingText || streamingReasoning || pendingToolCalls.length > 0) && (
-          <StreamingBlock
-            text={streamingText}
-            reasoning={streamingReasoning}
-            toolCalls={pendingToolCalls}
-            debug={showReasoning}
-          />
-        )}
-      </div>
+          {entries.map((entry) => (
+            <div
+              key={entry.id}
+              ref={(el) => { if (el) entryRefs.current.set(entry.id, el); }}
+            >
+              <EntryBlock entry={entry} debug={showReasoning} />
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Conversation minimap */}
@@ -191,7 +178,7 @@ export function NarrativeView({ showReasoning = false }: NarrativeViewProps) {
 }
 
 // ============================================================================
-// ConversationMinimap — 对话小地图（常驻短横线，hover 展开目录）
+// ConversationMinimap
 // ============================================================================
 
 function ConversationMinimap({
@@ -204,7 +191,6 @@ function ConversationMinimap({
   const [expanded, setExpanded] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // 点击外部关闭
   useEffect(() => {
     if (!expanded) return;
     const handler = (e: MouseEvent | TouchEvent) => {
@@ -220,7 +206,6 @@ function ConversationMinimap({
     };
   }, [expanded]);
 
-  // 只显示有实际内容的条目
   const items = entries.filter((e) => e.content.trim().length > 0);
   if (items.length === 0) return null;
 
@@ -229,7 +214,6 @@ function ConversationMinimap({
       ref={panelRef}
       className="absolute right-0 top-0 bottom-0 z-20 flex flex-col items-end"
     >
-      {/* 收起态：短横线指示器 */}
       {!expanded && (
         <div
           className="flex flex-col justify-center gap-1.5 py-4 px-1 w-5 h-full cursor-pointer"
@@ -251,7 +235,6 @@ function ConversationMinimap({
         </div>
       )}
 
-      {/* 展开态：浮层目录 */}
       {expanded && (
         <div className="w-52 max-h-full overflow-y-auto bg-zinc-900/95 backdrop-blur-sm rounded-l-lg border-l border-zinc-700/50 py-2 shadow-xl">
           <div className="px-3 pb-1.5 text-[9px] text-zinc-600 uppercase tracking-wider">
@@ -263,7 +246,6 @@ function ConversationMinimap({
               onClick={() => { onScrollTo(entry.id); setExpanded(false); }}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-zinc-800/60 active:bg-zinc-800 transition-colors"
             >
-              {/* 圆点 */}
               <span className={cn(
                 'flex-none w-1.5 h-1.5 rounded-full',
                 entry.role === 'receive'
@@ -272,11 +254,9 @@ function ConversationMinimap({
                   ? 'bg-zinc-600'
                   : 'bg-zinc-500',
               )} />
-              {/* 序号 */}
               <span className="flex-none text-[9px] text-zinc-600 font-mono w-3">
                 {i + 1}
               </span>
-              {/* 预览 */}
               <span className={cn(
                 'flex-1 text-[10px] truncate leading-tight',
                 entry.role === 'receive' ? 'text-blue-300' : 'text-zinc-400',
@@ -293,7 +273,7 @@ function ConversationMinimap({
 }
 
 // ============================================================================
-// EntryBlock — 一条完整的交互记录
+// EntryBlock — 一条交互记录（统一组件）
 // ============================================================================
 
 function EntryBlock({
@@ -324,48 +304,30 @@ function EntryBlock({
     );
   }
 
-  // role === 'generate'
-  return <GenerateEntryBlock entry={entry} debug={debug} />;
+  // role === 'generate' → 打字机追赶
+  return <GenerateBlock entry={entry} debug={debug} />;
 }
 
-/**
- * 已播放打字机的 entry ID 集合（模块级，防止组件重挂载导致打字机重播）。
- */
-const typewriterPlayed = new Set<string>();
+// ============================================================================
+// GenerateBlock — LLM 输出（流式 + 打字机统一）
+// ============================================================================
 
-/** generate entry 独立组件——需要打字机时用 useTypewriter */
-function GenerateEntryBlock({
+function GenerateBlock({
   entry,
   debug,
 }: {
   entry: NarrativeEntryType;
   debug: boolean;
 }) {
-  const setTypewriterDone = useGameStore((s) => s.setTypewriterDone);
-
-  // 判断是否需要动画：entry 未完成 且 还没播放过
-  const needsAnimation = entry.typewriterDone === false && !typewriterPlayed.has(entry.id);
-  const shouldAnimate = useRef(needsAnimation);
-  if (needsAnimation) {
-    typewriterPlayed.add(entry.id);
-  }
-
   const [cps] = useState(() => getTypewriterSpeed());
-  const displayText = useTypewriter(entry.content, shouldAnimate.current ? cps : 0);
+  const displayText = useTypewriter(entry.content, cps);
 
-  // 打字机追完 → 标记 done（只执行一次）
-  useEffect(() => {
-    if (shouldAnimate.current && displayText.length >= entry.content.length && entry.content.length > 0) {
-      shouldAnimate.current = false;
-      setTypewriterDone(entry.id);
-    }
-  }, [displayText.length, entry.content.length, entry.id, setTypewriterDone]);
-
-  const isPlaying = shouldAnimate.current && displayText.length < entry.content.length;
+  // 打字机还在追赶 或 LLM 还在流式输出 → 显示光标
+  const isPlaying = displayText.length < entry.content.length || !!entry.streaming;
 
   return (
     <div className="max-w-3xl space-y-2">
-      {/* Prompt snapshot (debug, collapsed by default) */}
+      {/* Prompt snapshot (debug) */}
       {debug && entry.promptSnapshot && (
         <PromptSnapshotBlock snapshot={entry.promptSnapshot} />
       )}
@@ -384,13 +346,15 @@ function GenerateEntryBlock({
         </CollapsibleBlock>
       )}
 
-      {/* Narrative text — typewriter or full */}
-      <div className="text-zinc-100 prose prose-invert prose-sm max-w-none whitespace-pre-wrap leading-relaxed">
-        {shouldAnimate.current ? displayText : entry.content}
-        {isPlaying && (
-          <span className="inline-block w-0.5 h-4 bg-zinc-400 ml-0.5 animate-pulse" />
-        )}
-      </div>
+      {/* 叙事文本 — typewriter 追赶缓冲区 */}
+      {(displayText || entry.streaming) ? (
+        <div className="text-zinc-100 prose prose-invert prose-sm max-w-none whitespace-pre-wrap leading-relaxed">
+          {displayText}
+          {isPlaying && (
+            <span className="inline-block w-0.5 h-4 bg-zinc-400 ml-0.5 animate-pulse" />
+          )}
+        </div>
+      ) : null}
 
       {/* Tool calls (debug) */}
       {debug && entry.toolCalls && entry.toolCalls.length > 0 && (
@@ -408,50 +372,7 @@ function GenerateEntryBlock({
 }
 
 // ============================================================================
-// StreamingBlock — 正在生成中的内容
-// ============================================================================
-
-function StreamingBlock({
-  text,
-  reasoning,
-  toolCalls,
-  debug,
-}: {
-  text: string;
-  reasoning: string;
-  toolCalls: ToolCallEntry[];
-  debug: boolean;
-}) {
-  return (
-    <div className="max-w-3xl space-y-2">
-      {/* Reasoning (debug, streaming) */}
-      {debug && reasoning && (
-        <div className="px-3 py-2 rounded border border-amber-900/40 bg-amber-950/20">
-          <div className="text-[10px] font-mono text-amber-600 mb-1 select-none">REASONING</div>
-          <div className="text-xs text-amber-200/60 whitespace-pre-wrap font-mono leading-relaxed">
-            {reasoning}
-          </div>
-        </div>
-      )}
-
-      {/* 生成中指示器（文本由 EntryBlock 在 finalize 后用打字机播放） */}
-      {text && (
-        <div className="text-zinc-500 text-sm flex items-center gap-2">
-          <span className="inline-block w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-          生成中...
-        </div>
-      )}
-
-      {/* Tool calls so far (debug, streaming) */}
-      {debug && toolCalls.length > 0 && (
-        <ToolCallsBlock calls={toolCalls} />
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
-// PromptSnapshotBlock — 可折叠的 Prompt 快照
+// PromptSnapshotBlock
 // ============================================================================
 
 function PromptSnapshotBlock({ snapshot }: { snapshot: PromptSnapshot }) {
@@ -466,9 +387,7 @@ function PromptSnapshotBlock({ snapshot }: { snapshot: PromptSnapshot }) {
         className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-zinc-900/50 transition-colors"
       >
         <span className="text-zinc-600">{open ? '▾' : '▸'}</span>
-        <span className="text-zinc-400 font-mono">
-          Prompt
-        </span>
+        <span className="text-zinc-400 font-mono">Prompt</span>
         <span className="text-zinc-600 font-mono">
           system: ~{tokenBreakdown.system.toLocaleString()} tok
         </span>
@@ -491,7 +410,6 @@ function PromptSnapshotBlock({ snapshot }: { snapshot: PromptSnapshot }) {
 
       {open && (
         <div className="border-t border-zinc-800 max-h-80 overflow-y-auto">
-          {/* Token breakdown */}
           <div className="px-3 py-2 border-b border-zinc-800/50 flex gap-4 text-[10px] text-zinc-500 font-mono">
             <span>system: <span className="text-purple-400">{tokenBreakdown.system}</span></span>
             <span>state: <span className="text-blue-400">{tokenBreakdown.state}</span></span>
@@ -500,7 +418,6 @@ function PromptSnapshotBlock({ snapshot }: { snapshot: PromptSnapshot }) {
             <span>context: <span className="text-cyan-400">{tokenBreakdown.contextSegments}</span></span>
           </div>
 
-          {/* System prompt (split by ---) */}
           <div className="px-3 py-2 border-b border-zinc-800/50">
             <div className="text-[10px] text-zinc-500 font-mono mb-1">SYSTEM PROMPT</div>
             <pre className="text-[10px] text-zinc-400 whitespace-pre-wrap font-mono leading-relaxed max-h-48 overflow-y-auto">
@@ -510,7 +427,6 @@ function PromptSnapshotBlock({ snapshot }: { snapshot: PromptSnapshot }) {
             </pre>
           </div>
 
-          {/* Messages */}
           <div className="px-3 py-2">
             <div className="text-[10px] text-zinc-500 font-mono mb-1">MESSAGES ({messages.length})</div>
             <div className="space-y-1.5">
@@ -540,7 +456,7 @@ function PromptSnapshotBlock({ snapshot }: { snapshot: PromptSnapshot }) {
 }
 
 // ============================================================================
-// ToolCallsBlock — Tool Call 记录
+// ToolCallsBlock
 // ============================================================================
 
 function ToolCallsBlock({ calls }: { calls: ToolCallEntry[] }) {
@@ -552,9 +468,7 @@ function ToolCallsBlock({ calls }: { calls: ToolCallEntry[] }) {
           <div className="flex-1 min-w-0">
             <span className="text-yellow-400">{tc.name}</span>
             <span className="text-zinc-600">(</span>
-            <span className="text-zinc-400">
-              {formatArgs(tc.args)}
-            </span>
+            <span className="text-zinc-400">{formatArgs(tc.args)}</span>
             <span className="text-zinc-600">)</span>
             {tc.result !== undefined && (
               <div className="text-zinc-500 truncate">
@@ -569,7 +483,7 @@ function ToolCallsBlock({ calls }: { calls: ToolCallEntry[] }) {
 }
 
 // ============================================================================
-// CollapsibleBlock — 通用可折叠区域
+// CollapsibleBlock
 // ============================================================================
 
 function CollapsibleBlock({

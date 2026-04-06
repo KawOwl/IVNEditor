@@ -44,12 +44,14 @@ export interface SessionEmitter {
   setError(error: string | null): void;
 
   // --- Streaming ---
-  /** Append a chunk of narrative text (streaming) */
-  appendTextChunk(text: string): void;
-  /** Append a chunk of reasoning text (streaming) */
-  appendReasoningChunk(text: string): void;
-  /** Finalize current streaming content into a narrative entry */
-  finalizeStreaming(): void;
+  /** 创建一条新的 streaming entry 到 entries[]，返回其 ID */
+  beginStreamingEntry(): string;
+  /** 向当前 streaming entry 追加叙事文本 */
+  appendToStreamingEntry(text: string): void;
+  /** 向当前 streaming entry 追加推理文本 */
+  appendReasoningToStreamingEntry(reasoning: string): void;
+  /** 标记当前 streaming entry 完成，附加调试信息 */
+  finalizeStreamingEntry(): void;
 
   // --- Entries ---
   /** Append a completed narrative entry (e.g., player input) */

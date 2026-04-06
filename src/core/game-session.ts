@@ -325,10 +325,13 @@ export class GameSession {
         // Create abort controller for this generate() call
         this.abortController = new AbortController();
 
+        // 创建 streaming entry（文本将直接追加到这条 entry）
+        this.emitter.beginStreamingEntry();
+
         // Call LLM (agentic tool loop — signal_input_needed 会挂起等玩家)
         const textFilter = new ReasoningFilter(
-          (reasoning) => this.emitter.appendReasoningChunk(reasoning),
-          (text) => this.emitter.appendTextChunk(text),
+          (reasoning) => this.emitter.appendReasoningToStreamingEntry(reasoning),
+          (text) => this.emitter.appendToStreamingEntry(text),
         );
         // 存 flush 引用，供 createWaitForPlayerInput() 在挂起前刷出缓冲文本
         this.flushTextFilter = () => textFilter.flush();
@@ -342,7 +345,7 @@ export class GameSession {
             textFilter.push(chunk);
           },
           onReasoningChunk: (chunk) => {
-            this.emitter.appendReasoningChunk(chunk);
+            this.emitter.appendReasoningToStreamingEntry(chunk);
           },
           onToolCall: (name, args) => {
             this.emitter.addToolCall({ name, args, result: undefined });
@@ -363,7 +366,7 @@ export class GameSession {
         this.emitter.stagePendingDebug({ finishReason: result.finishReason });
 
         // Finalize streaming → append to narrative entries (with attached debug info)
-        this.emitter.finalizeStreaming();
+        this.emitter.finalizeStreamingEntry();
 
         // Store LLM response in memory
         if (result.text) {
@@ -387,7 +390,7 @@ export class GameSession {
       } catch (error) {
         if (!this.active) break;
         // Finalize any partial streaming content so it's not lost
-        this.emitter.finalizeStreaming();
+        this.emitter.finalizeStreamingEntry();
         // Show error banner but don't change status — Receive Phase will set waiting-input
         this.emitter.setError(error instanceof Error ? error.message : String(error));
         // Fall through to Receive Phase — player can re-send to retry
@@ -430,11 +433,11 @@ export class GameSession {
   /** 创建 waitForPlayerInput 回调，供 signal_input_needed 的 execute 使用 */
   private createWaitForPlayerInput(): (options: SignalInputOptions) => Promise<string> {
     return (options: SignalInputOptions) => {
-      // 先 flush ReasoningFilter 缓冲区，确保所有文本都写进 streamingText
+      // 先 flush ReasoningFilter 缓冲区，确保所有文本都写进 streaming entry
       this.flushTextFilter?.();
 
-      // 将流式文本 finalize 为 entry
-      this.emitter.finalizeStreaming();
+      // 将当前 streaming entry 标记为完成
+      this.emitter.finalizeStreamingEntry();
 
       // 更新 UI：显示选项和提示
       this.emitter.setInputHint(options.hint ?? null);
@@ -445,7 +448,11 @@ export class GameSession {
 
       // 返回挂起 Promise，等 submitInput() 调用时 resolve
       return new Promise<string>((resolve) => {
-        this.signalInputResolve = resolve;
+        this.signalInputResolve = (text: string) => {
+          // 玩家输入后，开始新的 streaming entry 接收 LLM 后续输出
+          this.emitter.beginStreamingEntry();
+          resolve(text);
+        };
       });
     };
   }

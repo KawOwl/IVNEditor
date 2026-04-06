@@ -34,15 +34,20 @@ export function createWebSocketEmitter(ws: WS): SessionEmitter {
     },
 
     // --- Streaming ---
-    appendTextChunk(text: string) {
+    beginStreamingEntry() {
+      emit('begin-streaming');
+      return ''; // client manages IDs independently
+    },
+
+    appendToStreamingEntry(text: string) {
       emit('text-chunk', { text });
     },
 
-    appendReasoningChunk(text: string) {
-      emit('reasoning-chunk', { text });
+    appendReasoningToStreamingEntry(reasoning: string) {
+      emit('reasoning-chunk', { text: reasoning });
     },
 
-    finalizeStreaming() {
+    finalizeStreamingEntry() {
       emit('finalize');
     },
 

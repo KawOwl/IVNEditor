@@ -28,16 +28,20 @@ export function createLocalEmitter(): SessionEmitter {
     },
 
     // --- Streaming ---
-    appendTextChunk(text: string) {
-      store().appendStreamingChunk(text);
+    beginStreamingEntry() {
+      return store().beginStreamingEntry();
     },
 
-    appendReasoningChunk(text: string) {
-      store().appendReasoningChunk(text);
+    appendToStreamingEntry(text: string) {
+      store().appendToStreamingEntry(text);
     },
 
-    finalizeStreaming() {
-      store().finalizeStreaming();
+    appendReasoningToStreamingEntry(reasoning: string) {
+      store().appendReasoningToStreamingEntry(reasoning);
+    },
+
+    finalizeStreamingEntry() {
+      store().finalizeStreamingEntry();
     },
 
     // --- Entries ---
