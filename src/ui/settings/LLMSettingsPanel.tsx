@@ -28,10 +28,12 @@ export function LLMSettingsPanel() {
   const embedding = useLLMSettingsStore((s) => s.embedding);
   const embeddingEnabled = useLLMSettingsStore((s) => s.embeddingEnabled);
   const thinkingEnabled = useLLMSettingsStore((s) => s.thinkingEnabled);
+  const reasoningFilterEnabled = useLLMSettingsStore((s) => s.reasoningFilterEnabled);
   const updateText = useLLMSettingsStore((s) => s.updateText);
   const updateEmbedding = useLLMSettingsStore((s) => s.updateEmbedding);
   const setEmbeddingEnabled = useLLMSettingsStore((s) => s.setEmbeddingEnabled);
   const setThinkingEnabled = useLLMSettingsStore((s) => s.setThinkingEnabled);
+  const setReasoningFilterEnabled = useLLMSettingsStore((s) => s.setReasoningFilterEnabled);
 
   const [showTextKey, setShowTextKey] = useState(false);
   const [showEmbeddingKey, setShowEmbeddingKey] = useState(false);
@@ -85,6 +87,28 @@ export function LLMSettingsPanel() {
         />
         启用思考模式（DeepSeek enable_thinking）
       </label>
+
+      {/* Reasoning filter */}
+      <div className="space-y-1">
+        <label className={cn(
+          'flex items-center gap-2 text-xs',
+          thinkingEnabled ? 'text-zinc-600' : 'text-zinc-400',
+        )}>
+          <input
+            type="checkbox"
+            checked={reasoningFilterEnabled}
+            onChange={(e) => setReasoningFilterEnabled(e.target.checked)}
+            disabled={thinkingEnabled}
+            className="rounded border-zinc-600 bg-zinc-900 disabled:opacity-40"
+          />
+          启发式推理过滤器
+        </label>
+        <p className="text-[10px] text-zinc-600 ml-5">
+          {thinkingEnabled
+            ? '思考模式已启用，推理由 API 原生分离，过滤器自动跳过'
+            : '从 text 流中启发式分离推理文本（检测 --- / ## / ** 标记）。关闭后全部内容作为叙事输出。即时生效，下次生成时应用。'}
+        </p>
+      </div>
 
       {/* Typewriter speed */}
       <TypewriterSpeedSection />

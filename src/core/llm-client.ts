@@ -24,6 +24,7 @@ export interface LLMConfig {
   model: string;          // e.g. "gpt-4o", "claude-sonnet-4-20250514"
   name?: string;          // provider display name
   thinkingEnabled?: boolean;  // 启用模型内置思考模式
+  reasoningFilterEnabled?: boolean;  // 启用启发式推理过滤器（无原生思考时）
 }
 
 export interface GenerateOptions {
@@ -166,6 +167,16 @@ export class LLMClient {
       toolCalls: toolCallLog,
       finishReason,
     };
+  }
+
+  /** 当前配置是否启用了原生思考模式 */
+  isThinkingEnabled(): boolean {
+    return this.config.thinkingEnabled ?? false;
+  }
+
+  /** 当前配置是否启用了启发式推理过滤器 */
+  isReasoningFilterEnabled(): boolean {
+    return this.config.reasoningFilterEnabled ?? true;
   }
 
   updateConfig(config: Partial<LLMConfig>): void {

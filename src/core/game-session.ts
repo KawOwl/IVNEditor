@@ -164,6 +164,11 @@ export class GameSession {
     this.emitter = emitter;
   }
 
+  /** 即时更新 LLM 配置（下一次 generate 生效，无需重启会话） */
+  updateLLMConfig(patch: Partial<import('./llm-client').LLMConfig>): void {
+    this.llmClient?.updateConfig(patch);
+  }
+
   /** Initialize and start the game session */
   async start(config: GameSessionConfig): Promise<void> {
     this.emitter.reset();
@@ -329,12 +334,20 @@ export class GameSession {
         this.emitter.beginStreamingEntry();
 
         // Call LLM (agentic tool loop — signal_input_needed 会挂起等玩家)
-        const textFilter = new ReasoningFilter(
+        //
+        // 推理过滤策略：
+        // 1. 有原生思考（thinkingEnabled）→ 跳过，text-delta 是纯叙事
+        // 2. 无原生思考 + reasoningFilterEnabled → 启发式分离推理/叙事
+        // 3. 无原生思考 + !reasoningFilterEnabled → 跳过，全部当叙事
+        const hasNativeReasoning = this.llmClient.isThinkingEnabled();
+        const useFilter = !hasNativeReasoning && this.llmClient.isReasoningFilterEnabled();
+
+        const textFilter = useFilter ? new ReasoningFilter(
           (reasoning) => this.emitter.appendReasoningToStreamingEntry(reasoning),
           (text) => this.emitter.appendToStreamingEntry(text),
-        );
+        ) : null;
         // 存 flush 引用，供 createWaitForPlayerInput() 在挂起前刷出缓冲文本
-        this.flushTextFilter = () => textFilter.flush();
+        this.flushTextFilter = textFilter ? () => textFilter.flush() : null;
         const result = await this.llmClient.generate({
           systemPrompt: context.systemPrompt,
           messages: context.messages,
@@ -342,7 +355,12 @@ export class GameSession {
           maxSteps: 30,
           abortSignal: this.abortController.signal,
           onTextChunk: (chunk) => {
-            textFilter.push(chunk);
+            if (textFilter) {
+              textFilter.push(chunk);
+            } else {
+              // 原生思考模式：text-delta 直接作为叙事正文
+              this.emitter.appendToStreamingEntry(chunk);
+            }
           },
           onReasoningChunk: (chunk) => {
             this.emitter.appendReasoningToStreamingEntry(chunk);
@@ -360,7 +378,7 @@ export class GameSession {
         this.abortController = null;
 
         // Flush any buffered text in the reasoning filter
-        textFilter.flush();
+        textFilter?.flush();
 
         // Stage finish reason
         this.emitter.stagePendingDebug({ finishReason: result.finishReason });

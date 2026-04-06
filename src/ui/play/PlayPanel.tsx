@@ -19,7 +19,7 @@ import type { GameSessionConfig } from '../../core/game-session';
 import { createLocalEmitter } from '../../stores/local-session-emitter';
 import { createRemoteSession, type RemoteSession } from '../../stores/ws-client-emitter';
 import type { ScriptManifest } from '../../core/types';
-import { getTextLLMConfig } from '../../stores/llm-settings-store';
+import { getTextLLMConfig, useLLMSettingsStore } from '../../stores/llm-settings-store';
 import { getEngineMode, getBackendUrl } from '../../core/engine-mode';
 import { cn } from '../../lib/utils';
 
@@ -121,6 +121,13 @@ export function PlayPanel({
       session.start(config);
     }
   }, [manifest, scriptId, mode]);
+
+  // 即时同步 LLM 设置变更到活跃会话（无需重启）
+  const thinkingEnabled = useLLMSettingsStore((s) => s.thinkingEnabled);
+  const reasoningFilterEnabled = useLLMSettingsStore((s) => s.reasoningFilterEnabled);
+  useEffect(() => {
+    sessionRef.current?.updateLLMConfig({ thinkingEnabled, reasoningFilterEnabled });
+  }, [thinkingEnabled, reasoningFilterEnabled]);
 
   const handlePlayerInput = useCallback((text: string) => {
     if (mode === 'remote') {

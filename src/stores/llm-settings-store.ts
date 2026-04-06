@@ -46,36 +46,41 @@ export interface LLMSettingsState {
   embeddingEnabled: boolean;
   /** 启用模型内置思考模式（DeepSeek enable_thinking 等） */
   thinkingEnabled: boolean;
+  /** 启用启发式推理过滤器（无原生思考时分离推理/叙事） */
+  reasoningFilterEnabled: boolean;
 
   // Actions
   updateText: (patch: Partial<ModelEndpoint>) => void;
   updateEmbedding: (patch: Partial<ModelEndpoint>) => void;
   setEmbeddingEnabled: (enabled: boolean) => void;
   setThinkingEnabled: (enabled: boolean) => void;
+  setReasoningFilterEnabled: (enabled: boolean) => void;
 }
 
-function loadFromStorage(): Pick<LLMSettingsState, 'text' | 'embedding' | 'embeddingEnabled' | 'thinkingEnabled'> {
+function loadFromStorage(): Pick<LLMSettingsState, 'text' | 'embedding' | 'embeddingEnabled' | 'thinkingEnabled' | 'reasoningFilterEnabled'> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { text: DEFAULT_TEXT_ENDPOINT, embedding: DEFAULT_EMBEDDING_ENDPOINT, embeddingEnabled: false, thinkingEnabled: false };
+    if (!raw) return { text: DEFAULT_TEXT_ENDPOINT, embedding: DEFAULT_EMBEDDING_ENDPOINT, embeddingEnabled: false, thinkingEnabled: false, reasoningFilterEnabled: true };
     const parsed = JSON.parse(raw);
     return {
       text: { ...DEFAULT_TEXT_ENDPOINT, ...parsed.text },
       embedding: { ...DEFAULT_EMBEDDING_ENDPOINT, ...parsed.embedding },
       embeddingEnabled: parsed.embeddingEnabled ?? false,
       thinkingEnabled: parsed.thinkingEnabled ?? false,
+      reasoningFilterEnabled: parsed.reasoningFilterEnabled ?? true,
     };
   } catch {
-    return { text: DEFAULT_TEXT_ENDPOINT, embedding: DEFAULT_EMBEDDING_ENDPOINT, embeddingEnabled: false, thinkingEnabled: false };
+    return { text: DEFAULT_TEXT_ENDPOINT, embedding: DEFAULT_EMBEDDING_ENDPOINT, embeddingEnabled: false, thinkingEnabled: false, reasoningFilterEnabled: true };
   }
 }
 
-function saveToStorage(state: Pick<LLMSettingsState, 'text' | 'embedding' | 'embeddingEnabled' | 'thinkingEnabled'>) {
+function saveToStorage(state: Pick<LLMSettingsState, 'text' | 'embedding' | 'embeddingEnabled' | 'thinkingEnabled' | 'reasoningFilterEnabled'>) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     text: state.text,
     embedding: state.embedding,
     embeddingEnabled: state.embeddingEnabled,
     thinkingEnabled: state.thinkingEnabled,
+    reasoningFilterEnabled: state.reasoningFilterEnabled,
   }));
 }
 
@@ -103,6 +108,11 @@ export const useLLMSettingsStore = create<LLMSettingsState>((set, get) => ({
     set({ thinkingEnabled: enabled });
     saveToStorage({ ...get(), thinkingEnabled: enabled });
   },
+
+  setReasoningFilterEnabled: (enabled) => {
+    set({ reasoningFilterEnabled: enabled });
+    saveToStorage({ ...get(), reasoningFilterEnabled: enabled });
+  },
 }));
 
 // ============================================================================
@@ -120,7 +130,7 @@ export function getProviderConfig(): ProviderConfig {
 
 /** 从 ModelEndpoint 转换为 LLMClient 所需的 LLMConfig */
 export function endpointToLLMConfig(endpoint: ModelEndpoint): LLMConfig {
-  const { thinkingEnabled } = useLLMSettingsStore.getState();
+  const { thinkingEnabled, reasoningFilterEnabled } = useLLMSettingsStore.getState();
   return {
     provider: endpoint.provider,
     baseURL: endpoint.baseUrl,
@@ -128,6 +138,7 @@ export function endpointToLLMConfig(endpoint: ModelEndpoint): LLMConfig {
     model: endpoint.model,
     name: endpoint.name,
     thinkingEnabled,
+    reasoningFilterEnabled,
   };
 }
 
