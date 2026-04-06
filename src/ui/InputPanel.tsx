@@ -26,9 +26,10 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
   const inputHint = useGameStore((s) => s.inputHint);
   const inputType = useGameStore((s) => s.inputType);
   const choices = useGameStore((s) => s.choices);
+  const hasStreamingEntry = useGameStore((s) => s.entries.some((e) => e.streaming));
   const [text, setText] = useState('');
 
-  const isDisabled = status !== 'waiting-input';
+  const isDisabled = status !== 'waiting-input' || hasStreamingEntry;
   const hasChoices = inputType === 'choice' && choices && choices.length > 0;
   const hasText = text.trim().length > 0;
 
