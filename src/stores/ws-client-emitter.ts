@@ -102,6 +102,10 @@ export async function createRemoteSession(
       clearTimeout(timeout);
       const { status } = store();
       if (status !== 'idle' && status !== 'error') {
+        // 断连时清理所有进行中的状态
+        store().finalizeStreamingEntry();    // 关闭未完成的 streaming entry
+        store().setInputHint(null);          // 清理输入提示
+        store().setInputType('freetext');    // 重置输入类型（清除 choices）
         store().setStatus('idle');
       }
     };
