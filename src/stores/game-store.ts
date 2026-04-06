@@ -35,6 +35,8 @@ export interface GameState {
   entries: NarrativeEntry[];
   /** 当前正在流式写入的 entry ID，null = 没有活跃的 streaming */
   streamingEntryId: string | null;
+  /** 正在播放打字机效果的 entry ID 集合（由 UI 上报） */
+  typewriterPlayingIds: Set<string>;
 
   // --- Pending debug info (attached to next finalized entry) ---
   pendingToolCalls: ToolCallEntry[];
@@ -81,6 +83,8 @@ export interface GameState {
   setInputType: (type: 'freetext' | 'choice', choices?: string[] | null) => void;
   updateDebug: (debug: Partial<DebugUpdate>) => void;
   addToolCall: (entry: Omit<ToolCallEntry, 'timestamp'>) => void;
+  /** UI 上报打字机播放状态 */
+  setTypewriterPlaying: (id: string, playing: boolean) => void;
   reset: () => void;
 }
 
@@ -116,6 +120,7 @@ const initialState = {
   error: null,
   entries: [] as NarrativeEntry[],
   streamingEntryId: null as string | null,
+  typewriterPlayingIds: new Set<string>(),
   pendingToolCalls: [] as ToolCallEntry[],
   pendingPromptSnapshot: null as PromptSnapshot | null,
   pendingFinishReason: null as string | null,
@@ -247,6 +252,14 @@ export const useGameStore = create<GameState>((set) => ({
     set((state) => ({
       toolCalls: [...state.toolCalls, { ...entry, timestamp: Date.now() }],
     })),
+
+  setTypewriterPlaying: (id, playing) =>
+    set((state) => {
+      const next = new Set(state.typewriterPlayingIds);
+      if (playing) next.add(id);
+      else next.delete(id);
+      return { typewriterPlayingIds: next };
+    }),
 
   reset: () => set(initialState),
 }));

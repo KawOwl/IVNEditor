@@ -321,9 +321,16 @@ function GenerateBlock({
 }) {
   const [cps] = useState(() => getTypewriterSpeed());
   const displayText = useTypewriter(entry.content, cps);
+  const setTypewriterPlaying = useGameStore((s) => s.setTypewriterPlaying);
 
   // 打字机还在追赶 或 LLM 还在流式输出 → 显示光标
   const isPlaying = displayText.length < entry.content.length || !!entry.streaming;
+
+  // 向 store 上报打字机播放状态，供 InputPanel 读取
+  useEffect(() => {
+    setTypewriterPlaying(entry.id, isPlaying);
+    return () => setTypewriterPlaying(entry.id, false);
+  }, [entry.id, isPlaying, setTypewriterPlaying]);
 
   return (
     <div className="max-w-3xl space-y-2">
