@@ -2,7 +2,7 @@
  * SessionManager — 管理后端游玩会话
  *
  * 每个玩家连接创建一个 GameSession 实例。
- * sessionId → GameSessionWrapper 映射。
+ * playthroughId → GameSessionWrapper 映射。
  */
 
 import { GameSession } from '../../src/core/game-session';
@@ -11,6 +11,7 @@ import type { ScriptManifest, PromptSegment } from '../../src/core/types';
 import type { LLMConfig } from '../../src/core/llm-client';
 import { createWebSocketEmitter } from './ws-session-emitter';
 import { getLLMConfig } from './storage/llm-config-store';
+import { createPlaythroughPersistence } from './services/playthrough-persistence';
 
 // ============================================================================
 // LLM Config — 从可变 config store 读取（编剧可通过 API 动态更新）
@@ -36,10 +37,12 @@ type WS = { send(data: string): void };
 export class GameSessionWrapper {
   private gameSession: GameSession | null = null;
   private manifest: ScriptManifest;
+  private playthroughId: string | null;
   private ws: WS | null = null;
 
-  constructor(manifest: ScriptManifest) {
+  constructor(manifest: ScriptManifest, playthroughId?: string | null) {
     this.manifest = manifest;
+    this.playthroughId = playthroughId ?? null;
   }
 
   attachWebSocket(ws: WS): void {
@@ -64,6 +67,10 @@ export class GameSessionWrapper {
       tokenBudget: manifest.memoryConfig.contextBudget,
       initialPrompt: manifest.initialPrompt,
       assemblyOrder: manifest.promptAssemblyOrder,
+      // 有 playthroughId 时注入持久化
+      persistence: this.playthroughId
+        ? createPlaythroughPersistence(this.playthroughId)
+        : undefined,
     };
 
     this.gameSession.start(config);
@@ -76,6 +83,10 @@ export class GameSessionWrapper {
   stop(): void {
     this.gameSession?.stop();
   }
+
+  getPlaythroughId(): string | null {
+    return this.playthroughId;
+  }
 }
 
 // ============================================================================
@@ -85,8 +96,8 @@ export class GameSessionWrapper {
 export class SessionManager {
   private sessions = new Map<string, GameSessionWrapper>();
 
-  create(sessionId: string, manifest: ScriptManifest): void {
-    this.sessions.set(sessionId, new GameSessionWrapper(manifest));
+  create(sessionId: string, manifest: ScriptManifest, playthroughId?: string): void {
+    this.sessions.set(sessionId, new GameSessionWrapper(manifest, playthroughId));
   }
 
   get(sessionId: string): GameSessionWrapper | undefined {

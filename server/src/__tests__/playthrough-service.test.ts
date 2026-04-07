@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach, afterAll } from 'bun:test';
 import { PlaythroughService } from '../services/playthrough-service';
-import { db, schema, closePool } from '../db';
+import { db, schema } from '../db';
 import { eq } from 'drizzle-orm';
 
 const service = new PlaythroughService();
@@ -48,7 +48,6 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await cleanTables();
-  await closePool();
 });
 
 describe('PlaythroughService', () => {

@@ -107,6 +107,40 @@ class ReasoningFilter {
 // Types
 // ============================================================================
 
+/**
+ * SessionPersistence — 可选的持久化回调接口
+ *
+ * 远程模式下由 server 注入实现（写 DB），本地模式不传。
+ * GameSession 在 coreLoop 的关键状态转换点调用这些回调。
+ */
+export interface SessionPersistence {
+  /** generate 阶段开始 */
+  onGenerateStart(turn: number): Promise<void>;
+
+  /** generate 完成，保存叙事条目 + memory 快照 */
+  onGenerateComplete(data: {
+    entry: { role: string; content: string; reasoning?: string; toolCalls?: unknown[]; finishReason?: string };
+    memoryEntries: unknown[];
+    memorySummaries: string[];
+  }): Promise<void>;
+
+  /** 进入等待输入状态（signal_input_needed 或外循环 receive phase） */
+  onWaitingInput(data: {
+    hint: string | null;
+    inputType: string;
+    choices: string[] | null;
+  }): Promise<void>;
+
+  /** 玩家输入完成 */
+  onReceiveComplete(data: {
+    entry: { role: string; content: string };
+    stateVars: Record<string, unknown>;
+    turn: number;
+    memoryEntries: unknown[];
+    memorySummaries: string[];
+  }): Promise<void>;
+}
+
 export interface GameSessionConfig {
   chapterId: string;
   segments: PromptSegment[];
@@ -119,6 +153,7 @@ export interface GameSessionConfig {
   initialPrompt?: string;        // 首轮 user message（等效于 prompt.txt）
   assemblyOrder?: string[];      // 自定义 prompt 组装顺序
   disabledSections?: string[];   // 被禁用的 section ID 列表
+  persistence?: SessionPersistence;  // 可选持久化（远程模式写 DB）
 }
 
 // ============================================================================
@@ -137,6 +172,7 @@ export class GameSession {
   private initialPrompt?: string;
   private assemblyOrder?: string[];
   private disabledSections?: string[];
+  private persistence?: SessionPersistence;
   // Session lifecycle
   private active = false;
 
@@ -185,6 +221,7 @@ export class GameSession {
       this.initialPrompt = config.initialPrompt;
       this.assemblyOrder = config.assemblyOrder;
       this.disabledSections = config.disabledSections;
+      this.persistence = config.persistence;
 
       if (config.inheritedSummary) {
         this.memory.setInheritedSummary(config.inheritedSummary);
@@ -267,6 +304,10 @@ export class GameSession {
       this.emitter.setStatus('generating');
       const turn = this.stateStore.getTurn() + 1;
       this.stateStore.setTurn(turn);
+
+      // ① 持久化：generate 开始
+      await this.persistence?.onGenerateStart(turn).catch((e) =>
+        console.error('[Persistence] onGenerateStart failed:', e));
 
       try {
         // Create tools with suspend-mode waitForPlayerInput
@@ -396,6 +437,17 @@ export class GameSession {
           });
         }
 
+        // ② 持久化：generate 完成
+        await this.persistence?.onGenerateComplete({
+          entry: {
+            role: 'generate',
+            content: result.text,
+            finishReason: result.finishReason,
+          },
+          memoryEntries: this.memory.getAllEntries(),
+          memorySummaries: this.memory.getSummaries(),
+        }).catch((e) => console.error('[Persistence] onGenerateComplete failed:', e));
+
         // Check if memory needs compression
         if (this.memory.needsCompression()) {
           this.emitter.setStatus('compressing');
@@ -420,6 +472,14 @@ export class GameSession {
       // 这里仍然需要等——因为 LLM 停下意味着这一轮叙事结束了，需要玩家推动下一轮。
       if (this.active) {
         this.emitter.setStatus('waiting-input');
+
+        // ③ 持久化：进入等待输入（外循环 receive phase）
+        await this.persistence?.onWaitingInput({
+          hint: null,
+          inputType: 'freetext',
+          choices: null,
+        }).catch((e) => console.error('[Persistence] onWaitingInput failed:', e));
+
         const inputText = await this.waitForInput();
 
         if (!this.active) break; // stopped while waiting
@@ -436,6 +496,15 @@ export class GameSession {
             content: inputText,
             tokenCount: estimateTokens(inputText),
           });
+
+          // ④ 持久化：receive 完成
+          await this.persistence?.onReceiveComplete({
+            entry: { role: 'receive', content: inputText },
+            stateVars: this.stateStore.getAll(),
+            turn,
+            memoryEntries: this.memory.getAllEntries(),
+            memorySummaries: this.memory.getSummaries(),
+          }).catch((e) => console.error('[Persistence] onReceiveComplete failed:', e));
         }
 
         this.emitter.setInputHint(null);
@@ -463,6 +532,13 @@ export class GameSession {
         this.emitter.setInputType('choice', options.choices);
       }
       this.emitter.setStatus('waiting-input');
+
+      // ③ 持久化：signal_input_needed 触发的等待输入
+      this.persistence?.onWaitingInput({
+        hint: options.hint ?? null,
+        inputType: options.choices?.length ? 'choice' : 'freetext',
+        choices: options.choices ?? null,
+      }).catch((e) => console.error('[Persistence] onWaitingInput (signal) failed:', e));
 
       // 返回挂起 Promise，等 submitInput() 调用时 resolve
       return new Promise<string>((resolve) => {

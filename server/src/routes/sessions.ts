@@ -1,21 +1,22 @@
 /**
  * Session Routes — 游玩会话管理
  *
- * POST /api/sessions           — 创建会话（返回 sessionId）
+ * POST /api/sessions           — 创建会话（创建 playthrough + sessionId）
  * WS   /api/sessions/:id/ws    — WebSocket 连接（引擎推流 + 玩家输入）
  */
 
 import { Elysia } from 'elysia';
 import { scriptStore } from '../storage/script-store';
 import { SessionManager } from '../session-manager';
+import { playthroughService } from '../services/playthrough-service';
 
 const sessionManager = new SessionManager();
 
 export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
 
-  // Create a new session
-  .post('/', ({ body }) => {
-    const { scriptId } = body as { scriptId: string };
+  // Create a new session (with playthrough persistence)
+  .post('/', async ({ body }) => {
+    const { scriptId, playerId } = body as { scriptId: string; playerId?: string };
     if (!scriptId) {
       return new Response(JSON.stringify({ error: 'Missing scriptId' }), { status: 400 });
     }
@@ -25,9 +26,17 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
       return new Response(JSON.stringify({ error: 'Script not found' }), { status: 404 });
     }
 
+    // 创建持久化的 playthrough 记录
+    const chapterId = record.manifest.chapters[0]?.id ?? 'ch1';
+    const playthrough = await playthroughService.create({
+      scriptId,
+      chapterId,
+      playerId,
+    });
+
     const sessionId = crypto.randomUUID();
-    sessionManager.create(sessionId, record.manifest);
-    return { sessionId };
+    sessionManager.create(sessionId, record.manifest, playthrough.id);
+    return { sessionId, playthroughId: playthrough.id, title: playthrough.title };
   })
 
   // WebSocket for game session streaming
@@ -41,7 +50,11 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
         return;
       }
       session.attachWebSocket(ws);
-      ws.send(JSON.stringify({ type: 'connected', sessionId }));
+      ws.send(JSON.stringify({
+        type: 'connected',
+        sessionId,
+        playthroughId: session.getPlaythroughId(),
+      }));
     },
 
     message(ws, message) {
@@ -70,6 +83,8 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
 
     close(ws) {
       const sessionId = (ws.data as any).params.id;
+      // 不立即销毁——保留 session 在内存中供重连（5.5 实现 TTL）
+      // 当前先保持原行为：立即销毁
       sessionManager.destroy(sessionId);
     },
   });
