@@ -1,10 +1,9 @@
 /**
  * WebSocket Client Emitter — 前端接收后端 WS 事件并写入 Zustand
  *
- * 与 server/src/ws-session-emitter.ts 对称：
- *   后端 GameSession → WebSocketSessionEmitter → WS → 本文件 → Zustand GameStore
- *
- * 消息类型与 ws-session-emitter.ts 中 emit() 的 type 参数一一对应。
+ * 支持两种连接模式：
+ *   - createRemoteSession: 新建游玩（POST /sessions → WS → start）
+ *   - reconnectRemoteSession: 恢复游玩（POST /sessions/reconnect → WS → restore）
  */
 
 import { useGameStore } from './game-store';
@@ -23,33 +22,54 @@ export interface RemoteSession {
   submitInput(text: string): void;
   /** Tell backend to start the game session */
   start(): void;
+  /** Tell backend to restore from DB */
+  restore(): void;
   /** Tell backend to stop the session */
   stop(): void;
   /** Close the WebSocket connection */
   disconnect(): void;
+  /** Playthrough ID (for localStorage persistence) */
+  playthroughId: string | null;
 }
 
 // ============================================================================
-// Create remote session
+// localStorage helpers
 // ============================================================================
 
-/**
- * Connect to the backend game session via WebSocket.
- *
- * Flow:
- *   1. POST /api/sessions { scriptId } → { sessionId }
- *   2. Open WS to /api/sessions/ws/:sessionId
- *   3. On WS messages: dispatch to Zustand store
- *
- * Returns a RemoteSession handle for sending commands.
- */
+const LS_KEY_PREFIX = 'ivn-playthrough-';
+
+export function getStoredPlaythroughId(scriptId: string): string | null {
+  try {
+    const raw = localStorage.getItem(LS_KEY_PREFIX + scriptId);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    return data.playthroughId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function storePlaythroughId(scriptId: string, playthroughId: string): void {
+  localStorage.setItem(LS_KEY_PREFIX + scriptId, JSON.stringify({
+    playthroughId,
+    timestamp: Date.now(),
+  }));
+}
+
+export function clearStoredPlaythroughId(scriptId: string): void {
+  localStorage.removeItem(LS_KEY_PREFIX + scriptId);
+}
+
+// ============================================================================
+// Create new remote session
+// ============================================================================
+
 export async function createRemoteSession(
   baseUrl: string,
   scriptId: string,
 ): Promise<RemoteSession> {
   const store = () => useGameStore.getState();
 
-  // 1. Create session on backend
   const res = await fetch(`${baseUrl}/api/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -61,9 +81,58 @@ export async function createRemoteSession(
     throw new Error(err.error ?? `Failed to create session: ${res.status}`);
   }
 
-  const { sessionId } = await res.json() as { sessionId: string };
+  const { sessionId, playthroughId } = await res.json() as {
+    sessionId: string;
+    playthroughId: string;
+    title: string;
+  };
 
-  // 2. Open WebSocket
+  // 存储 playthroughId 供重连用
+  storePlaythroughId(scriptId, playthroughId);
+
+  return connectWebSocket(baseUrl, sessionId, playthroughId, store);
+}
+
+// ============================================================================
+// Reconnect to existing playthrough
+// ============================================================================
+
+export async function reconnectRemoteSession(
+  baseUrl: string,
+  playthroughId: string,
+): Promise<RemoteSession> {
+  const store = () => useGameStore.getState();
+
+  const res = await fetch(`${baseUrl}/api/sessions/reconnect`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playthroughId }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(err.error ?? `Failed to reconnect: ${res.status}`);
+  }
+
+  const { sessionId } = await res.json() as {
+    sessionId: string;
+    playthroughId: string;
+    source: 'memory' | 'database';
+  };
+
+  return connectWebSocket(baseUrl, sessionId, playthroughId, store);
+}
+
+// ============================================================================
+// Shared WebSocket connection logic
+// ============================================================================
+
+function connectWebSocket(
+  baseUrl: string,
+  sessionId: string,
+  playthroughId: string,
+  store: () => ReturnType<typeof useGameStore.getState>,
+): Promise<RemoteSession> {
   const wsProtocol = baseUrl.startsWith('https') ? 'wss' : 'ws';
   const wsHost = baseUrl.replace(/^https?:\/\//, '');
   const ws = new WebSocket(`${wsProtocol}://${wsHost}/api/sessions/ws/${sessionId}`);
@@ -74,16 +143,11 @@ export async function createRemoteSession(
       reject(new Error('WebSocket connection timeout'));
     }, 10000);
 
-    ws.onopen = () => {
-      // Wait for 'connected' message before resolving
-    };
-
     ws.onmessage = (event) => {
       try {
         const msg: WSMessage = JSON.parse(event.data);
         handleMessage(msg, store);
 
-        // Resolve on initial connection confirmation
         if (msg.type === 'connected') {
           clearTimeout(timeout);
           resolve(session);
@@ -102,17 +166,20 @@ export async function createRemoteSession(
       clearTimeout(timeout);
       const { status } = store();
       if (status !== 'idle' && status !== 'error') {
-        // 断连时清理所有进行中的状态
-        store().finalizeStreamingEntry();    // 关闭未完成的 streaming entry
-        store().setInputHint(null);          // 清理输入提示
-        store().setInputType('freetext');    // 重置输入类型（清除 choices）
+        store().finalizeStreamingEntry();
+        store().setInputHint(null);
+        store().setInputType('freetext');
         store().setStatus('idle');
       }
     };
 
     const session: RemoteSession = {
+      playthroughId,
       start() {
         ws.send(JSON.stringify({ type: 'start' }));
+      },
+      restore() {
+        ws.send(JSON.stringify({ type: 'restore' }));
       },
       submitInput(text: string) {
         ws.send(JSON.stringify({ type: 'input', text }));
@@ -128,7 +195,7 @@ export async function createRemoteSession(
 }
 
 // ============================================================================
-// Message handler — maps WS events to Zustand actions
+// Message handler
 // ============================================================================
 
 function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameStore.getState>) {
@@ -165,6 +232,27 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
       store().appendEntry(msg.entry as { role: 'generate' | 'receive' | 'system'; content: string });
       break;
 
+    case 'restored': {
+      // 恢复快照：清空当前 entries，加载 DB 中的历史
+      store().reset();
+      const entries = msg.entries as Array<{ role: string; content: string }>;
+      if (entries) {
+        for (const entry of entries) {
+          store().appendEntry({
+            role: entry.role as 'generate' | 'receive' | 'system',
+            content: entry.content,
+          });
+        }
+      }
+      // 恢复输入状态
+      if (msg.inputHint) store().setInputHint(msg.inputHint as string);
+      if (msg.inputType === 'choice' && msg.choices) {
+        store().setInputType('choice', msg.choices as string[]);
+      }
+      store().setStatus(msg.status as any);
+      break;
+    }
+
     case 'tool-call':
       store().addToolCall({ name: msg.name as string, args: msg.args as Record<string, unknown>, result: undefined });
       break;
@@ -174,11 +262,9 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
       break;
 
     case 'tool-result':
-      // Update the last matching tool call with its result
       break;
 
     case 'pending-tool-result':
-      // Update the last matching pending tool call with its result
       break;
 
     case 'input-hint':
@@ -191,8 +277,5 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
         msg.choices as string[] | null,
       );
       break;
-
-    // 'connected' is handled in createRemoteSession
-    // Debug messages are not sent in player mode
   }
 }

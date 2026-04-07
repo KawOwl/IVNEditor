@@ -17,7 +17,12 @@ import { useGameStore } from '../../stores/game-store';
 import { GameSession } from '../../core/game-session';
 import type { GameSessionConfig } from '../../core/game-session';
 import { createLocalEmitter } from '../../stores/local-session-emitter';
-import { createRemoteSession, type RemoteSession } from '../../stores/ws-client-emitter';
+import {
+  createRemoteSession,
+  reconnectRemoteSession,
+  getStoredPlaythroughId,
+  type RemoteSession,
+} from '../../stores/ws-client-emitter';
 import type { ScriptManifest } from '../../core/types';
 import { getTextLLMConfig, useLLMSettingsStore } from '../../stores/llm-settings-store';
 import { getEngineMode, getBackendUrl } from '../../core/engine-mode';
@@ -91,6 +96,23 @@ export function PlayPanel({
 
       try {
         useGameStore.getState().setStatus('loading');
+
+        // 检查是否有保存的 playthroughId（可恢复的游玩）
+        const storedPtId = getStoredPlaythroughId(id);
+        if (storedPtId) {
+          // 尝试重连
+          try {
+            const remote = await reconnectRemoteSession(getBackendUrl(), storedPtId);
+            remoteRef.current = remote;
+            remote.restore(); // 从 DB 恢复
+            return;
+          } catch {
+            // 重连失败（playthrough 已删除等），回退到新建
+            console.warn('[PlayPanel] Reconnect failed, starting new session');
+          }
+        }
+
+        // 新建游玩
         const remote = await createRemoteSession(getBackendUrl(), id);
         remoteRef.current = remote;
         remote.start();
