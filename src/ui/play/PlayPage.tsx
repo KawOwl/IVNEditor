@@ -1,15 +1,21 @@
 /**
  * PlayPage — 全屏对话页面
  *
- * 从首页点击卡片进入。包装 PlayPanel 并添加全屏布局 + 导航栏。
+ * 两个阶段：
+ *   1. 游玩列表（远程模式）— 选择继续/新建
+ *   2. PlayPanel — 游戏主界面
+ *
+ * 本地模式（编辑器试玩）跳过列表，直接进入游戏。
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useAppStore } from '../../stores/app-store';
 import { useGameStore } from '../../stores/game-store';
 import { PlayPanel } from './PlayPanel';
+import { PlaythroughList } from './PlaythroughList';
 import { getTypewriterSpeed, setTypewriterSpeed } from '../NarrativeView';
 import type { ScriptManifest } from '../../core/types';
+import { getEngineMode } from '../../core/engine-mode';
 import { cn } from '../../lib/utils';
 
 export interface PlayPageProps {
@@ -19,13 +25,33 @@ export interface PlayPageProps {
 
 export function PlayPage({ manifest, scriptId }: PlayPageProps) {
   const goHome = useAppStore((s) => s.goHome);
+  const mode = getEngineMode();
+
+  // 远程模式：先显示列表，选择后进入游戏
+  // 本地模式：直接进入游戏
+  const [selectedPlaythroughId, setSelectedPlaythroughId] = useState<string | null>(
+    mode === 'local' ? '__local__' : null,
+  );
 
   const handleBack = useCallback(() => {
-    useGameStore.getState().reset();
-    goHome();
-  }, [goHome]);
+    if (selectedPlaythroughId && mode === 'remote') {
+      // 从游戏返回列表
+      useGameStore.getState().reset();
+      setSelectedPlaythroughId(null);
+    } else {
+      // 返回首页
+      useGameStore.getState().reset();
+      goHome();
+    }
+  }, [goHome, selectedPlaythroughId, mode]);
+
+  const handleSelect = useCallback((playthroughId: string | 'new') => {
+    setSelectedPlaythroughId(playthroughId === 'new' ? '__new__' : playthroughId);
+  }, []);
 
   const [showSettings, setShowSettings] = useState(false);
+
+  const inGame = selectedPlaythroughId !== null;
 
   return (
     <div className="h-full bg-zinc-950 text-zinc-100 flex flex-col">
@@ -36,7 +62,7 @@ export function PlayPage({ manifest, scriptId }: PlayPageProps) {
             onClick={handleBack}
             className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
           >
-            ← 返回
+            ← {inGame && mode === 'remote' ? '返回列表' : '返回'}
           </button>
           <h1 className="text-sm font-medium text-zinc-300">
             {manifest.label}
@@ -60,23 +86,30 @@ export function PlayPage({ manifest, scriptId }: PlayPageProps) {
         </div>
       </header>
 
-      {/* Play panel fills remaining space */}
+      {/* Content */}
       <div className="flex-1 min-h-0">
-        <PlayPanel manifest={manifest} scriptId={scriptId} showDebug />
+        {inGame ? (
+          <PlayPanel manifest={manifest} scriptId={scriptId} showDebug />
+        ) : (
+          <PlaythroughList
+            scriptId={scriptId}
+            scriptTitle={manifest.label}
+            onSelect={handleSelect}
+          />
+        )}
       </div>
     </div>
   );
 }
 
 // ============================================================================
-// TypewriterPopover — 打字机速度弹出设置
+// TypewriterPopover
 // ============================================================================
 
 function TypewriterPopover({ onClose }: { onClose: () => void }) {
   const [speed, setSpeed] = useState(() => getTypewriterSpeed());
   const ref = useRef<HTMLDivElement>(null);
 
-  // 点击外部关闭
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
