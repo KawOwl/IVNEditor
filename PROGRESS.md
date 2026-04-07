@@ -1,21 +1,31 @@
 # 项目进度
 
 ## 当前状态
-UI 路由重构完成，首页卡片网格 + 对话页 + 编辑器页占位已就绪。下一步：编剧编辑器实现。
+v2.5 会话持久化 + 可观测性开发中。Drizzle + PG 基础搭建完成，Playthrough CRUD API 完成。
 
 ## 当前任务
-**编剧编辑器（CodeMirror 6）**
+**5.3 GameSession 持久化接入**
 - 类型：新功能
-- 来源：用户指定
-- 目标：实现左右分栏的编剧编辑器（左编辑器 + 右预览），支持指令自动补全和语法高亮
-- 实现计划（6 步）：
-  - [ ] E.1: CodeMirror 6 基础集成 + 编辑器模式切换
-  - [ ] E.2: 自定义语法高亮（{{tool:xxx}} 等标记）
-  - [ ] E.3: 自动补全（/ 工具补全、{{state:}} 状态变量补全）
-  - [ ] E.4: Editor Store + 文档解析（debounce 实时解析）
-  - [ ] E.5: 左右分栏 + 预览面板（大纲 + 工具引用 + Token 统计）
-  - [ ] E.6: Architect Agent 集成（手动触发 IR 提取）
-- 进展：尚未开始
+- 来源：v2.5.md 会话持久化方案
+- 目标：在 GameSession coreLoop 的关键节点写 DB，保存游玩进度
+
+### 5.3 改动设计
+
+**方案：GameSession 可选回调注入（方案 B）**
+
+GameSession 持有全部上下文（memory、stateVars、result.text），通过可选的 `SessionPersistence` 接口在关键节点调用持久化。
+
+**持久化时机：**
+1. generate 开始 → 存 status + turn
+2. generate 完成 → 存 narrative_entry(generate) + memory 快照 + preview
+3. signal_input_needed → 存 status='waiting-input' + choices + narrative_entry
+4. receive 完成 → 存 narrative_entry(receive) + stateVars + memory 快照
+
+**文件改动清单：**
+- 新增 `server/src/db/playthrough-persistence.ts` — DB 操作封装
+- 修改 `src/core/game-session.ts` — 新增 SessionPersistence 接口 + 可选注入 + coreLoop 调用
+- 修改 `server/src/session-manager.ts` — 关联 playthroughId，创建 persistence 注入
+- 修改 `server/src/routes/sessions.ts` — POST /sessions 改为创建 playthrough 记录
 
 ## 已完成的里程碑
 
