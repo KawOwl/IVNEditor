@@ -141,6 +141,31 @@ export interface SessionPersistence {
   }): Promise<void>;
 }
 
+/**
+ * RestoreConfig — 从持久化快照恢复会话所需的数据
+ */
+export interface RestoreConfig {
+  segments: PromptSegment[];
+  stateSchema: StateSchema;
+  memoryConfig: MemoryConfig;
+  llmConfig: LLMConfig;
+  enabledTools?: string[];
+  tokenBudget?: number;
+  initialPrompt?: string;
+  assemblyOrder?: string[];
+  disabledSections?: string[];
+  persistence?: SessionPersistence;
+  // 恢复数据
+  stateVars: Record<string, unknown>;
+  turn: number;
+  memoryEntries: unknown[];       // MemoryEntry[] from DB (JSONB)
+  memorySummaries: string[];
+  status: string;                 // 恢复时的状态
+  inputHint?: string | null;
+  inputType?: string;
+  choices?: string[] | null;
+}
+
 export interface GameSessionConfig {
   chapterId: string;
   segments: PromptSegment[];
@@ -233,6 +258,88 @@ export class GameSession {
       // Start core loop
       this.active = true;
       await this.coreLoop();
+    } catch (error) {
+      if (this.active) {
+        this.emitter.setError(error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
+
+  /**
+   * 从持久化快照恢复会话（跳过 start() 的初始化，直接进入对应阶段）
+   *
+   * 恢复策略：
+   *   - waiting-input → 直接进入 Receive Phase（等玩家输入）
+   *   - generating → 视为上一轮未完成，进入 Receive Phase
+   *   - idle → 等玩家触发，进入完整 coreLoop
+   */
+  async restore(config: RestoreConfig): Promise<void> {
+    this.emitter.setStatus('loading');
+
+    try {
+      // 初始化核心模块（同 start）
+      this.stateStore = new StateStore(config.stateSchema);
+      this.memory = new MemoryManager(config.memoryConfig);
+      this.llmClient = new LLMClient(config.llmConfig);
+      this.segments = config.segments;
+      this.enabledTools = config.enabledTools ?? [];
+      this.tokenBudget = config.tokenBudget ?? 120000;
+      this.initialPrompt = config.initialPrompt;
+      this.assemblyOrder = config.assemblyOrder;
+      this.disabledSections = config.disabledSections;
+      this.persistence = config.persistence;
+
+      // 注入持久化快照
+      this.stateStore.restore(config.stateVars, config.turn);
+      this.memory.restore(
+        config.memoryEntries as import('./types').MemoryEntry[],
+        config.memorySummaries,
+      );
+
+      // 同步 UI
+      this.syncDebugState();
+
+      this.active = true;
+
+      // 根据恢复时的状态决定进入点
+      if (config.status === 'waiting-input') {
+        // 恢复 UI 状态（choices/hint）
+        if (config.inputHint) this.emitter.setInputHint(config.inputHint);
+        if (config.inputType === 'choice' && config.choices?.length) {
+          this.emitter.setInputType('choice', config.choices);
+        }
+        this.emitter.setStatus('waiting-input');
+
+        // 等玩家输入，然后进入 coreLoop
+        const inputText = await this.waitForInput();
+        if (!this.active) return;
+
+        if (inputText) {
+          this.emitter.appendEntry({ role: 'receive', content: inputText });
+          this.memory.appendTurn({
+            turn: config.turn,
+            role: 'receive',
+            content: inputText,
+            tokenCount: estimateTokens(inputText),
+          });
+          await this.persistence?.onReceiveComplete({
+            entry: { role: 'receive', content: inputText },
+            stateVars: this.stateStore.getAll(),
+            turn: config.turn,
+            memoryEntries: this.memory.getAllEntries(),
+            memorySummaries: this.memory.getSummaries(),
+          }).catch((e) => console.error('[Persistence] onReceiveComplete (restore) failed:', e));
+        }
+
+        this.emitter.setInputHint(null);
+        this.emitter.setInputType('freetext');
+
+        // 继续正常 coreLoop
+        await this.coreLoop();
+      } else {
+        // idle 或 generating → 从头开始 coreLoop
+        await this.coreLoop();
+      }
     } catch (error) {
       if (this.active) {
         this.emitter.setError(error instanceof Error ? error.message : String(error));

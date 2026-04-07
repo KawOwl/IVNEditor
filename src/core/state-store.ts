@@ -103,6 +103,14 @@ export class StateStore {
     this.state = structuredClone(state);
   }
 
+  /**
+   * 从持久化快照恢复（DB 中存的是 stateVars + turn）
+   */
+  restore(vars: Record<string, unknown>, turn: number): void {
+    this.state.vars = structuredClone(vars);
+    this.currentTurn = turn;
+  }
+
   // --- Turn Management ---
 
   setTurn(turn: number): void {

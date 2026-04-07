@@ -6,7 +6,7 @@
  */
 
 import { GameSession } from '../../src/core/game-session';
-import type { GameSessionConfig } from '../../src/core/game-session';
+import type { GameSessionConfig, RestoreConfig } from '../../src/core/game-session';
 import type { ScriptManifest, PromptSegment } from '../../src/core/types';
 import type { LLMConfig } from '../../src/core/llm-client';
 import { createWebSocketEmitter } from './ws-session-emitter';
@@ -54,10 +54,48 @@ export class GameSessionWrapper {
   start(): void {
     if (!this.gameSession) return;
 
+    const config = this.buildConfig();
+    this.gameSession.start(config);
+  }
+
+  /**
+   * 从 DB 快照恢复会话（跳过初始化，直接进入对应阶段）
+   */
+  restore(snapshot: {
+    stateVars: Record<string, unknown>;
+    turn: number;
+    memoryEntries: unknown[];
+    memorySummaries: string[];
+    status: string;
+    inputHint?: string | null;
+    inputType?: string;
+    choices?: string[] | null;
+  }): void {
+    if (!this.gameSession) return;
+
+    const base = this.buildConfig();
+    const restoreConfig: RestoreConfig = {
+      segments: base.segments,
+      stateSchema: base.stateSchema,
+      memoryConfig: base.memoryConfig,
+      llmConfig: base.llmConfig,
+      enabledTools: base.enabledTools,
+      tokenBudget: base.tokenBudget,
+      initialPrompt: base.initialPrompt,
+      assemblyOrder: base.assemblyOrder,
+      disabledSections: base.disabledSections,
+      persistence: base.persistence,
+      ...snapshot,
+    };
+
+    this.gameSession.restore(restoreConfig);
+  }
+
+  private buildConfig(): GameSessionConfig {
     const manifest = this.manifest;
     const allSegments: PromptSegment[] = manifest.chapters.flatMap((ch) => ch.segments);
 
-    const config: GameSessionConfig = {
+    return {
       chapterId: manifest.chapters[0]?.id ?? 'ch1',
       segments: allSegments,
       stateSchema: manifest.stateSchema,
@@ -67,13 +105,10 @@ export class GameSessionWrapper {
       tokenBudget: manifest.memoryConfig.contextBudget,
       initialPrompt: manifest.initialPrompt,
       assemblyOrder: manifest.promptAssemblyOrder,
-      // 有 playthroughId 时注入持久化
       persistence: this.playthroughId
         ? createPlaythroughPersistence(this.playthroughId)
         : undefined,
     };
-
-    this.gameSession.start(config);
   }
 
   submitInput(text: string): void {

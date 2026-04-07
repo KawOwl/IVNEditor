@@ -228,7 +228,7 @@ export class MemoryManager {
     this.state.inheritedSummary = summary;
   }
 
-  // --- Export/Import ---
+  // --- Export/Import/Restore ---
 
   export(): MemoryState {
     return structuredClone(this.state);
@@ -236,6 +236,17 @@ export class MemoryManager {
 
   import(state: MemoryState): void {
     this.state = structuredClone(state);
+  }
+
+  /**
+   * 从持久化快照恢复（DB 中存的是 entries[] 和 summaries[]）
+   */
+  restore(entries: MemoryEntry[], summaries: string[]): void {
+    this.state.entries = structuredClone(entries);
+    this.state.summaries = [...summaries];
+    // 重算 watermark：取最后一条被压缩前的 turn
+    const lastEntry = entries[entries.length - 1];
+    this.state.watermark = lastEntry?.turn ?? 0;
   }
 
   /** Reset for new chapter */
