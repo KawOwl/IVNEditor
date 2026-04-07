@@ -9,7 +9,9 @@
     "typecheck": "bun x tsc --noEmit",
     "db:generate": "bun drizzle-kit generate",
     "db:push": "bun drizzle-kit push",
-    "db:studio": "bun drizzle-kit studio"
+    "db:studio": "bun drizzle-kit studio",
+    "test": "bun test",
+    "test:watch": "bun test --watch"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.37",
