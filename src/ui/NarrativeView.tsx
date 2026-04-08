@@ -47,18 +47,18 @@ export function setTypewriterSpeed(cps: number): void {
  * - buffer 增长时，typewriter 匀速追赶
  * - typewriter 追上 buffer 后停下等待新 chunk
  * - cps = 0 时直接返回原文（无节流）
+ *
+ * 实现注意：useEffect 只依赖 fullText 和 cps，不依赖 visibleLen。
+ * tick 通过 closure 内的局部变量管理 RAF id 和时间戳，避免
+ * 每次 setState 触发 cleanup+重启造成的性能问题甚至卡死。
  */
 function useTypewriter(fullText: string, cps: number): string {
   const [visibleLen, setVisibleLen] = useState(0);
-  const rafRef = useRef<number>(0);
-  const lastTimeRef = useRef<number>(0);
 
-  // fullText 缩短时（新 entry / reset），同步重置
+  // fullText 缩短时（新 entry / reset），同步裁剪 visibleLen
   useEffect(() => {
-    if (fullText.length < visibleLen) {
-      setVisibleLen(fullText.length);
-    }
-  }, [fullText, visibleLen]);
+    setVisibleLen((prev) => (prev > fullText.length ? fullText.length : prev));
+  }, [fullText]);
 
   useEffect(() => {
     if (cps <= 0) {
@@ -67,38 +67,36 @@ function useTypewriter(fullText: string, cps: number): string {
     }
 
     const msPerChar = 1000 / cps;
+    let rafId = 0;
+    let lastTime = 0;
 
     const tick = (now: number) => {
-      if (!lastTimeRef.current) lastTimeRef.current = now;
-      const elapsed = now - lastTimeRef.current;
+      if (!lastTime) lastTime = now;
+      const elapsed = now - lastTime;
       const charsToAdd = Math.floor(elapsed / msPerChar);
 
       if (charsToAdd > 0) {
-        lastTimeRef.current += charsToAdd * msPerChar;
-        setVisibleLen((prev) => Math.min(prev + charsToAdd, fullText.length));
+        lastTime += charsToAdd * msPerChar;
+        setVisibleLen((prev) => {
+          const next = Math.min(prev + charsToAdd, fullText.length);
+          // 还没追上 → 继续
+          if (next < fullText.length) {
+            rafId = requestAnimationFrame(tick);
+          }
+          return next;
+        });
+      } else {
+        // 时间未到，继续 poll
+        rafId = requestAnimationFrame(tick);
       }
-
-      // 还没追上 → 继续
-      setVisibleLen((prev) => {
-        if (prev < fullText.length) {
-          rafRef.current = requestAnimationFrame(tick);
-        }
-        return prev;
-      });
     };
 
-    // 还没追上 → 启动/重启动画
-    if (visibleLen < fullText.length) {
-      if (!lastTimeRef.current) lastTimeRef.current = performance.now();
-      rafRef.current = requestAnimationFrame(tick);
-    }
+    rafId = requestAnimationFrame(tick);
 
     return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      // 重置时间戳，避免下次 fullText 增长后因为间隔太长而一次性追赶大量字符
-      lastTimeRef.current = 0;
+      if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [fullText, cps, visibleLen]);
+  }, [fullText, cps]);
 
   if (cps <= 0) return fullText;
   return fullText.slice(0, visibleLen);

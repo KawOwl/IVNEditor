@@ -22,13 +22,10 @@ import { resolvePlayerSession } from '../auth-identity';
 
 const sessionManager = new SessionManager();
 
-interface WSData {
-  playthroughId: string;
-  userId: string;
+/** 从 Elysia WS 对象里读取 query 参数（handler 间 ws 引用可能变化，每次都重新读） */
+function getWsQuery(ws: unknown): { sessionId?: string; playthroughId?: string } {
+  return ((ws as any)?.data?.query ?? {}) as { sessionId?: string; playthroughId?: string };
 }
-
-/** 附加到 ws 上的自定义数据 */
-const wsDataMap = new WeakMap<object, WSData>();
 
 export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
 
@@ -46,18 +43,15 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
   // ============================================================================
   .ws('/ws', {
     async open(ws) {
-      const query = (ws.data as any).query as {
-        sessionId?: string;
-        playthroughId?: string;
-      };
-      const authSession = query?.sessionId;
-      const playthroughId = query?.playthroughId;
+      const { sessionId: authSession, playthroughId } = getWsQuery(ws);
 
       if (!authSession || !playthroughId) {
         ws.send(JSON.stringify({ type: 'error', error: 'Missing sessionId or playthroughId' }));
         ws.close();
         return;
       }
+
+      console.log(`[WS] open: pt=${playthroughId.substring(0, 8)}`);
 
       // 1. 校验 auth
       const identity = await resolvePlayerSession(authSession);
@@ -78,28 +72,22 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
       // 3. 查 script manifest
       const record = scriptStore.get(detail.scriptId);
       if (!record) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Script not found' }), );
+        ws.send(JSON.stringify({ type: 'error', error: 'Script not found' }));
         ws.close();
         return;
       }
 
-      // 4. 存 ws 的上下文数据供后续 message/close 回调使用
-      wsDataMap.set(ws as unknown as object, {
-        playthroughId,
-        userId: identity.userId,
-      });
-
-      // 5. getOrCreate wrapper（按 playthroughId 索引）
+      // 4. getOrCreate wrapper（按 playthroughId 索引）
       const wrapper = sessionManager.getOrCreate(playthroughId, record.manifest, identity.userId);
       wrapper.attachWebSocket(ws);
 
-      // 6. 推送 connected
+      // 5. 推送 connected
       ws.send(JSON.stringify({
         type: 'connected',
         playthroughId,
       }));
 
-      // 7. 决定 start 还是 restore
+      // 6. 决定 start 还是 restore
       const isNewPlaythrough = detail.turn === 0 && detail.totalEntries === 0;
       if (!isNewPlaythrough) {
         // 推送快照给客户端（恢复 UI）
@@ -133,14 +121,15 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
     },
 
     message(ws, message) {
-      const ctx = wsDataMap.get(ws as unknown as object);
-      if (!ctx) return;
+      const { playthroughId } = getWsQuery(ws);
+      if (!playthroughId) return;
 
-      const wrapper = sessionManager.get(ctx.playthroughId);
+      const wrapper = sessionManager.get(playthroughId);
       if (!wrapper) return;
 
       try {
         const data = typeof message === 'string' ? JSON.parse(message) : message;
+        console.log(`[WS] msg ${data.type} pt=${playthroughId.substring(0, 8)}`);
 
         switch (data.type) {
           case 'start':
@@ -159,10 +148,10 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
     },
 
     close(ws) {
-      const ctx = wsDataMap.get(ws as unknown as object);
-      if (!ctx) return;
+      const { playthroughId } = getWsQuery(ws);
+      if (!playthroughId) return;
+      console.log(`[WS] close: pt=${playthroughId.substring(0, 8)}`);
       // 断线：不立即销毁，启动 TTL（10 分钟内重连可恢复）
-      sessionManager.detach(ctx.playthroughId);
-      wsDataMap.delete(ws as unknown as object);
+      sessionManager.detach(playthroughId);
     },
   });
