@@ -117,11 +117,23 @@ export interface SessionPersistence {
   /** generate 阶段开始 */
   onGenerateStart(turn: number): Promise<void>;
 
-  /** generate 完成，保存叙事条目 + memory 快照 */
-  onGenerateComplete(data: {
+  /**
+   * 一段 streaming entry 结束时（finalize 前）调用。
+   * 触发时机：
+   *   1. signal_input_needed 挂起前（保证挂起时叙事已入库）
+   *   2. generate() 自然返回后（完整一轮叙事结束）
+   *
+   * 每次调用保存一条独立的 narrative_entry 到 DB。
+   */
+  onNarrativeSegmentFinalized(data: {
     entry: { role: string; content: string; reasoning?: string; toolCalls?: unknown[]; finishReason?: string };
+  }): Promise<void>;
+
+  /** generate() 全部结束后同步 memory 快照 + preview（不再负责 entry 入库） */
+  onGenerateComplete(data: {
     memoryEntries: unknown[];
     memorySummaries: string[];
+    preview?: string | null;
   }): Promise<void>;
 
   /** 进入等待输入状态（signal_input_needed 或外循环 receive phase） */
@@ -198,6 +210,15 @@ export class GameSession {
   private assemblyOrder?: string[];
   private disabledSections?: string[];
   private persistence?: SessionPersistence;
+
+  /**
+   * 当前 streaming entry 的叙事文本累积区。
+   * 用途：signal_input_needed 挂起时先把这段文本持久化到 DB，
+   * 避免 generate() 一直挂起导致的叙事丢失。
+   * 每次 beginStreamingEntry 前重置，每次 finalize 前 flush 到 DB。
+   */
+  private currentNarrativeBuffer = '';
+
   // Session lifecycle
   private active = false;
 
@@ -479,6 +500,7 @@ export class GameSession {
         this.abortController = new AbortController();
 
         // 创建 streaming entry（文本将直接追加到这条 entry）
+        this.currentNarrativeBuffer = '';
         this.emitter.beginStreamingEntry();
 
         // Call LLM (agentic tool loop — signal_input_needed 会挂起等玩家)
@@ -492,7 +514,10 @@ export class GameSession {
 
         const textFilter = useFilter ? new ReasoningFilter(
           (reasoning) => this.emitter.appendReasoningToStreamingEntry(reasoning),
-          (text) => this.emitter.appendToStreamingEntry(text),
+          (text) => {
+            this.currentNarrativeBuffer += text;
+            this.emitter.appendToStreamingEntry(text);
+          },
         ) : null;
         // 存 flush 引用，供 createWaitForPlayerInput() 在挂起前刷出缓冲文本
         this.flushTextFilter = textFilter ? () => textFilter.flush() : null;
@@ -507,6 +532,7 @@ export class GameSession {
               textFilter.push(chunk);
             } else {
               // 原生思考模式：text-delta 直接作为叙事正文
+              this.currentNarrativeBuffer += chunk;
               this.emitter.appendToStreamingEntry(chunk);
             }
           },
@@ -544,15 +570,24 @@ export class GameSession {
           });
         }
 
-        // ② 持久化：generate 完成
+        // ② 持久化：最后一段 streaming entry（generate 自然返回后）
+        //    注：如果中间有 signal_input_needed 挂起，那些段已在 createWaitForPlayerInput 中持久化过了
+        if (this.currentNarrativeBuffer) {
+          await this.persistence?.onNarrativeSegmentFinalized({
+            entry: {
+              role: 'generate',
+              content: this.currentNarrativeBuffer,
+              finishReason: result.finishReason,
+            },
+          }).catch((e) => console.error('[Persistence] onNarrativeSegmentFinalized (final) failed:', e));
+          this.currentNarrativeBuffer = '';
+        }
+
+        // 同步 memory 快照和 preview
         await this.persistence?.onGenerateComplete({
-          entry: {
-            role: 'generate',
-            content: result.text,
-            finishReason: result.finishReason,
-          },
           memoryEntries: this.memory.getAllEntries(),
           memorySummaries: this.memory.getSummaries(),
+          preview: result.text ? result.text.slice(0, 80).replace(/\n/g, ' ') : null,
         }).catch((e) => console.error('[Persistence] onGenerateComplete failed:', e));
 
         // Check if memory needs compression
@@ -626,9 +661,24 @@ export class GameSession {
 
   /** 创建 waitForPlayerInput 回调，供 signal_input_needed 的 execute 使用 */
   private createWaitForPlayerInput(): (options: SignalInputOptions) => Promise<string> {
-    return (options: SignalInputOptions) => {
+    return async (options: SignalInputOptions) => {
       // 先 flush ReasoningFilter 缓冲区，确保所有文本都写进 streaming entry
       this.flushTextFilter?.();
+
+      // ★ 关键修复：挂起前先把当前累积的叙事段持久化到 DB
+      //   否则 generate() 会挂起在这里一直不返回，
+      //   onGenerateComplete 永远不会被调用，这段叙事就永远写不进 DB
+      if (this.currentNarrativeBuffer) {
+        await this.persistence?.onNarrativeSegmentFinalized({
+          entry: {
+            role: 'generate',
+            content: this.currentNarrativeBuffer,
+          },
+        }).catch((e) =>
+          console.error('[Persistence] onNarrativeSegmentFinalized (signal) failed:', e),
+        );
+        this.currentNarrativeBuffer = '';
+      }
 
       // 将当前 streaming entry 标记为完成
       this.emitter.finalizeStreamingEntry();
@@ -641,7 +691,7 @@ export class GameSession {
       this.emitter.setStatus('waiting-input');
 
       // ③ 持久化：signal_input_needed 触发的等待输入
-      this.persistence?.onWaitingInput({
+      await this.persistence?.onWaitingInput({
         hint: options.hint ?? null,
         inputType: options.choices?.length ? 'choice' : 'freetext',
         choices: options.choices ?? null,
@@ -651,6 +701,7 @@ export class GameSession {
       return new Promise<string>((resolve) => {
         this.signalInputResolve = (text: string) => {
           // 玩家输入后，开始新的 streaming entry 接收 LLM 后续输出
+          this.currentNarrativeBuffer = '';
           this.emitter.beginStreamingEntry();
           resolve(text);
         };

@@ -20,28 +20,36 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
       });
     },
 
+    /**
+     * 每段叙事 finalize 前调用（signal_input_needed 挂起前 / generate 返回后）
+     * 每次调用都新增一条 narrative_entry 记录 + 更新 preview
+     */
+    async onNarrativeSegmentFinalized(data): Promise<void> {
+      if (!data.entry.content) return;
+
+      await playthroughService.appendNarrativeEntry({
+        playthroughId,
+        role: data.entry.role,
+        content: data.entry.content,
+        reasoning: data.entry.reasoning,
+        toolCalls: data.entry.toolCalls,
+        finishReason: data.entry.finishReason,
+      });
+
+      // 更新 preview 为最新的这段
+      const preview = data.entry.content.slice(0, 80).replace(/\n/g, ' ');
+      await playthroughService.updateState(playthroughId, { preview });
+    },
+
+    /**
+     * generate() 整体结束后同步 memory 快照
+     * entry 入库已由 onNarrativeSegmentFinalized 负责
+     */
     async onGenerateComplete(data): Promise<void> {
-      // 保存叙事条目
-      if (data.entry.content) {
-        await playthroughService.appendNarrativeEntry({
-          playthroughId,
-          role: data.entry.role,
-          content: data.entry.content,
-          reasoning: data.entry.reasoning,
-          toolCalls: data.entry.toolCalls,
-          finishReason: data.entry.finishReason,
-        });
-      }
-
-      // 更新 memory 快照 + preview
-      const preview = data.entry.content
-        ? data.entry.content.slice(0, 80).replace(/\n/g, ' ')
-        : null;
-
       await playthroughService.updateState(playthroughId, {
         memoryEntries: data.memoryEntries,
         memorySummaries: data.memorySummaries,
-        preview,
+        ...(data.preview !== undefined ? { preview: data.preview } : {}),
       });
     },
 
