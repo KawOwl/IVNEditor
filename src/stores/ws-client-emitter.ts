@@ -1,12 +1,15 @@
 /**
  * WebSocket Client Emitter — 前端接收后端 WS 事件并写入 Zustand
  *
- * 支持两种连接模式：
- *   - createRemoteSession: 新建游玩（POST /sessions → WS → start）
- *   - reconnectRemoteSession: 恢复游玩（POST /sessions/reconnect → WS → restore）
+ * 简化后的流程：
+ *   - 新建游玩：POST /api/playthroughs → 拿 playthroughId → WS 连接
+ *   - 恢复游玩：直接 WS 连接（服务端会自动发 'restored' 快照）
+ *
+ * WS URL 通过 query 传递：sessionId (auth) + playthroughId (游玩记录)
  */
 
 import { useGameStore } from './game-store';
+import { ensureSessionId, fetchWithAuth } from './player-session-store';
 
 // ============================================================================
 // Types
@@ -20,10 +23,8 @@ interface WSMessage {
 export interface RemoteSession {
   /** Send player input */
   submitInput(text: string): void;
-  /** Tell backend to start the game session */
+  /** Tell backend to start the game session (仅新游戏需要) */
   start(): void;
-  /** Tell backend to restore from DB */
-  restore(): void;
   /** Tell backend to stop the session */
   stop(): void;
   /** Close the WebSocket connection */
@@ -62,15 +63,17 @@ export function clearStoredPlaythroughId(scriptId: string): void {
 
 // ============================================================================
 // Create new remote session
+//
+// 1. POST /api/playthroughs → 创建 playthrough 记录（拿 playthroughId）
+// 2. WS 连接 → 新游戏流程
 // ============================================================================
 
 export async function createRemoteSession(
   baseUrl: string,
   scriptId: string,
 ): Promise<RemoteSession> {
-  const store = () => useGameStore.getState();
-
-  const res = await fetch(`${baseUrl}/api/sessions`, {
+  // 1. 创建 playthrough
+  const res = await fetchWithAuth(`${baseUrl}/api/playthroughs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ scriptId }),
@@ -78,64 +81,48 @@ export async function createRemoteSession(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error ?? `Failed to create session: ${res.status}`);
+    throw new Error(err.error ?? `Failed to create playthrough: ${res.status}`);
   }
 
-  const { sessionId, playthroughId } = await res.json() as {
-    sessionId: string;
-    playthroughId: string;
-    title: string;
-  };
+  const { id: playthroughId } = await res.json() as { id: string; title: string };
 
-  // 存储 playthroughId 供重连用
+  // 存储 playthroughId 供下次重连
   storePlaythroughId(scriptId, playthroughId);
 
-  return connectWebSocket(baseUrl, sessionId, playthroughId, store);
+  // 2. WS 连接
+  return connectWebSocket(baseUrl, playthroughId);
 }
 
 // ============================================================================
 // Reconnect to existing playthrough
+//
+// 直接 WS 连接即可，服务端会自动发 'restored' 快照（如果 playthrough 有历史）
 // ============================================================================
 
 export async function reconnectRemoteSession(
   baseUrl: string,
   playthroughId: string,
 ): Promise<RemoteSession> {
-  const store = () => useGameStore.getState();
-
-  const res = await fetch(`${baseUrl}/api/sessions/reconnect`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ playthroughId }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error ?? `Failed to reconnect: ${res.status}`);
-  }
-
-  const { sessionId } = await res.json() as {
-    sessionId: string;
-    playthroughId: string;
-    source: 'memory' | 'database';
-  };
-
-  return connectWebSocket(baseUrl, sessionId, playthroughId, store);
+  return connectWebSocket(baseUrl, playthroughId);
 }
 
 // ============================================================================
 // Shared WebSocket connection logic
 // ============================================================================
 
-function connectWebSocket(
+async function connectWebSocket(
   baseUrl: string,
-  sessionId: string,
   playthroughId: string,
-  store: () => ReturnType<typeof useGameStore.getState>,
 ): Promise<RemoteSession> {
+  const store = () => useGameStore.getState();
+
+  // 拿到 auth sessionId（player token）
+  const authSessionId = await ensureSessionId();
+
   const wsProtocol = baseUrl.startsWith('https') ? 'wss' : 'ws';
   const wsHost = baseUrl.replace(/^https?:\/\//, '');
-  const ws = new WebSocket(`${wsProtocol}://${wsHost}/api/sessions/ws/${sessionId}`);
+  const wsUrl = `${wsProtocol}://${wsHost}/api/sessions/ws?sessionId=${encodeURIComponent(authSessionId)}&playthroughId=${encodeURIComponent(playthroughId)}`;
+  const ws = new WebSocket(wsUrl);
 
   return new Promise<RemoteSession>((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -177,9 +164,6 @@ function connectWebSocket(
       playthroughId,
       start() {
         ws.send(JSON.stringify({ type: 'start' }));
-      },
-      restore() {
-        ws.send(JSON.stringify({ type: 'restore' }));
       },
       submitInput(text: string) {
         ws.send(JSON.stringify({ type: 'input', text }));

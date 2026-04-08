@@ -274,7 +274,8 @@ export function EditorPage() {
     if (needsFetch && getEngineMode() === 'remote') {
       try {
         const authHeader = useAuthStore.getState().getAuthHeader();
-        const res = await fetch(`${getBackendUrl()}/api/scripts/${scriptId}`, { headers: authHeader });
+        // 编辑器需要完整 manifest（含 segments）→ 走 admin-only /full 端点
+        const res = await fetch(`${getBackendUrl()}/api/scripts/${scriptId}/full`, { headers: authHeader });
         if (res.ok) {
           const serverRecord: ScriptRecord = await res.json();
           // Save to local IndexedDB

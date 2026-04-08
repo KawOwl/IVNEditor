@@ -19,16 +19,27 @@ const service = new PlaythroughService();
 async function cleanTables() {
   await db.delete(schema.narrativeEntries);
   await db.delete(schema.playthroughs);
+  await db.delete(schema.userSessions);
+  await db.delete(schema.users);
 }
 
 const TEST_SCRIPT_ID = 'test-script-persist';
 const TEST_CHAPTER_ID = 'ch1';
 
+async function createTestUser(): Promise<string> {
+  const id = crypto.randomUUID();
+  await db.insert(schema.users).values({ id });
+  return id;
+}
+
 async function createTestPlaythrough() {
-  return service.create({
+  const userId = await createTestUser();
+  const r = await service.create({
     scriptId: TEST_SCRIPT_ID,
     chapterId: TEST_CHAPTER_ID,
+    userId,
   });
+  return { ...r, userId };
 }
 
 // ============================================================================
@@ -56,7 +67,7 @@ describe('PlaythroughPersistence', () => {
 
       await persistence.onGenerateStart(1);
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.status).toBe('generating');
       expect(detail!.turn).toBe(1);
     });
@@ -69,7 +80,7 @@ describe('PlaythroughPersistence', () => {
       await persistence.onGenerateStart(2);
       await persistence.onGenerateStart(3);
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.turn).toBe(3);
     });
   });
@@ -91,7 +102,7 @@ describe('PlaythroughPersistence', () => {
         },
       });
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.entries.length).toBe(1);
       expect(detail!.entries[0].role).toBe('generate');
       expect(detail!.entries[0].content).toBe('你站在草地上，四周一片寂静。');
@@ -107,7 +118,7 @@ describe('PlaythroughPersistence', () => {
         entry: { role: 'generate', content: longContent },
       });
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.preview).toBeTruthy();
       expect(detail!.preview!.length).toBeLessThanOrEqual(80);
     });
@@ -120,7 +131,7 @@ describe('PlaythroughPersistence', () => {
         entry: { role: 'generate', content: '' },
       });
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.entries.length).toBe(0);
     });
 
@@ -138,7 +149,7 @@ describe('PlaythroughPersistence', () => {
         },
       });
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.entries[0].reasoning).toBe('thinking about what to say...');
       expect(detail!.entries[0].toolCalls).toEqual([{ name: 'update_state', args: { key: 'trust', value: 2 } }]);
     });
@@ -157,7 +168,7 @@ describe('PlaythroughPersistence', () => {
         entry: { role: 'generate', content: '第三段叙事' },
       });
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.entries.length).toBe(3);
       expect(detail!.entries[0].content).toBe('第一段叙事');
       expect(detail!.entries[1].content).toBe('第二段叙事');
@@ -187,7 +198,7 @@ describe('PlaythroughPersistence', () => {
         memorySummaries,
       });
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.memoryEntries).toEqual(memoryEntries);
       expect(detail!.memorySummaries).toEqual(memorySummaries);
     });
@@ -201,7 +212,7 @@ describe('PlaythroughPersistence', () => {
         memorySummaries: [],
       });
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.entries.length).toBe(0);
     });
 
@@ -215,7 +226,7 @@ describe('PlaythroughPersistence', () => {
         preview: '自定义 preview',
       });
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.preview).toBe('自定义 preview');
     });
   });
@@ -235,7 +246,7 @@ describe('PlaythroughPersistence', () => {
         choices: ['走过去', '跑过去', '留在原地'],
       });
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.status).toBe('waiting-input');
       expect(detail!.inputHint).toBe('你想做什么？');
       expect(detail!.inputType).toBe('choice');
@@ -252,7 +263,7 @@ describe('PlaythroughPersistence', () => {
         choices: null,
       });
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.status).toBe('waiting-input');
       expect(detail!.inputHint).toBeNull();
       expect(detail!.choices).toBeNull();
@@ -282,7 +293,7 @@ describe('PlaythroughPersistence', () => {
         memorySummaries: [],
       });
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       // 检查 narrative entry
       expect(detail!.entries.length).toBe(1);
       expect(detail!.entries[0].role).toBe('receive');
@@ -311,7 +322,7 @@ describe('PlaythroughPersistence', () => {
 
       // ① Generate 开始
       await persistence.onGenerateStart(1);
-      let detail = await service.getById(pt.id);
+      let detail = await service.getById(pt.id, pt.userId);
       expect(detail!.status).toBe('generating');
       expect(detail!.turn).toBe(1);
 
@@ -325,7 +336,7 @@ describe('PlaythroughPersistence', () => {
         memoryEntries: [{ role: 'generate', content: '你醒来了', turn: 1 }],
         memorySummaries: [],
       });
-      detail = await service.getById(pt.id);
+      detail = await service.getById(pt.id, pt.userId);
       expect(detail!.entries.length).toBe(1);
       expect(detail!.preview).toBeTruthy();
 
@@ -335,7 +346,7 @@ describe('PlaythroughPersistence', () => {
         inputType: 'choice',
         choices: ['睁开眼睛', '继续装睡'],
       });
-      detail = await service.getById(pt.id);
+      detail = await service.getById(pt.id, pt.userId);
       expect(detail!.status).toBe('waiting-input');
       expect(detail!.choices).toEqual(['睁开眼睛', '继续装睡']);
 
@@ -350,7 +361,7 @@ describe('PlaythroughPersistence', () => {
         ],
         memorySummaries: [],
       });
-      detail = await service.getById(pt.id);
+      detail = await service.getById(pt.id, pt.userId);
       expect(detail!.entries.length).toBe(2);
       expect(detail!.entries[0].role).toBe('generate');
       expect(detail!.entries[1].role).toBe('receive');
@@ -398,7 +409,7 @@ describe('PlaythroughPersistence', () => {
         memorySummaries: [],
       });
 
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.turn).toBe(2);
       expect(detail!.entries.length).toBe(3); // gen1 + recv1 + gen2
       expect(detail!.entries[0].orderIdx).toBe(0);
@@ -430,7 +441,7 @@ describe('PlaythroughPersistence', () => {
       });
 
       // 此时即使玩家关闭浏览器，DB 中也已经有完整的叙事 + choices
-      const detail = await service.getById(pt.id);
+      const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.entries.length).toBe(1);
       expect(detail!.entries[0].content).toBe('三个黑帮成员围住了你。');
       expect(detail!.status).toBe('waiting-input');

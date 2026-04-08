@@ -121,20 +121,19 @@ export function PlayPanel({
             : playthroughId ?? getStoredPlaythroughId(id);
 
         if (targetPtId) {
-          // 恢复指定的游玩
+          // 恢复指定的游玩 —— 直接 WS 连接，服务端会自动发 'restored' 快照
           try {
             // 先清空 store（去掉 opening messages 等占位内容）
             useGameStore.getState().reset();
             const remote = await reconnectRemoteSession(getBackendUrl(), targetPtId);
             remoteRef.current = remote;
-            remote.restore();
             return;
           } catch (err) {
             console.warn('[PlayPanel] Reconnect failed, falling back to new session:', err);
           }
         }
 
-        // 新建游玩
+        // 新建游玩 —— createRemoteSession 内部会 POST /playthroughs + WS 连接
         const remote = await createRemoteSession(getBackendUrl(), id);
         remoteRef.current = remote;
         remote.start();

@@ -1,12 +1,11 @@
 /**
  * SessionManager — 管理后端游玩会话
  *
- * 两层索引：
- *   sessionId → GameSessionWrapper（WS 连接用）
- *   playthroughId → sessionId（重连查找用）
+ * 简化后：用 playthroughId 作为 wrapper 的唯一 key。
+ * 不再对外暴露独立的 "gameSessionId"——客户端只需要知道 playthroughId。
  *
- * 断线后 session 保留在内存中（TTL），超时后销毁。
- * 重连时优先从内存恢复（零成本），内存无则从 DB 恢复。
+ * 断线后 wrapper 保留在内存中 TTL 10 分钟，期间同 playthroughId 重连零成本恢复。
+ * TTL 过期后 wrapper 销毁，下次重连需从 DB 恢复。
  */
 
 import { GameSession } from '../../src/core/game-session';
@@ -21,7 +20,7 @@ import { createPlaythroughPersistence } from './services/playthrough-persistence
 // Config
 // ============================================================================
 
-/** 断线后 session 在内存中保留的时间（毫秒） */
+/** 断线后 wrapper 在内存中保留的时间 */
 const SESSION_TTL_MS = 10 * 60 * 1000; // 10 分钟
 
 // ============================================================================
@@ -48,36 +47,23 @@ type WS = { send(data: string): void };
 export class GameSessionWrapper {
   private gameSession: GameSession | null = null;
   private manifest: ScriptManifest;
-  private playthroughId: string | null;
+  private playthroughId: string;
+  private userId: string;
   private ws: WS | null = null;
   /** 断线后的 TTL 定时器 */
   private ttlTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(manifest: ScriptManifest, playthroughId?: string | null) {
+  constructor(manifest: ScriptManifest, playthroughId: string, userId: string) {
     this.manifest = manifest;
-    this.playthroughId = playthroughId ?? null;
+    this.playthroughId = playthroughId;
+    this.userId = userId;
   }
 
   attachWebSocket(ws: WS): void {
-    // 清除 TTL 定时器（重连成功）
     this.clearTTL();
     this.ws = ws;
     const emitter = createWebSocketEmitter(ws);
     this.gameSession = new GameSession(emitter);
-  }
-
-  /**
-   * 重连时重新附加 WS（不创建新 GameSession）
-   * 返回 false 如果 session 不可重连（已被停止等）
-   */
-  reattachWebSocket(ws: WS): boolean {
-    this.clearTTL();
-    this.ws = ws;
-    // GameSession 仍在内存中运行，但 emitter 指向旧 WS
-    // 需要更新 emitter — 但当前 GameSession 不支持热替换 emitter
-    // 所以内存重连场景下，我们返回 true 表示 session 存在，
-    // 但客户端需要从 DB 恢复状态（因为 WS 流已断）
-    return this.gameSession !== null;
   }
 
   start(): void {
@@ -125,8 +111,12 @@ export class GameSessionWrapper {
     this.gameSession?.stop();
   }
 
-  getPlaythroughId(): string | null {
+  getPlaythroughId(): string {
     return this.playthroughId;
+  }
+
+  getUserId(): string {
+    return this.userId;
   }
 
   /** 启动 TTL 定时器，到期后调用 onExpire */
@@ -160,9 +150,7 @@ export class GameSessionWrapper {
       tokenBudget: manifest.memoryConfig.contextBudget,
       initialPrompt: manifest.initialPrompt,
       assemblyOrder: manifest.promptAssemblyOrder,
-      persistence: this.playthroughId
-        ? createPlaythroughPersistence(this.playthroughId)
-        : undefined,
+      persistence: createPlaythroughPersistence(this.playthroughId),
     };
   }
 }
@@ -172,55 +160,45 @@ export class GameSessionWrapper {
 // ============================================================================
 
 export class SessionManager {
+  /** playthroughId → wrapper */
   private sessions = new Map<string, GameSessionWrapper>();
-  /** playthroughId → sessionId 反向索引（用于重连查找） */
-  private playthroughIndex = new Map<string, string>();
-
-  create(sessionId: string, manifest: ScriptManifest, playthroughId?: string): void {
-    const wrapper = new GameSessionWrapper(manifest, playthroughId);
-    this.sessions.set(sessionId, wrapper);
-    if (playthroughId) {
-      this.playthroughIndex.set(playthroughId, sessionId);
-    }
-  }
-
-  get(sessionId: string): GameSessionWrapper | undefined {
-    return this.sessions.get(sessionId);
-  }
-
-  /** 通过 playthroughId 查找活跃 session */
-  getByPlaythroughId(playthroughId: string): { sessionId: string; wrapper: GameSessionWrapper } | undefined {
-    const sessionId = this.playthroughIndex.get(playthroughId);
-    if (!sessionId) return undefined;
-    const wrapper = this.sessions.get(sessionId);
-    if (!wrapper) return undefined;
-    return { sessionId, wrapper };
-  }
 
   /**
-   * 断线时调用——不立即销毁，启动 TTL
+   * 获取已有 wrapper，或创建一个新的（懒加载）
+   * 调用方负责在之后调 attachWebSocket + start/restore
    */
-  detach(sessionId: string): void {
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
+  getOrCreate(
+    playthroughId: string,
+    manifest: ScriptManifest,
+    userId: string,
+  ): GameSessionWrapper {
+    let wrapper = this.sessions.get(playthroughId);
+    if (!wrapper) {
+      wrapper = new GameSessionWrapper(manifest, playthroughId, userId);
+      this.sessions.set(playthroughId, wrapper);
+    }
+    return wrapper;
+  }
 
-    session.startTTL(() => {
-      // TTL 到期，真正销毁
-      this.sessions.delete(sessionId);
-      const ptId = session.getPlaythroughId();
-      if (ptId) this.playthroughIndex.delete(ptId);
-      console.log(`[SessionManager] Session ${sessionId} expired after TTL`);
+  get(playthroughId: string): GameSessionWrapper | undefined {
+    return this.sessions.get(playthroughId);
+  }
+
+  /** 断线时调用——启动 TTL，到期销毁 */
+  detach(playthroughId: string): void {
+    const wrapper = this.sessions.get(playthroughId);
+    if (!wrapper) return;
+
+    wrapper.startTTL(() => {
+      this.sessions.delete(playthroughId);
+      console.log(`[SessionManager] Wrapper ${playthroughId} expired after TTL`);
     });
   }
 
   /** 立即销毁 */
-  destroy(sessionId: string): void {
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      session.stop();
-      const ptId = session.getPlaythroughId();
-      if (ptId) this.playthroughIndex.delete(ptId);
-    }
-    this.sessions.delete(sessionId);
+  destroy(playthroughId: string): void {
+    const wrapper = this.sessions.get(playthroughId);
+    if (wrapper) wrapper.stop();
+    this.sessions.delete(playthroughId);
   }
 }

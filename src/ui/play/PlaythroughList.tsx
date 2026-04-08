@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { getBackendUrl } from '../../core/engine-mode';
+import { fetchWithAuth } from '../../stores/player-session-store';
 import { cn } from '../../lib/utils';
 
 // ============================================================================
@@ -43,7 +44,7 @@ export function PlaythroughList({ scriptId, onSelect }: PlaythroughListProps) {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(`${getBackendUrl()}/api/playthroughs?scriptId=${scriptId}`);
+      const res = await fetchWithAuth(`${getBackendUrl()}/api/playthroughs?scriptId=${scriptId}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setItems(data.playthroughs ?? []);
@@ -64,7 +65,9 @@ export function PlaythroughList({ scriptId, onSelect }: PlaythroughListProps) {
 
     setDeletingId(id);
     try {
-      const res = await fetch(`${getBackendUrl()}/api/playthroughs/${id}`, { method: 'DELETE' });
+      const res = await fetchWithAuth(`${getBackendUrl()}/api/playthroughs/${id}`, {
+        method: 'DELETE',
+      });
       if (res.ok) {
         setItems((prev) => prev.filter((item) => item.id !== id));
       }
@@ -78,7 +81,7 @@ export function PlaythroughList({ scriptId, onSelect }: PlaythroughListProps) {
   const handleArchive = useCallback(async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      const res = await fetch(`${getBackendUrl()}/api/playthroughs/${id}`, {
+      const res = await fetchWithAuth(`${getBackendUrl()}/api/playthroughs/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ archived: true }),

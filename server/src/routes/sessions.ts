@@ -1,183 +1,168 @@
 /**
- * Session Routes — 游玩会话管理 + WS 重连
+ * Session Routes — 游玩会话 WebSocket
  *
- * POST /api/sessions                   — 创建新会话
- * POST /api/sessions/reconnect         — 重连到已有 playthrough
- * WS   /api/sessions/:id/ws            — WebSocket 连接
+ * 只保留一个 endpoint：WS /api/sessions/ws?sessionId=X&playthroughId=Y
+ *
+ * 创建 playthrough 走 POST /api/playthroughs（独立接口）。
+ * 这里只负责 WebSocket 连接 → 建立内存 wrapper → 推流。
+ *
+ * 流程：
+ *   1. 从 query 取 sessionId（player auth token）+ playthroughId
+ *   2. 解析 sessionId → userId
+ *   3. 校验 playthrough 归属该 userId（ownership）
+ *   4. getOrCreate wrapper（按 playthroughId 索引）
+ *   5. attachWebSocket + 自动 start / restore
  */
 
 import { Elysia } from 'elysia';
 import { scriptStore } from '../storage/script-store';
 import { SessionManager } from '../session-manager';
 import { playthroughService } from '../services/playthrough-service';
+import { resolvePlayerSession } from '../auth-identity';
 
 const sessionManager = new SessionManager();
+
+interface WSData {
+  playthroughId: string;
+  userId: string;
+}
+
+/** 附加到 ws 上的自定义数据 */
+const wsDataMap = new WeakMap<object, WSData>();
 
 export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
 
   // ============================================================================
-  // POST / — 创建新会话（新游玩）
+  // WS /ws — 统一的游戏会话入口
+  //
+  // Query params:
+  //   sessionId      (必填): player auth token（= user_sessions.id）
+  //   playthroughId  (必填): 要连接的游玩记录 ID
+  //
+  // 行为：
+  //   - 校验 auth + ownership
+  //   - playthrough.turn===0 && 无 entries → 新游戏，等客户端发 'start'
+  //   - 否则 → 从 DB restore，自动推送 'restored' 快照
   // ============================================================================
+  .ws('/ws', {
+    async open(ws) {
+      const query = (ws.data as any).query as {
+        sessionId?: string;
+        playthroughId?: string;
+      };
+      const authSession = query?.sessionId;
+      const playthroughId = query?.playthroughId;
 
-  .post('/', async ({ body }) => {
-    const { scriptId, playerId } = body as { scriptId: string; playerId?: string };
-    if (!scriptId) {
-      return new Response(JSON.stringify({ error: 'Missing scriptId' }), { status: 400 });
-    }
-
-    const record = scriptStore.get(scriptId);
-    if (!record) {
-      return new Response(JSON.stringify({ error: 'Script not found' }), { status: 404 });
-    }
-
-    const chapterId = record.manifest.chapters[0]?.id ?? 'ch1';
-    const playthrough = await playthroughService.create({
-      scriptId,
-      chapterId,
-      playerId,
-    });
-
-    const sessionId = crypto.randomUUID();
-    sessionManager.create(sessionId, record.manifest, playthrough.id);
-    return { sessionId, playthroughId: playthrough.id, title: playthrough.title };
-  })
-
-  // ============================================================================
-  // POST /reconnect — 重连到已有 playthrough
-  // ============================================================================
-
-  .post('/reconnect', async ({ body }) => {
-    const { playthroughId } = body as { playthroughId: string };
-    if (!playthroughId) {
-      return new Response(JSON.stringify({ error: 'Missing playthroughId' }), { status: 400 });
-    }
-
-    // 检查内存中是否有活跃 session
-    const existing = sessionManager.getByPlaythroughId(playthroughId);
-    if (existing) {
-      return { sessionId: existing.sessionId, playthroughId, source: 'memory' };
-    }
-
-    // 从 DB 加载 playthrough
-    const detail = await playthroughService.getById(playthroughId, 0);
-    if (!detail) {
-      return new Response(JSON.stringify({ error: 'Playthrough not found' }), { status: 404 });
-    }
-
-    // 找到对应的 script manifest
-    const record = scriptStore.get(detail.scriptId);
-    if (!record) {
-      return new Response(JSON.stringify({ error: 'Script not found' }), { status: 404 });
-    }
-
-    // 创建新 session，标记为需要恢复
-    const sessionId = crypto.randomUUID();
-    sessionManager.create(sessionId, record.manifest, playthroughId);
-
-    return { sessionId, playthroughId, source: 'database' };
-  })
-
-  // ============================================================================
-  // WS — WebSocket 连接
-  // ============================================================================
-
-  .ws('/ws/:id', {
-    open(ws) {
-      const sessionId = (ws.data as any).params.id;
-      const session = sessionManager.get(sessionId);
-      if (!session) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Session not found' }));
+      if (!authSession || !playthroughId) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Missing sessionId or playthroughId' }));
         ws.close();
         return;
       }
 
-      session.attachWebSocket(ws);
+      // 1. 校验 auth
+      const identity = await resolvePlayerSession(authSession);
+      if (!identity) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Invalid or expired session' }));
+        ws.close();
+        return;
+      }
+
+      // 2. 查 playthrough + ownership 校验（service 层 WHERE 强制）
+      const detail = await playthroughService.getById(playthroughId, identity.userId, 50);
+      if (!detail) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Playthrough not found' }));
+        ws.close();
+        return;
+      }
+
+      // 3. 查 script manifest
+      const record = scriptStore.get(detail.scriptId);
+      if (!record) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Script not found' }), );
+        ws.close();
+        return;
+      }
+
+      // 4. 存 ws 的上下文数据供后续 message/close 回调使用
+      wsDataMap.set(ws as unknown as object, {
+        playthroughId,
+        userId: identity.userId,
+      });
+
+      // 5. getOrCreate wrapper（按 playthroughId 索引）
+      const wrapper = sessionManager.getOrCreate(playthroughId, record.manifest, identity.userId);
+      wrapper.attachWebSocket(ws);
+
+      // 6. 推送 connected
       ws.send(JSON.stringify({
         type: 'connected',
-        sessionId,
-        playthroughId: session.getPlaythroughId(),
+        playthroughId,
       }));
+
+      // 7. 决定 start 还是 restore
+      const isNewPlaythrough = detail.turn === 0 && detail.totalEntries === 0;
+      if (!isNewPlaythrough) {
+        // 推送快照给客户端（恢复 UI）
+        ws.send(JSON.stringify({
+          type: 'restored',
+          playthroughId,
+          status: detail.status,
+          turn: detail.turn,
+          stateVars: detail.stateVars,
+          inputHint: detail.inputHint,
+          inputType: detail.inputType,
+          choices: detail.choices,
+          entries: detail.entries,
+          totalEntries: detail.totalEntries,
+          hasMore: detail.hasMore,
+        }));
+
+        // 恢复 GameSession 的内存状态
+        wrapper.restore({
+          stateVars: detail.stateVars ?? {},
+          turn: detail.turn,
+          memoryEntries: detail.memoryEntries ?? [],
+          memorySummaries: detail.memorySummaries ?? [],
+          status: detail.status,
+          inputHint: detail.inputHint,
+          inputType: detail.inputType,
+          choices: detail.choices,
+        });
+      }
+      // 新游戏：等客户端主动发 'start'
     },
 
     message(ws, message) {
-      const sessionId = (ws.data as any).params.id;
-      const session = sessionManager.get(sessionId);
-      if (!session) return;
+      const ctx = wsDataMap.get(ws as unknown as object);
+      if (!ctx) return;
+
+      const wrapper = sessionManager.get(ctx.playthroughId);
+      if (!wrapper) return;
 
       try {
         const data = typeof message === 'string' ? JSON.parse(message) : message;
 
         switch (data.type) {
           case 'start':
-            session.start();
+            wrapper.start();
             break;
-
-          case 'restore': {
-            // 客户端请求从 DB 恢复
-            const ptId = session.getPlaythroughId();
-            if (!ptId) {
-              ws.send(JSON.stringify({ type: 'error', message: 'No playthroughId' }));
-              break;
-            }
-
-            // 异步加载 DB 状态并恢复
-            (async () => {
-              try {
-                const detail = await playthroughService.getById(ptId, 50);
-                if (!detail) {
-                  ws.send(JSON.stringify({ type: 'error', message: 'Playthrough not found in DB' }));
-                  return;
-                }
-
-                // 推送状态快照给客户端（恢复 UI）
-                ws.send(JSON.stringify({
-                  type: 'restored',
-                  playthroughId: ptId,
-                  status: detail.status,
-                  turn: detail.turn,
-                  stateVars: detail.stateVars,
-                  inputHint: detail.inputHint,
-                  inputType: detail.inputType,
-                  choices: detail.choices,
-                  entries: detail.entries,
-                  totalEntries: detail.totalEntries,
-                  hasMore: detail.hasMore,
-                }));
-
-                // 恢复 GameSession（从 DB 快照）
-                session.restore({
-                  stateVars: detail.stateVars ?? {},
-                  turn: detail.turn,
-                  memoryEntries: detail.memoryEntries ?? [],
-                  memorySummaries: detail.memorySummaries ?? [],
-                  status: detail.status,
-                  inputHint: detail.inputHint,
-                  inputType: detail.inputType,
-                  choices: detail.choices,
-                });
-              } catch (err) {
-                ws.send(JSON.stringify({ type: 'error', message: `Restore failed: ${err}` }));
-              }
-            })();
-            break;
-          }
-
           case 'input':
-            session.submitInput(data.text);
+            wrapper.submitInput(data.text);
             break;
-
           case 'stop':
-            session.stop();
+            wrapper.stop();
             break;
         }
       } catch (err) {
-        ws.send(JSON.stringify({ type: 'error', message: String(err) }));
+        ws.send(JSON.stringify({ type: 'error', error: String(err) }));
       }
     },
 
     close(ws) {
-      const sessionId = (ws.data as any).params.id;
+      const ctx = wsDataMap.get(ws as unknown as object);
+      if (!ctx) return;
       // 断线：不立即销毁，启动 TTL（10 分钟内重连可恢复）
-      sessionManager.detach(sessionId);
+      sessionManager.detach(ctx.playthroughId);
+      wsDataMap.delete(ws as unknown as object);
     },
   });

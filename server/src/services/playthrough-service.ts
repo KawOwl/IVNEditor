@@ -14,8 +14,9 @@ import { db, schema } from '../db';
 
 /** 列表查询筛选条件 */
 export interface ListFilter {
+  /** 必填：只返回该用户的记录（ownership 隔离） */
+  userId: string;
   scriptId?: string;
-  playerId?: string;
   includeArchived?: boolean;
 }
 
@@ -33,9 +34,10 @@ export interface PlaythroughSummary {
 
 /** 创建参数 */
 export interface CreateInput {
+  /** 必填：归属的 user */
+  userId: string;
   scriptId: string;
   chapterId: string;
-  playerId?: string | null;
   title?: string | null;
 }
 
@@ -88,16 +90,14 @@ export class PlaythroughService {
   /**
    * 列出游玩记录（按 updatedAt 降序）
    */
-  async list(filter: ListFilter = {}): Promise<PlaythroughSummary[]> {
-    const conditions = [];
+  async list(filter: ListFilter): Promise<PlaythroughSummary[]> {
+    // userId 必填 → 强制按用户隔离
+    const conditions = [eq(schema.playthroughs.userId, filter.userId)];
     if (!filter.includeArchived) {
       conditions.push(eq(schema.playthroughs.archived, false));
     }
     if (filter.scriptId) {
       conditions.push(eq(schema.playthroughs.scriptId, filter.scriptId));
-    }
-    if (filter.playerId) {
-      conditions.push(eq(schema.playthroughs.playerId, filter.playerId));
     }
 
     const rows = await db
@@ -132,9 +132,7 @@ export class PlaythroughService {
         .where(
           and(
             eq(schema.playthroughs.scriptId, input.scriptId),
-            input.playerId
-              ? eq(schema.playthroughs.playerId, input.playerId)
-              : sql`${schema.playthroughs.playerId} IS NULL`,
+            eq(schema.playthroughs.userId, input.userId),
           ),
         );
       const existing = Number(countResult[0]?.count ?? 0);
@@ -145,7 +143,7 @@ export class PlaythroughService {
 
     await db.insert(schema.playthroughs).values({
       id,
-      playerId: input.playerId ?? null,
+      userId: input.userId,
       scriptId: input.scriptId,
       title,
       chapterId: input.chapterId,
@@ -161,16 +159,19 @@ export class PlaythroughService {
 
   /**
    * 获取游玩详情 + entries（分页）
+   * 必须传 userId，只返回该用户自己的记录。
+   * 不归属当前用户 或 不存在 → 都返回 null（对外都是 404，避免信息泄漏）。
    */
   async getById(
     id: string,
+    userId: string,
     entriesLimit = 50,
     entriesOffset = 0,
   ): Promise<PlaythroughDetail | null> {
     const rows = await db
       .select()
       .from(schema.playthroughs)
-      .where(eq(schema.playthroughs.id, id))
+      .where(and(eq(schema.playthroughs.id, id), eq(schema.playthroughs.userId, userId)))
       .limit(1);
 
     if (rows.length === 0) return null;
@@ -214,8 +215,9 @@ export class PlaythroughService {
 
   /**
    * 更新游玩记录（改标题/归档）
+   * 必须传 userId；不属于该用户的记录直接视为不存在（返回 false）。
    */
-  async update(id: string, input: UpdateInput): Promise<boolean> {
+  async update(id: string, userId: string, input: UpdateInput): Promise<boolean> {
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (input.title !== undefined) patch.title = input.title;
     if (input.archived !== undefined) patch.archived = input.archived;
@@ -223,7 +225,7 @@ export class PlaythroughService {
     const result = await db
       .update(schema.playthroughs)
       .set(patch)
-      .where(eq(schema.playthroughs.id, id))
+      .where(and(eq(schema.playthroughs.id, id), eq(schema.playthroughs.userId, userId)))
       .returning({ id: schema.playthroughs.id });
 
     return result.length > 0;
@@ -231,36 +233,45 @@ export class PlaythroughService {
 
   /**
    * 硬删除（narrative_entries 通过 CASCADE 自动删除）
+   * 必须传 userId；不属于该用户的记录直接视为不存在（返回 false）。
    */
-  async delete(id: string): Promise<boolean> {
+  async delete(id: string, userId: string): Promise<boolean> {
     const result = await db
       .delete(schema.playthroughs)
-      .where(eq(schema.playthroughs.id, id))
+      .where(and(eq(schema.playthroughs.id, id), eq(schema.playthroughs.userId, userId)))
       .returning({ id: schema.playthroughs.id });
 
     return result.length > 0;
   }
 
   /**
-   * 统计某剧本 + 某玩家的游玩数
+   * 统计某用户的某剧本游玩数
    */
-  async countByScriptAndPlayer(
-    scriptId: string,
-    playerId?: string | null,
-  ): Promise<number> {
-    const conditions = [eq(schema.playthroughs.scriptId, scriptId)];
-    if (playerId) {
-      conditions.push(eq(schema.playthroughs.playerId, playerId));
-    } else {
-      conditions.push(sql`${schema.playthroughs.playerId} IS NULL`);
-    }
-
+  async countByScriptAndUser(scriptId: string, userId: string): Promise<number> {
     const result = await db
       .select({ count: sql<number>`count(*)` })
       .from(schema.playthroughs)
-      .where(and(...conditions));
+      .where(
+        and(
+          eq(schema.playthroughs.scriptId, scriptId),
+          eq(schema.playthroughs.userId, userId),
+        ),
+      );
 
     return Number(result[0]?.count ?? 0);
+  }
+
+  /**
+   * 仅用于内部：按 id 查 playthrough 的 userId（做 ownership 校验用）
+   * 返回 userId 或 null（不存在）
+   */
+  async getOwnerId(id: string): Promise<string | null> {
+    const rows = await db
+      .select({ userId: schema.playthroughs.userId })
+      .from(schema.playthroughs)
+      .where(eq(schema.playthroughs.id, id))
+      .limit(1);
+    return rows[0]?.userId ?? null;
   }
 
   // ============================================================================
