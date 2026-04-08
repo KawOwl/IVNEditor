@@ -29,29 +29,32 @@ export function PlayPage({ manifest, scriptId }: PlayPageProps) {
 
   // 远程模式：先显示列表，选择后进入游戏
   // 本地模式：直接进入游戏
-  const [selectedPlaythroughId, setSelectedPlaythroughId] = useState<string | null>(
-    mode === 'local' ? '__local__' : null,
+  // null = 未选择（显示列表），'new' = 新建，其他字符串 = 具体的 playthroughId
+  const [selection, setSelection] = useState<string | 'new' | null>(
+    mode === 'local' ? 'new' : null,
   );
 
   const handleBack = useCallback(() => {
-    if (selectedPlaythroughId && mode === 'remote') {
+    if (selection !== null && mode === 'remote') {
       // 从游戏返回列表
       useGameStore.getState().reset();
-      setSelectedPlaythroughId(null);
+      setSelection(null);
     } else {
       // 返回首页
       useGameStore.getState().reset();
       goHome();
     }
-  }, [goHome, selectedPlaythroughId, mode]);
+  }, [goHome, selection, mode]);
 
   const handleSelect = useCallback((playthroughId: string | 'new') => {
-    setSelectedPlaythroughId(playthroughId === 'new' ? '__new__' : playthroughId);
+    // 进入游戏前清空 store
+    useGameStore.getState().reset();
+    setSelection(playthroughId);
   }, []);
 
   const [showSettings, setShowSettings] = useState(false);
 
-  const inGame = selectedPlaythroughId !== null;
+  const inGame = selection !== null;
 
   return (
     <div className="h-full bg-zinc-950 text-zinc-100 flex flex-col">
@@ -89,7 +92,14 @@ export function PlayPage({ manifest, scriptId }: PlayPageProps) {
       {/* Content */}
       <div className="flex-1 min-h-0">
         {inGame ? (
-          <PlayPanel manifest={manifest} scriptId={scriptId} showDebug />
+          <PlayPanel
+            key={selection ?? 'new'}
+            manifest={manifest}
+            scriptId={scriptId}
+            playthroughId={mode === 'remote' ? selection ?? undefined : undefined}
+            autoStart={mode === 'remote'}
+            showDebug
+          />
         ) : (
           <PlaythroughList
             scriptId={scriptId}

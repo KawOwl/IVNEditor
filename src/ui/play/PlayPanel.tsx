@@ -37,6 +37,13 @@ export interface PlayPanelProps {
   manifest: ScriptManifest;
   /** 剧本 ID（remote 模式需要传给后端） */
   scriptId?: string;
+  /**
+   * 指定的游玩记录 ID（远程模式）
+   *   - 真实 ID → 重连并恢复该游玩
+   *   - 'new' → 创建新游玩（忽略 localStorage）
+   *   - undefined → 回退到 localStorage 判断
+   */
+  playthroughId?: string | 'new';
   /** 紧凑模式（嵌入编辑器时使用，隐藏 debug、缩小字体） */
   compact?: boolean;
   /** 是否显示 debug 面板 */
@@ -45,6 +52,8 @@ export interface PlayPanelProps {
   showReasoning?: boolean;
   /** 强制使用 local 模式（编辑器试玩始终 local） */
   forceLocal?: boolean;
+  /** 挂载后自动开始（列表选择模式下使用） */
+  autoStart?: boolean;
 }
 
 // ============================================================================
@@ -54,10 +63,12 @@ export interface PlayPanelProps {
 export function PlayPanel({
   manifest,
   scriptId,
+  playthroughId,
   compact = false,
   showDebug = true,
   showReasoning = false,
   forceLocal = false,
+  autoStart = false,
 }: PlayPanelProps) {
   const status = useGameStore((s) => s.status);
   const error = useGameStore((s) => s.error);
@@ -69,8 +80,11 @@ export function PlayPanel({
 
   const mode = forceLocal ? 'local' : getEngineMode();
 
-  // Show opening messages on mount (only if store is empty)
+  // Show opening messages on mount (only for new games, not when restoring)
   useEffect(() => {
+    // 恢复模式下跳过 opening messages —— 避免在 restored 到达前闪现
+    if (playthroughId && playthroughId !== 'new') return;
+
     const { entries } = useGameStore.getState();
     if (entries.length > 0) return; // already has content
 
@@ -81,7 +95,7 @@ export function PlayPanel({
         appendEntry({ role: 'system', content: msg });
       }
     }
-  }, [manifest]);
+  }, [manifest, playthroughId]);
 
   const handleStart = useCallback(async () => {
     if (mode === 'remote') {
@@ -97,18 +111,26 @@ export function PlayPanel({
       try {
         useGameStore.getState().setStatus('loading');
 
-        // 检查是否有保存的 playthroughId（可恢复的游玩）
-        const storedPtId = getStoredPlaythroughId(id);
-        if (storedPtId) {
-          // 尝试重连
+        // 决定目标 playthroughId：
+        //   显式传入 'new' → 新建（忽略 localStorage）
+        //   显式传入真实 ID → 恢复该游玩
+        //   未传 → 回退到 localStorage
+        const targetPtId =
+          playthroughId === 'new'
+            ? null
+            : playthroughId ?? getStoredPlaythroughId(id);
+
+        if (targetPtId) {
+          // 恢复指定的游玩
           try {
-            const remote = await reconnectRemoteSession(getBackendUrl(), storedPtId);
+            // 先清空 store（去掉 opening messages 等占位内容）
+            useGameStore.getState().reset();
+            const remote = await reconnectRemoteSession(getBackendUrl(), targetPtId);
             remoteRef.current = remote;
-            remote.restore(); // 从 DB 恢复
+            remote.restore();
             return;
-          } catch {
-            // 重连失败（playthrough 已删除等），回退到新建
-            console.warn('[PlayPanel] Reconnect failed, starting new session');
+          } catch (err) {
+            console.warn('[PlayPanel] Reconnect failed, falling back to new session:', err);
           }
         }
 
@@ -142,7 +164,7 @@ export function PlayPanel({
       sessionRef.current = session;
       session.start(config);
     }
-  }, [manifest, scriptId, mode]);
+  }, [manifest, scriptId, mode, playthroughId]);
 
   // 即时同步 LLM 设置变更到活跃会话（无需重启）
   const thinkingEnabled = useLLMSettingsStore((s) => s.thinkingEnabled);
@@ -150,6 +172,15 @@ export function PlayPanel({
   useEffect(() => {
     sessionRef.current?.updateLLMConfig({ thinkingEnabled, reasoningFilterEnabled });
   }, [thinkingEnabled, reasoningFilterEnabled]);
+
+  // autoStart：挂载后自动触发开始（列表选择模式下使用）
+  const didAutoStart = useRef(false);
+  useEffect(() => {
+    if (autoStart && !didAutoStart.current) {
+      didAutoStart.current = true;
+      handleStart();
+    }
+  }, [autoStart, handleStart]);
 
   const handlePlayerInput = useCallback((text: string) => {
     if (mode === 'remote') {
