@@ -10,6 +10,7 @@
 
 import { streamText, stepCountIs, tool, zodSchema, type ToolSet } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { createAnthropic } from '@ai-sdk/anthropic';
 import type { ToolHandler } from './tool-executor';
 import type { ChatMessage } from './context-assembler';
 
@@ -82,6 +83,18 @@ export class LLMClient {
   }
 
   private getModel() {
+    // Anthropic 原生协议（避开 OpenAI compat 代理重写工具名的问题）
+    if (this.config.provider === 'anthropic') {
+      const provider = createAnthropic({
+        baseURL: this.config.baseURL,
+        apiKey: this.config.apiKey,
+        // 浏览器中调用需要明确同意（实际请求经由我们的服务器/编辑器试玩在浏览器执行）
+        headers: { 'anthropic-dangerous-direct-browser-access': 'true' },
+      });
+      return provider(this.config.model);
+    }
+
+    // OpenAI compatible（DeepSeek 等）
     const provider = createOpenAICompatible({
       name: this.config.name ?? 'provider',
       baseURL: this.config.baseURL,
