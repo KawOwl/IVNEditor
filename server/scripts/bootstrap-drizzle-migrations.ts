@@ -1,7 +1,22 @@
 /**
+ * ⚠️ 已废弃 (DEPRECATED) — 一次性历史升级工具，已经在线上执行过了
+ *
+ * 全新环境不需要跑这个——直接 `bun run start` 就行：
+ *   drizzle 会自动建 __drizzle_migrations 表 + 从 0000 baseline 全量建表。
+ *
+ * 保留原因：
+ *   - 作为历史记录，万一还有老环境从"已有 schema 但没追踪"状态接入时参考
+ *   - 也为 `drizzle-kit push` 使用者留一条升级到正规迁移流程的路径
+ *
+ * 什么时候可以彻底删除：确认不再需要把"已有 schema 标记为 baseline 已应用"。
+ *
+ * ─────────────────────────────────────────────────────────────
+ * 以下为历史文档：
+ * ─────────────────────────────────────────────────────────────
+ *
  * bootstrap-drizzle-migrations — 首次启用 drizzle 迁移管理
  *
- * 适用场景：
+ * 适用场景（已结束）：
  *   DB 已经通过某种方式（drizzle-kit push / 手写 SQL / 一次性脚本）进入了
  *   和 drizzle/0000_xxx.sql baseline 相同的 schema 状态，但 __drizzle_migrations
  *   表不存在/是空的，需要告诉 drizzle "这些迁移已经应用过了"。
