@@ -5,15 +5,42 @@
  *   - 线上已有 playthroughs（含 player_id 列）+ narrative_entries
  *   - 需要升级到新 schema：users / user_sessions / playthroughs.user_id NOT NULL
  *
- * 执行方式（在 server 目录下）：
+ * 这是一个【一次性】的历史遗留升级脚本。升级完成后，后续的 schema 变更
+ * 都应该走标准的 drizzle 迁移流程（见下）。
+ *
+ * ═════════════════════════════════════════════════════════════
+ *  首次部署线上服务器的完整顺序
+ * ═════════════════════════════════════════════════════════════
+ *   cd server
+ *
+ *   # 1. 升级老 schema 到 drizzle/0000_boring_galactus.sql baseline 状态
  *   bun run scripts/migrate-player-identity.ts
  *
- * 安全性：
+ *   # 2. 初始化 drizzle 迁移追踪（标记 0000 baseline 为已应用）
+ *   bun run db:bootstrap
+ *
+ *   # 3. 启动服务器（之后启动时自动应用 drizzle/ 下任何新增的迁移）
+ *   bun run start
+ *
+ * ═════════════════════════════════════════════════════════════
+ *  后续 schema 变更的标准流程
+ * ═════════════════════════════════════════════════════════════
+ *   1. 本地：修改 server/src/db/schema.ts
+ *   2. 本地：bun run db:generate   # 生成 drizzle/000N_xxx.sql
+ *   3. 本地：bun run start         # 服务器启动时自动应用新迁移，做本地验证
+ *   4. 提交 drizzle/ 下的迁移文件
+ *   5. 线上部署：git pull + 重启服务，runMigrations() 自动应用
+ *
+ *   注意：不要在生产上再跑 db:push 或 migrate-player-identity.ts，
+ *   那只是一次性的遗留升级工具。
+ *
+ * ═════════════════════════════════════════════════════════════
+ *  安全性
+ * ═════════════════════════════════════════════════════════════
  *   - 幂等：已执行过的步骤会被跳过
  *   - 破坏性：会清空所有 playthroughs（老数据 player_id IS NULL，无法保留）
  *   - 新 schema 下 playthroughs.user_id 是 NOT NULL + FK，旧数据无法兼容
- *
- * 如果线上已经是新 schema（比如之前跑过一次），脚本会跳过所有已有结构。
+ *   - 如果线上已经是新 schema（比如之前跑过一次），脚本会跳过所有已有结构
  */
 
 import { db } from '../src/db';

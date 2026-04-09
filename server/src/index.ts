@@ -20,7 +20,7 @@ import { sessionRoutes } from './routes/sessions';
 import { configRoutes } from './routes/config';
 import { authRoutes } from './routes/auth';
 import { playthroughRoutes } from './routes/playthroughs';
-import { testConnection } from './db';
+import { testConnection, runMigrations } from './db';
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -87,14 +87,24 @@ if (HAS_DIST) {
   console.log(`⚠️  No dist/ found — run 'pnpm build' in project root to enable frontend hosting`);
 }
 
-// 启动时测试数据库连接
-testConnection().catch((err) => {
-  console.error('[DB] Connection failed:', err.message);
-  console.error('[DB] Server will continue without database — playthrough persistence disabled');
-});
+// 启动时：测试 DB 连接 + 应用待执行的迁移 + 启动 HTTP 服务
+async function startup() {
+  try {
+    await testConnection();
+    await runMigrations();
+  } catch (err) {
+    console.error('[startup] DB initialization failed:', err);
+    console.error('[startup] 如果线上首次部署，请先运行:');
+    console.error('  bun run scripts/migrate-player-identity.ts   # 升级老 schema');
+    console.error('  bun run scripts/bootstrap-drizzle-migrations.ts   # 标记 baseline');
+    console.error('[startup] 拒绝启动服务，避免半残状态');
+    process.exit(1);
+  }
 
-app.listen(PORT);
+  app.listen(PORT);
+  console.log(`🎭 IVN Server running at http://localhost:${PORT}`);
+}
 
-console.log(`🎭 IVN Server running at http://localhost:${PORT}`);
+startup();
 
 export type App = typeof app;
