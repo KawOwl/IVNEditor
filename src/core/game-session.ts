@@ -153,6 +153,63 @@ export interface SessionPersistence {
   }): Promise<void>;
 }
 
+// ============================================================================
+// SessionTracing — 可观测性回调接口（可选，远程模式 server 注入）
+// ============================================================================
+
+/**
+ * 一次 generate() 的 trace handle。
+ * 提供 generation + tool span + event 子操作。
+ * 所有方法都是 fire-and-forget，失败不能影响主流程（实现方自己 catch）。
+ */
+export interface GenerateTraceHandle {
+  /** 开始 LLM 调用 */
+  startGeneration(input: {
+    systemPrompt: string;
+    messages: Array<{ role: string; content: string }>;
+    model?: string;
+  }): void;
+
+  /** LLM 调用结束 */
+  endGeneration(output: {
+    text: string;
+    reasoning?: string;
+    finishReason: string;
+    inputTokens?: number;
+    outputTokens?: number;
+  }): void;
+
+  /** 开始一次工具调用，返回 handle 用于结束 */
+  startToolCall(name: string, args: unknown): ToolCallTraceHandle;
+
+  /** 记录一个事件（player_input / 等） */
+  event(name: string, input?: unknown, metadata?: Record<string, unknown>): void;
+
+  /** 错误事件 */
+  error(message: string, phase: string): void;
+
+  /** 结束整个 trace */
+  end(finalOutput?: unknown): void;
+}
+
+export interface ToolCallTraceHandle {
+  end(output: unknown, error?: string): void;
+}
+
+/**
+ * SessionTracing — 可选的可观测性接口
+ *
+ * 远程模式下由 server 注入 Langfuse 实现；本地模式不传 → 无观测。
+ * 接口保持最小：core 层不需要知道 Langfuse 的存在。
+ */
+export interface SessionTracing {
+  /** 每次 generate() 开始调用，返回该轮的 trace handle */
+  startGenerateTrace(turn: number, metadata?: Record<string, unknown>): GenerateTraceHandle;
+
+  /** restore 成功时调用，在 Langfuse 打一个"断点"标记 */
+  markSessionRestored(turn: number, metadata?: Record<string, unknown>): void;
+}
+
 /**
  * RestoreConfig — 从持久化快照恢复会话所需的数据
  */
@@ -167,6 +224,7 @@ export interface RestoreConfig {
   assemblyOrder?: string[];
   disabledSections?: string[];
   persistence?: SessionPersistence;
+  tracing?: SessionTracing;
   // 恢复数据
   stateVars: Record<string, unknown>;
   turn: number;
@@ -191,6 +249,7 @@ export interface GameSessionConfig {
   assemblyOrder?: string[];      // 自定义 prompt 组装顺序
   disabledSections?: string[];   // 被禁用的 section ID 列表
   persistence?: SessionPersistence;  // 可选持久化（远程模式写 DB）
+  tracing?: SessionTracing;          // 可选可观测性（远程模式接 Langfuse）
 }
 
 // ============================================================================
@@ -210,6 +269,9 @@ export class GameSession {
   private assemblyOrder?: string[];
   private disabledSections?: string[];
   private persistence?: SessionPersistence;
+  private tracing?: SessionTracing;
+  /** 当前 generate 轮次的 trace handle（供 signal_input_needed 路径记录 player_input 事件） */
+  private currentTraceHandle?: GenerateTraceHandle;
 
   /**
    * 当前 streaming entry 的叙事文本累积区。
@@ -268,6 +330,7 @@ export class GameSession {
       this.assemblyOrder = config.assemblyOrder;
       this.disabledSections = config.disabledSections;
       this.persistence = config.persistence;
+      this.tracing = config.tracing;
 
       if (config.inheritedSummary) {
         this.memory.setInheritedSummary(config.inheritedSummary);
@@ -309,6 +372,7 @@ export class GameSession {
       this.assemblyOrder = config.assemblyOrder;
       this.disabledSections = config.disabledSections;
       this.persistence = config.persistence;
+      this.tracing = config.tracing;
 
       // 注入持久化快照
       this.stateStore.restore(config.stateVars, config.turn);
@@ -319,6 +383,12 @@ export class GameSession {
 
       // 同步 UI
       this.syncDebugState();
+
+      // 可观测性：恢复标记，方便 Langfuse UI 中识别"断点"
+      this.tracing?.markSessionRestored(config.turn, {
+        status: config.status,
+        hasEntries: Array.isArray(config.memoryEntries) && config.memoryEntries.length > 0,
+      });
 
       this.active = true;
 
@@ -392,6 +462,9 @@ export class GameSession {
         tokenCount: estimateTokens(text),
       });
 
+      // 🔭 可观测性：在当前 trace 上记录 player_input 事件
+      this.currentTraceHandle?.event('player_input', { text }, { via: 'signal', turn });
+
       // resolve → agentic loop 继续
       resolve(text);
     } else if (this.inputResolve) {
@@ -436,6 +509,11 @@ export class GameSession {
       // ① 持久化：generate 开始
       await this.persistence?.onGenerateStart(turn).catch((e) =>
         console.error('[Persistence] onGenerateStart failed:', e));
+
+      // 🔭 可观测性：为这一轮 generate 开启 trace（在 try 外层定义，catch 也能访问）
+      const traceHandle: GenerateTraceHandle | undefined = this.tracing?.startGenerateTrace(turn);
+      this.currentTraceHandle = traceHandle;
+      const toolCallStack = new Map<string, ToolCallTraceHandle[]>();
 
       try {
         // Create tools with suspend-mode waitForPlayerInput
@@ -503,6 +581,13 @@ export class GameSession {
         this.currentNarrativeBuffer = '';
         this.emitter.beginStreamingEntry();
 
+        // 🔭 可观测性：启动 LLM 调用的 generation span
+        traceHandle?.startGeneration({
+          systemPrompt: context.systemPrompt,
+          messages: context.messages.map((m) => ({ role: m.role, content: m.content })),
+          model: this.llmClient.getModelName(),
+        });
+
         // Call LLM (agentic tool loop — signal_input_needed 会挂起等玩家)
         //
         // 推理过滤策略：
@@ -542,14 +627,35 @@ export class GameSession {
           onToolCall: (name, args) => {
             this.emitter.addToolCall({ name, args, result: undefined });
             this.emitter.addPendingToolCall({ name, args, result: undefined });
+            // 🔭 tracing: 开启 tool span
+            const handle = traceHandle?.startToolCall(name, args);
+            if (handle) {
+              const stack = toolCallStack.get(name) ?? [];
+              stack.push(handle);
+              toolCallStack.set(name, stack);
+            }
           },
           onToolResult: (name, toolResult) => {
             this.emitter.updateToolResult(name, toolResult);
             this.emitter.updatePendingToolResult(name, toolResult);
+            // 🔭 tracing: 结束 tool span（FIFO 配对同名 call）
+            const stack = toolCallStack.get(name);
+            if (stack && stack.length > 0) {
+              const handle = stack.shift();
+              handle?.end(toolResult);
+            }
           },
         });
 
         this.abortController = null;
+
+        // 🔭 可观测性：结束 LLM 调用 span，记录 usage
+        traceHandle?.endGeneration({
+          text: result.text,
+          finishReason: result.finishReason,
+          inputTokens: result.usage?.inputTokens,
+          outputTokens: result.usage?.outputTokens,
+        });
 
         // Flush any buffered text in the reasoning filter
         textFilter?.flush();
@@ -599,13 +705,24 @@ export class GameSession {
         // Sync debug state
         this.syncDebugState();
 
+        // 🔭 可观测性：结束这一轮 trace
+        traceHandle?.end({ text: result.text, finishReason: result.finishReason });
+
       } catch (error) {
         if (!this.active) break;
         // Finalize any partial streaming content so it's not lost
         this.emitter.finalizeStreamingEntry();
+        // 🔭 可观测性：记录错误到当前 trace
+        traceHandle?.error(
+          error instanceof Error ? error.message : String(error),
+          'generate',
+        );
+        traceHandle?.end({ error: String(error) });
         // Show error banner but don't change status — Receive Phase will set waiting-input
         this.emitter.setError(error instanceof Error ? error.message : String(error));
         // Fall through to Receive Phase — player can re-send to retry
+      } finally {
+        this.currentTraceHandle = undefined;
       }
 
       // --- Receive Phase (fallback) ---

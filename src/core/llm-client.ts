@@ -45,6 +45,11 @@ export interface GenerateResult {
   text: string;               // full accumulated text
   toolCalls: Array<{ name: string; args: unknown; result: unknown }>;
   finishReason: string;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
 }
 
 // ============================================================================
@@ -175,11 +180,32 @@ export class LLMClient {
     const finalResult = await result;
     const finishReason = await finalResult.finishReason;
 
+    // 提取 token usage（Vercel AI SDK v6 提供 usage Promise/object）
+    let usage: GenerateResult['usage'] | undefined;
+    try {
+      const u = await finalResult.usage;
+      if (u) {
+        usage = {
+          inputTokens: u.inputTokens,
+          outputTokens: u.outputTokens,
+          totalTokens: u.totalTokens,
+        };
+      }
+    } catch {
+      // 某些 provider 不返回 usage，静默忽略
+    }
+
     return {
       text: fullText,
       toolCalls: toolCallLog,
       finishReason,
+      usage,
     };
+  }
+
+  /** 当前模型名（用于 tracing/debug） */
+  getModelName(): string {
+    return this.config.model;
   }
 
   /** 当前配置是否启用了原生思考模式 */

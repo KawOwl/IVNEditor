@@ -20,7 +20,8 @@ import { sessionRoutes } from './routes/sessions';
 import { configRoutes } from './routes/config';
 import { authRoutes } from './routes/auth';
 import { playthroughRoutes } from './routes/playthroughs';
-import { testConnection, runMigrations } from './db';
+import { testConnection, runMigrations, closePool } from './db';
+import { shutdownTracing } from './tracing';
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -104,6 +105,21 @@ async function startup() {
   app.listen(PORT);
   console.log(`🎭 IVN Server running at http://localhost:${PORT}`);
 }
+
+// graceful shutdown：flush Langfuse pending traces + 关闭 DB 连接
+async function gracefulShutdown(signal: string) {
+  console.log(`\n[shutdown] Received ${signal}, flushing and closing...`);
+  try {
+    await shutdownTracing();
+    await closePool();
+  } catch (err) {
+    console.error('[shutdown] error:', err);
+  }
+  process.exit(0);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 startup();
 

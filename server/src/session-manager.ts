@@ -15,6 +15,7 @@ import type { LLMConfig } from '../../src/core/llm-client';
 import { createWebSocketEmitter } from './ws-session-emitter';
 import { getLLMConfig } from './storage/llm-config-store';
 import { createPlaythroughPersistence } from './services/playthrough-persistence';
+import { createBoundTracing } from './tracing';
 
 // ============================================================================
 // Config
@@ -96,6 +97,7 @@ export class GameSessionWrapper {
       assemblyOrder: base.assemblyOrder,
       disabledSections: base.disabledSections,
       persistence: base.persistence,
+      tracing: base.tracing,
       ...snapshot,
     };
 
@@ -151,6 +153,11 @@ export class GameSessionWrapper {
       initialPrompt: manifest.initialPrompt,
       assemblyOrder: manifest.promptAssemblyOrder,
       persistence: createPlaythroughPersistence(this.playthroughId),
+      tracing: createBoundTracing({
+        playthroughId: this.playthroughId,
+        userId: this.userId,
+        scriptId: manifest.id,
+      }),
     };
   }
 }

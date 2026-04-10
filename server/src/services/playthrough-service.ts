@@ -216,9 +216,12 @@ export class PlaythroughService {
   /**
    * 更新游玩记录（改标题/归档）
    * 必须传 userId；不属于该用户的记录直接视为不存在（返回 false）。
+   *
+   * updatedAt 使用 DB 的 NOW() 而非 JS Date，避免本地和 DB 时钟漂移
+   * 导致 updatedAt 反向的问题（测试 runner 时钟 < DB 时钟时会触发）。
    */
   async update(id: string, userId: string, input: UpdateInput): Promise<boolean> {
-    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    const patch: Record<string, unknown> = { updatedAt: sql`NOW()` };
     if (input.title !== undefined) patch.title = input.title;
     if (input.archived !== undefined) patch.archived = input.archived;
 
@@ -297,7 +300,7 @@ export class PlaythroughService {
   ): Promise<void> {
     await db
       .update(schema.playthroughs)
-      .set({ ...patch, updatedAt: new Date() })
+      .set({ ...patch, updatedAt: sql`NOW()` })
       .where(eq(schema.playthroughs.id, id));
   }
 
