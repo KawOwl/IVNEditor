@@ -1,20 +1,11 @@
 /**
- * Engine Mode — 运行模式切换
+ * Backend URL helper
  *
- * 通过 Vite 环境变量 VITE_ENGINE_MODE 控制：
- *   - 'local'  (default): 引擎在浏览器内运行，编剧试玩模式
- *   - 'remote': 引擎在后端运行，通过 WebSocket 推流，玩家模式
- *
- * VITE_BACKEND_URL: 后端地址（remote 模式必填）
+ * 6.6 之前这个文件还有一个 EngineMode 概念（local / remote），用来切换
+ * 引擎是在浏览器内跑还是走后端 WebSocket。6.6 把前端 IndexedDB 和 local
+ * 模式代码全部下线之后，只剩后端 URL 读取这一个职责。文件名保持
+ * `engine-mode` 避免一堆 import 重命名——下次整理时再改。
  */
-
-export type EngineMode = 'local' | 'remote';
-
-export function getEngineMode(): EngineMode {
-  const mode = import.meta.env.VITE_ENGINE_MODE;
-  if (mode === 'remote') return 'remote';
-  return 'local';
-}
 
 export function getBackendUrl(): string {
   return import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:3001';

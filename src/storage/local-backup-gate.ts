@@ -19,6 +19,8 @@ import { openDB } from 'idb';
 
 const DB_NAME = 'novel-engine';
 const SCRIPTS_STORE = 'scripts';
+/** 所有曾经存在过的 IDB 数据库名，清理时一起删 */
+const LEGACY_DB_NAMES = [DB_NAME, 'novel-engine-scripts'];
 
 // ============================================================================
 // Types
@@ -129,24 +131,24 @@ export function downloadLocalBackup(scripts: LocalScriptSummary[]): void {
 // ============================================================================
 
 /**
- * 删除整个 novel-engine 数据库（包含 scripts + 死代码 saves store）。
+ * 删除 novel-engine 和所有 legacy 数据库（包含 scripts、死代码 saves store、
+ * 以及更早版本留下的 novel-engine-scripts 空壳 DB）。
  * 如果还有其它 tab 打开着数据库，会 blocked；此时 reject 让 UI 提示
  * 用户关掉其它 tab 再试。
  */
 export async function deleteLocalDatabase(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') {
-      resolve();
-      return;
-    }
-    const req = indexedDB.deleteDatabase(DB_NAME);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error ?? new Error('Unknown IDB delete error'));
-    req.onblocked = () =>
-      reject(
-        new Error(
-          '删除被阻塞——请关闭其它打开本站的标签页后重试。',
-        ),
-      );
-  });
+  if (typeof indexedDB === 'undefined') return;
+  for (const name of LEGACY_DB_NAMES) {
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.deleteDatabase(name);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error ?? new Error(`Failed to delete ${name}`));
+      req.onblocked = () =>
+        reject(
+          new Error(
+            `删除 ${name} 被阻塞——请关闭其它打开本站的标签页后重试。`,
+          ),
+        );
+    });
+  }
 }

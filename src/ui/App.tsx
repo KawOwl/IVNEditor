@@ -7,10 +7,7 @@
  *   - editor: 编辑器（需管理员登录）
  *
  * 路由通过 Zustand app-store 管理，不引入 React Router。
- *
- * 运行模式：
- *   - local: 首页从 IndexedDB 读取 published 剧本，PlayPage 在浏览器内运行引擎
- *   - remote: 首页从后端 API 读取 catalog，PlayPage 通过 WebSocket 连接后端引擎
+ * 6.6 后仅支持 remote 模式——所有剧本/游玩数据都走后端 API。
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -21,12 +18,8 @@ import { HomePage } from './home/HomePage';
 import { PlayPage } from './play/PlayPage';
 import { EditorPage } from './editor/EditorPage';
 import { LoginModal } from './auth/LoginModal';
-import { ScriptStorage } from '../storage/script-storage';
-import { getEngineMode, getBackendUrl } from '../core/engine-mode';
+import { getBackendUrl } from '../core/engine-mode';
 import type { ScriptManifest } from '../core/types';
-
-const scriptStorage = new ScriptStorage();
-const engineMode = getEngineMode();
 
 /** 后端返回的公开剧本信息（脱敏，不含 prompt segments） */
 interface PublicScriptInfo {
@@ -42,7 +35,7 @@ interface PublicScriptInfo {
 }
 
 /**
- * 从公开信息构造一个 "pseudo manifest"，供 remote 模式的 PlayPage/PlayPanel 使用。
+ * 从公开信息构造一个 "pseudo manifest"，供 PlayPage/PlayPanel 使用。
  * 内部字段（segments/stateSchema/memoryConfig）在 remote 模式下根本用不到，stub 即可。
  */
 function publicInfoToManifest(info: PublicScriptInfo): ScriptManifest {
@@ -76,12 +69,11 @@ export function App() {
   const checkMe = useAuthStore((s) => s.checkMe);
   const isAdmin = useAuthStore((s) => s.isAdmin);
   const [showLogin, setShowLogin] = useState(false);
-  const [authReady, setAuthReady] = useState(engineMode === 'local');
+  const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // 启动时：初始化 session + checkMe 填充 auth store
+  // 启动时：初始化 player session + checkMe 填充 auth store
   useEffect(() => {
-    if (engineMode !== 'remote') return;
     ensureSessionId()
       .then(() => checkMe())
       .then(() => setAuthReady(true))
@@ -95,7 +87,7 @@ export function App() {
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.ctrlKey && e.shiftKey && e.key === 'L') {
       e.preventDefault();
-      if (engineMode === 'remote' && !useAuthStore.getState().isAdmin) {
+      if (!useAuthStore.getState().isAdmin) {
         setShowLogin(true);
       }
     }
@@ -110,41 +102,34 @@ export function App() {
   const pageName = page.name;
   useEffect(() => {
     if (pageName !== 'home') return;
+    if (!authReady) return;
 
-    if (engineMode === 'remote') {
-      if (!authReady) return; // 等 player session 初始化完成
-      // Remote mode: fetch catalog from backend API（需 playerAuth）
-      fetchWithAuth(`${getBackendUrl()}/api/scripts/catalog`)
-        .then((res) => res.json())
-        .then((scripts: Array<{ id: string; label: string; description?: string; tags?: string[]; version?: string; chapterCount?: number }>) => {
-          setCatalog(scripts.map((s) => ({
-            id: s.id,
-            label: s.label,
-            description: s.description,
-            tags: s.tags,
-            version: s.version,
-            chapterCount: s.chapterCount ?? 1,
-          })));
-        })
-        .catch(() => {
-          setCatalog([]);
-        });
-    } else {
-      // Local mode: fetch from IndexedDB
-      scriptStorage.listPublished().then((list) => {
-        setCatalog(list.map((item) => ({
-          id: item.id,
-          label: item.label,
-          description: item.description,
-          tags: item.tags,
-          chapterCount: item.fileCount,
+    fetchWithAuth(`${getBackendUrl()}/api/scripts/catalog`)
+      .then((res) => res.json())
+      .then((scripts: Array<{
+        id: string;
+        label: string;
+        description?: string;
+        tags?: string[];
+        version?: string;
+        chapterCount?: number;
+      }>) => {
+        setCatalog(scripts.map((s) => ({
+          id: s.id,
+          label: s.label,
+          description: s.description,
+          tags: s.tags,
+          version: s.version,
+          chapterCount: s.chapterCount ?? 1,
         })));
+      })
+      .catch(() => {
+        setCatalog([]);
       });
-    }
   }, [setCatalog, pageName, authReady]);
 
-  // 远程模式下，等 player session 初始化后才渲染主内容
-  if (engineMode === 'remote' && !authReady) {
+  // 等 player session 初始化后才渲染主内容
+  if (!authReady) {
     return (
       <div className="h-full bg-zinc-950 text-zinc-100 flex items-center justify-center">
         <div className="text-center">
@@ -176,8 +161,8 @@ export function App() {
       content = <PlayPageLoader scriptId={page.scriptId} />;
       break;
     case 'editor':
-      // Local 模式不需要认证；Remote 模式需要管理员登录
-      if (engineMode === 'remote' && !isAdmin) {
+      // 编辑器仅管理员可访问
+      if (!isAdmin) {
         useAppStore.getState().goHome();
         return null;
       }
@@ -199,25 +184,13 @@ function PlayPageLoader({ scriptId }: { scriptId: string }) {
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    if (engineMode === 'remote') {
-      // Remote mode: fetch public script info（脱敏，不含 segments）
-      fetchWithAuth(`${getBackendUrl()}/api/scripts/${scriptId}`)
-        .then((res) => {
-          if (!res.ok) throw new Error('Not found');
-          return res.json();
-        })
-        .then((info: PublicScriptInfo) => setManifest(publicInfoToManifest(info)))
-        .catch(() => setError(true));
-    } else {
-      // Local mode: fetch from IndexedDB
-      scriptStorage.get(scriptId).then((record) => {
-        if (record) {
-          setManifest(record.manifest);
-        } else {
-          setError(true);
-        }
-      });
-    }
+    fetchWithAuth(`${getBackendUrl()}/api/scripts/${scriptId}`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Not found');
+        return res.json();
+      })
+      .then((info: PublicScriptInfo) => setManifest(publicInfoToManifest(info)))
+      .catch(() => setError(true));
   }, [scriptId]);
 
   if (error) {

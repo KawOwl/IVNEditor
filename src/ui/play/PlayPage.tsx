@@ -2,10 +2,8 @@
  * PlayPage — 全屏对话页面
  *
  * 两个阶段：
- *   1. 游玩列表（远程模式）— 选择继续/新建
+ *   1. 游玩列表 — 选择继续/新建
  *   2. PlayPanel — 游戏主界面
- *
- * 本地模式（编辑器试玩）跳过列表，直接进入游戏。
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -15,7 +13,6 @@ import { PlayPanel } from './PlayPanel';
 import { PlaythroughList } from './PlaythroughList';
 import { getTypewriterSpeed, setTypewriterSpeed } from '../NarrativeView';
 import type { ScriptManifest } from '../../core/types';
-import { getEngineMode } from '../../core/engine-mode';
 import { cn } from '../../lib/utils';
 
 export interface PlayPageProps {
@@ -25,17 +22,12 @@ export interface PlayPageProps {
 
 export function PlayPage({ manifest, scriptId }: PlayPageProps) {
   const goHome = useAppStore((s) => s.goHome);
-  const mode = getEngineMode();
 
-  // 远程模式：先显示列表，选择后进入游戏
-  // 本地模式：直接进入游戏
   // null = 未选择（显示列表），'new' = 新建，其他字符串 = 具体的 playthroughId
-  const [selection, setSelection] = useState<string | 'new' | null>(
-    mode === 'local' ? 'new' : null,
-  );
+  const [selection, setSelection] = useState<string | 'new' | null>(null);
 
   const handleBack = useCallback(() => {
-    if (selection !== null && mode === 'remote') {
+    if (selection !== null) {
       // 从游戏返回列表
       useGameStore.getState().reset();
       setSelection(null);
@@ -44,7 +36,7 @@ export function PlayPage({ manifest, scriptId }: PlayPageProps) {
       useGameStore.getState().reset();
       goHome();
     }
-  }, [goHome, selection, mode]);
+  }, [goHome, selection]);
 
   const handleSelect = useCallback((playthroughId: string | 'new') => {
     // 进入游戏前清空 store
@@ -65,7 +57,7 @@ export function PlayPage({ manifest, scriptId }: PlayPageProps) {
             onClick={handleBack}
             className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
           >
-            ← {inGame && mode === 'remote' ? '返回列表' : '返回'}
+            ← {inGame ? '返回列表' : '返回'}
           </button>
           <h1 className="text-sm font-medium text-zinc-300">
             {manifest.label}
@@ -96,8 +88,8 @@ export function PlayPage({ manifest, scriptId }: PlayPageProps) {
             key={selection ?? 'new'}
             manifest={manifest}
             scriptId={scriptId}
-            playthroughId={mode === 'remote' ? selection ?? undefined : undefined}
-            autoStart={mode === 'remote'}
+            playthroughId={selection ?? undefined}
+            autoStart
             showDebug
           />
         ) : (

@@ -4,8 +4,8 @@
  * 编剧用来配置文本生成和向量嵌入模型的连接信息。
  * 数据存储在 localStorage，不跟剧本走。
  *
- * Remote 模式下额外显示「从服务器拉取」和「同步到服务器」按钮，
- * 编剧可以将本地配置推送到后端，或从后端拉取当前配置。
+ * 顶部的「从服务器拉取」和「同步到服务器」按钮让编剧可以把本地配置
+ * 推送到后端，或从后端拉取当前配置。
  */
 
 import { useState } from 'react';
@@ -15,7 +15,7 @@ import {
 } from '../../stores/llm-settings-store';
 import { useAuthStore } from '../../stores/auth-store';
 import type { LLMProviderType } from '../../core/types';
-import { getEngineMode, getBackendUrl } from '../../core/engine-mode';
+import { getBackendUrl } from '../../core/engine-mode';
 import { getTypewriterSpeed, setTypewriterSpeed } from '../NarrativeView';
 import { cn } from '../../lib/utils';
 
@@ -38,12 +38,10 @@ export function LLMSettingsPanel() {
   const [showTextKey, setShowTextKey] = useState(false);
   const [showEmbeddingKey, setShowEmbeddingKey] = useState(false);
 
-  const isRemote = getEngineMode() === 'remote';
-
   return (
     <div className="space-y-6">
-      {/* Remote mode: server sync controls */}
-      {isRemote && <ServerSyncSection />}
+      {/* Server sync controls（拉取 / 推送到后端） */}
+      <ServerSyncSection />
 
       {/* Text model */}
       <EndpointSection

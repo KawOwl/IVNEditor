@@ -2,17 +2,15 @@
  * HomePage — 首页
  *
  * 展示小说/剧本卡片网格，点击进入对话页。
- * Remote 模式下，编辑器按钮仅对管理员可见。
- * 管理员登录通过全局快捷键 Ctrl+Shift+L 呼出（在 App.tsx 中注册）。
+ * 编辑器按钮仅对管理员可见，管理员登录通过全局快捷键 Ctrl+Shift+L
+ * 呼出（在 App.tsx 中注册）。
  */
 
 import { useCallback } from 'react';
 import { useAppStore } from '../../stores/app-store';
 import { useAuthStore } from '../../stores/auth-store';
 import { ScriptCard } from './ScriptCard';
-import { getEngineMode, getBackendUrl } from '../../core/engine-mode';
-
-const engineMode = getEngineMode();
+import { getBackendUrl } from '../../core/engine-mode';
 
 export function HomePage() {
   const catalog = useAppStore((s) => s.catalog);
@@ -21,9 +19,8 @@ export function HomePage() {
   const username = useAuthStore((s) => s.username);
   const logout = useAuthStore((s) => s.logout);
 
-  // Local 模式总是显示编辑器按钮；Remote 模式仅管理员可见
-  // v2.6 编辑器新 flow 仍保持 admin-only，符合"剧本详情只有 admin 能看"的原则
-  const canEdit = engineMode === 'local' || isAdmin;
+  // "剧本详情只有 admin 能看"——编辑器入口仅管理员可见
+  const canEdit = isAdmin;
 
   // 管理员下架剧本
   const handleUnpublish = useCallback(async (scriptId: string) => {
@@ -57,7 +54,7 @@ export function HomePage() {
           </div>
           <div className="flex items-center gap-3">
             {/* Admin info (only shown when logged in) */}
-            {engineMode === 'remote' && isAdmin && (
+            {isAdmin && (
               <div className="flex items-center gap-2">
                 <span className="text-[11px] text-emerald-400">{username}</span>
                 <button
