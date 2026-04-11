@@ -12,7 +12,7 @@
  *      SessionManager 在创建 wrapper 时调用 createBoundTracing(playthroughId, userId)
  */
 
-import { Langfuse, type LangfuseTraceClient, type LangfuseGenerationClient } from 'langfuse';
+import { Langfuse, type LangfuseTraceClient } from 'langfuse';
 import type {
   SessionTracing,
   GenerateTraceHandle,
@@ -117,52 +117,72 @@ export function createBoundTracing(ctx: BoundTracingContext): SessionTracing | u
 // ============================================================================
 
 class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
-  private generation: LangfuseGenerationClient | null = null;
+  /** 初始 systemPrompt + messages，供每个 step 的 generation span 复用 */
+  private initialInput: {
+    systemPrompt: string;
+    messages: Array<{ role: string; content: string }>;
+  } | null = null;
 
   constructor(private trace: LangfuseTraceClient) {}
 
-  startGeneration(input: {
+  setInput(input: {
     systemPrompt: string;
     messages: Array<{ role: string; content: string }>;
-    model?: string;
   }): void {
+    this.initialInput = input;
     try {
-      this.generation = this.trace.generation({
-        name: 'llm-call',
-        model: input.model,
+      this.trace.update({
         input: {
           system: input.systemPrompt,
           messages: input.messages,
         },
       });
     } catch (err) {
-      console.error('[Tracing] startGeneration failed:', err);
+      console.error('[Tracing] setInput failed:', err);
     }
   }
 
-  endGeneration(output: {
+  recordStep(step: {
+    stepNumber: number;
     text: string;
     reasoning?: string;
     finishReason: string;
     inputTokens?: number;
     outputTokens?: number;
+    model?: string;
   }): void {
     try {
-      this.generation?.end({
-        output: {
-          text: output.text,
-          reasoning: output.reasoning,
-        },
-        usage: {
-          input: output.inputTokens,
-          output: output.outputTokens,
-        },
+      // 创建一个已完成的 generation span（创建时即 end）
+      // 每个 step 一条独立 span，Langfuse UI 里可以看到完整的 agentic loop 时间线
+      const startTime = new Date();
+      const endTime = new Date();
+      const gen = this.trace.generation({
+        name: `llm-step-${step.stepNumber}`,
+        model: step.model,
+        // 只在第一个 step 带完整上下文；后续 step 的 input 主要是上一轮工具结果
+        // 展示简洁起见，都挂初始 input 作为上下文参考
+        input: this.initialInput
+          ? { system: this.initialInput.systemPrompt, messages: this.initialInput.messages }
+          : undefined,
+        startTime,
         metadata: {
-          finishReason: output.finishReason,
+          stepNumber: step.stepNumber,
+          finishReason: step.finishReason,
         },
       });
+      gen.end({
+        output: {
+          text: step.text,
+          reasoning: step.reasoning,
+        },
+        usage: {
+          input: step.inputTokens,
+          output: step.outputTokens,
+        },
+        endTime,
+      });
     } catch (err) {
-      console.error('[Tracing] endGeneration failed:', err);
+      console.error('[Tracing] recordStep failed:', err);
     }
   }
 
@@ -234,8 +254,8 @@ const NOOP_TOOL_HANDLE: ToolCallTraceHandle = {
 };
 
 const NOOP_TRACE_HANDLE: GenerateTraceHandle = {
-  startGeneration: () => {},
-  endGeneration: () => {},
+  setInput: () => {},
+  recordStep: () => {},
   startToolCall: () => NOOP_TOOL_HANDLE,
   event: () => {},
   error: () => {},

@@ -161,22 +161,34 @@ export interface SessionPersistence {
  * 一次 generate() 的 trace handle。
  * 提供 generation + tool span + event 子操作。
  * 所有方法都是 fire-and-forget，失败不能影响主流程（实现方自己 catch）。
+ *
+ * 设计说明：一次 generate() 的 agentic loop 内可能有多个 LLM API 调用
+ * （step 0 → tool → step 1 → tool → step N）。每个 step 产生独立的
+ * generation span，由 recordStep 调用创建。不再使用 start/end 成对
+ * 的模式——那种模式只能记录一次调用。
  */
 export interface GenerateTraceHandle {
-  /** 开始 LLM 调用 */
-  startGeneration(input: {
+  /**
+   * 设置整个 trace 的 input（初始 systemPrompt + messages）。
+   * 在 generate() 调用前调一次，用于 UI 展示调用上下文。
+   */
+  setInput(input: {
     systemPrompt: string;
     messages: Array<{ role: string; content: string }>;
-    model?: string;
   }): void;
 
-  /** LLM 调用结束 */
-  endGeneration(output: {
+  /**
+   * 记录一个 step 的完整信息（每个内部 LLM API 调用对应一个 step）。
+   * 创建一个已完成的 generation span。
+   */
+  recordStep(step: {
+    stepNumber: number;
     text: string;
     reasoning?: string;
     finishReason: string;
     inputTokens?: number;
     outputTokens?: number;
+    model?: string;
   }): void;
 
   /** 开始一次工具调用，返回 handle 用于结束 */
@@ -581,11 +593,10 @@ export class GameSession {
         this.currentNarrativeBuffer = '';
         this.emitter.beginStreamingEntry();
 
-        // 🔭 可观测性：启动 LLM 调用的 generation span
-        traceHandle?.startGeneration({
+        // 🔭 可观测性：设置 trace 初始上下文（展示 LLM 看到的 prompt）
+        traceHandle?.setInput({
           systemPrompt: context.systemPrompt,
           messages: context.messages.map((m) => ({ role: m.role, content: m.content })),
-          model: this.llmClient.getModelName(),
         });
 
         // Call LLM (agentic tool loop — signal_input_needed 会挂起等玩家)
@@ -645,17 +656,21 @@ export class GameSession {
               handle?.end(toolResult);
             }
           },
+          onStep: (step) => {
+            // 🔭 tracing: 每个 step 记一个 generation span
+            traceHandle?.recordStep({
+              stepNumber: step.stepNumber,
+              text: step.text,
+              reasoning: step.reasoning,
+              finishReason: step.finishReason,
+              inputTokens: step.inputTokens,
+              outputTokens: step.outputTokens,
+              model: step.model,
+            });
+          },
         });
 
         this.abortController = null;
-
-        // 🔭 可观测性：结束 LLM 调用 span，记录 usage
-        traceHandle?.endGeneration({
-          text: result.text,
-          finishReason: result.finishReason,
-          inputTokens: result.usage?.inputTokens,
-          outputTokens: result.usage?.outputTokens,
-        });
 
         // Flush any buffered text in the reasoning filter
         textFilter?.flush();

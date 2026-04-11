@@ -28,6 +28,21 @@ export interface LLMConfig {
   reasoningFilterEnabled?: boolean;  // 启用启发式推理过滤器（无原生思考时）
 }
 
+/**
+ * 单步信息（AI SDK 每次 LLM API 调用对应一个 step）
+ * 用于 onStep 回调 —— 一个 agentic loop 内会有多个 step
+ */
+export interface StepInfo {
+  stepNumber: number;
+  text: string;
+  reasoning?: string;
+  finishReason: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  toolCalls: Array<{ name: string; args: unknown }>;
+  model?: string;
+}
+
 export interface GenerateOptions {
   systemPrompt: string;
   messages: ChatMessage[];
@@ -39,6 +54,8 @@ export interface GenerateOptions {
   onReasoningChunk?: (text: string) => void;
   onToolCall?: (name: string, args: unknown) => void;
   onToolResult?: (name: string, result: unknown) => void;
+  /** 每个 step（内部 LLM API 调用）结束时触发，用于追踪/观测 */
+  onStep?: (step: StepInfo) => void;
 }
 
 export interface GenerateResult {
@@ -125,6 +142,7 @@ export class LLMClient {
       onReasoningChunk,
       onToolCall: onToolCallCb,
       onToolResult: onToolResultCb,
+      onStep,
     } = options;
 
     const aiTools = buildAISDKTools(toolHandlers);
@@ -158,6 +176,26 @@ export class LLMClient {
         );
         if (logEntry) {
           logEntry.result = output;
+        }
+      },
+      onStepFinish: (step) => {
+        if (!onStep) return;
+        try {
+          onStep({
+            stepNumber: step.stepNumber,
+            text: step.text,
+            reasoning: step.reasoningText,
+            finishReason: String(step.finishReason),
+            inputTokens: step.usage?.inputTokens,
+            outputTokens: step.usage?.outputTokens,
+            toolCalls: step.toolCalls.map((tc) => ({
+              name: tc.toolName,
+              args: tc.input,
+            })),
+            model: step.model?.modelId,
+          });
+        } catch (err) {
+          console.error('[llm-client] onStep handler threw:', err);
         }
       },
     });
