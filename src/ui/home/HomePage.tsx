@@ -22,6 +22,7 @@ export function HomePage() {
   const logout = useAuthStore((s) => s.logout);
 
   // Local 模式总是显示编辑器按钮；Remote 模式仅管理员可见
+  // v2.6 编辑器新 flow 仍保持 admin-only，符合"剧本详情只有 admin 能看"的原则
   const canEdit = engineMode === 'local' || isAdmin;
 
   // 管理员下架剧本

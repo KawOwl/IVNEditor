@@ -20,7 +20,7 @@ import { Elysia } from 'elysia';
 import type { ScriptManifest } from '../../../src/core/types';
 import { scriptService } from '../services/script-service';
 import { scriptVersionService } from '../services/script-version-service';
-import { requirePlayer, isResponse } from '../auth-identity';
+import { requireAdmin, isResponse } from '../auth-identity';
 
 /** 校验请求者是某剧本的作者 */
 async function requireScriptOwner(
@@ -45,7 +45,7 @@ export const scriptVersionsForScriptRoutes = new Elysia({ prefix: '/api/scripts/
 
   // POST — 创建新 draft 版本
   .post('/', async ({ params, body, request }) => {
-    const auth = await requirePlayer(request);
+    const auth = await requireAdmin(request);
     if (isResponse(auth)) return auth;
 
     const scriptId = params.id;  // URL :id 实际是 script id
@@ -79,7 +79,7 @@ export const scriptVersionsForScriptRoutes = new Elysia({ prefix: '/api/scripts/
 
   // GET — 列出某剧本所有版本（summary，不含 manifest）
   .get('/', async ({ params, request }) => {
-    const auth = await requirePlayer(request);
+    const auth = await requireAdmin(request);
     if (isResponse(auth)) return auth;
 
     const scriptId = params.id;
@@ -98,7 +98,7 @@ export const scriptVersionRoutes = new Elysia({ prefix: '/api/script-versions' }
 
   // GET /:versionId — 取单个版本详情（含 manifest）
   .get('/:versionId', async ({ params, request }) => {
-    const auth = await requirePlayer(request);
+    const auth = await requireAdmin(request);
     if (isResponse(auth)) return auth;
 
     const version = await scriptVersionService.getById(params.versionId);
@@ -114,7 +114,7 @@ export const scriptVersionRoutes = new Elysia({ prefix: '/api/script-versions' }
 
   // POST /:versionId/publish — 发布一个 draft
   .post('/:versionId/publish', async ({ params, request }) => {
-    const auth = await requirePlayer(request);
+    const auth = await requireAdmin(request);
     if (isResponse(auth)) return auth;
 
     const version = await scriptVersionService.getById(params.versionId);
@@ -137,7 +137,7 @@ export const scriptVersionRoutes = new Elysia({ prefix: '/api/script-versions' }
 
   // DELETE /:versionId — 删除 draft 版本
   .delete('/:versionId', async ({ params, request }) => {
-    const auth = await requirePlayer(request);
+    const auth = await requireAdmin(request);
     if (isResponse(auth)) return auth;
 
     const version = await scriptVersionService.getById(params.versionId);

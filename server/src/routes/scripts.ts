@@ -31,7 +31,7 @@ import { Elysia } from 'elysia';
 import type { ScriptManifest } from '../../../src/core/types';
 import { scriptService } from '../services/script-service';
 import { scriptVersionService } from '../services/script-version-service';
-import { requireAnyIdentity, requirePlayer, isResponse } from '../auth-identity';
+import { requireAdmin, requireAnyIdentity, isResponse } from '../auth-identity';
 
 /** 剧本公开信息（不含 prompt segments，玩家可见） */
 interface PublicScriptInfo {
@@ -74,7 +74,7 @@ function manifestToPublicInfo(scriptId: string, manifest: ScriptManifest): Publi
 export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
 
   // ============================================================================
-  // POST / — 创建剧本（player auth，作者是当前用户）
+  // POST / — 创建剧本（admin only）
   // ============================================================================
   //
   // 接受两种 body 形状：
@@ -87,10 +87,10 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
   //      原子性地 upsert scripts + 创建 published 版本，保留旧编辑器的
   //      "一键发布" 路径。
   //
-  // 作者权限模型：当前登录用户自动成为作者（authorUserId）。后续
-  // PATCH/DELETE 只允许作者自己操作。
+  // 权限模型：编辑器全功能保持 admin-only（符合原设计"剧本详情只有
+  // admin 能看"），当前登录 admin 自动成为 authorUserId。
   .post('/', async ({ body, request }) => {
-    const id = await requirePlayer(request);
+    const id = await requireAdmin(request);
     if (isResponse(id)) return id;
 
     const record = body as Partial<LegacyScriptRecord>;
@@ -127,9 +127,9 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
   // PATCH /:id — 更新剧本元数据（label/description）
   // ============================================================================
   //
-  // 作者 ownership 强制。只动 scripts 表，不创建新版本。
+  // Admin only + 作者 ownership 强制。只动 scripts 表，不创建新版本。
   .patch('/:id', async ({ params, body, request }) => {
-    const id = await requirePlayer(request);
+    const id = await requireAdmin(request);
     if (isResponse(id)) return id;
 
     const patch = body as { label?: string; description?: string | null };
@@ -180,15 +180,12 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
   //
   // 6.3 编辑器会优先走 GET /api/scripts/:id/versions + GET
   // /api/script-versions/:versionId；此端点保留给未迁移的代码路径。
-  // 作者 ownership 强制：只能读自己的剧本。
+  // Admin only。
   .get('/:id/full', async ({ params, request }) => {
-    const auth = await requirePlayer(request);
-    if (isResponse(auth)) return auth;
+    const _id = await requireAdmin(request);
+    if (isResponse(_id)) return _id;
 
     const script = await scriptService.getById(params.id);
-    if (script && script.authorUserId !== auth.userId) {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
-    }
     if (!script) {
       return new Response(JSON.stringify({ error: 'Script not found' }), { status: 404 });
     }
@@ -224,9 +221,9 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
   // DELETE /:id — 删除剧本（级联删 script_versions 和相关 playthroughs）
   // ============================================================================
   //
-  // 作者 ownership 强制。
+  // Admin only + 作者 ownership 强制。
   .delete('/:id', async ({ params, request }) => {
-    const id = await requirePlayer(request);
+    const id = await requireAdmin(request);
     if (isResponse(id)) return id;
 
     const deleted = await scriptService.delete(params.id, id.userId);
@@ -240,13 +237,13 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
   })
 
   // ============================================================================
-  // GET /mine — 列出当前用户作为作者的所有剧本（编剧工作区用）
+  // GET /mine — 列出当前 admin 作为作者的所有剧本（编剧工作区用）
   // ============================================================================
   //
   // 6.3 编辑器会用这个代替本地 IndexedDB 列表。返回 scripts 表行 +
   // 每个剧本的最新版本状态（draft/published/archived）方便前端展示。
   .get('/mine', async ({ request }) => {
-    const id = await requirePlayer(request);
+    const id = await requireAdmin(request);
     if (isResponse(id)) return id;
 
     const scripts = await scriptService.listByAuthor(id.userId);
