@@ -147,19 +147,8 @@ type ScriptSource = 'local' | 'remote' | 'both';
 
 interface MergedScriptItem extends ScriptListItem {
   source: ScriptSource;
-  localVersion?: string;
-  remoteVersion?: string;
-  newerOnServer?: boolean;
-}
-
-function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
-    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
-  }
-  return 0;
+  // TODO(6.3): 剧本版本管理上线后，这里会改成 "latest published version"
+  // 和本地 draft 的对比。现在 6.1 阶段先去掉 string-version 比较。
 }
 
 // ============================================================================
@@ -180,7 +169,6 @@ export function EditorPage() {
   const [loadedScriptId, setLoadedScriptId] = useState<string | null>(null);
   const [scriptLabel, setScriptLabel] = useState('未命名剧本');
   const [scriptDescription, setScriptDescription] = useState('');
-  const [scriptVersion, setScriptVersion] = useState('0.0.0');
   const [scriptTags, setScriptTags] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -215,16 +203,8 @@ export function EditorPage() {
           for (const local of localList) {
             const remote = remoteCatalog.find((r) => r.id === local.id);
             if (remote) {
-              // Exists on both sides
-              const lv = local.version ?? '0.0.0';
-              const rv = remote.version ?? '0.0.0';
-              merged.push({
-                ...local,
-                source: 'both',
-                localVersion: lv,
-                remoteVersion: rv,
-                newerOnServer: compareVersions(rv, lv) > 0,
-              });
+              // Exists on both sides —— 6.3 会引入真正的版本对比
+              merged.push({ ...local, source: 'both' });
             } else {
               // Local only
               merged.push({ ...local, source: 'local' });
@@ -242,9 +222,7 @@ export function EditorPage() {
               updatedAt: Date.now(),
               fileCount: remote.chapterCount,
               tags: remote.tags,
-              version: remote.version,
               source: 'remote',
-              remoteVersion: remote.version,
             });
           }
 
@@ -268,9 +246,10 @@ export function EditorPage() {
   const handleLoadScript = useCallback(async (scriptId: string) => {
     // Find merged item to check source
     const mergedItem = scriptList.find((s) => s.id === scriptId);
-    const needsFetch = mergedItem && (mergedItem.source === 'remote' || mergedItem.newerOnServer);
+    // TODO(6.3): 引入版本管理后这里会改成"后端 latest draft 比本地新就拉"
+    const needsFetch = mergedItem && mergedItem.source === 'remote';
 
-    // If remote-only or server has newer version, fetch from server first
+    // If remote-only, fetch from server first
     if (needsFetch && getEngineMode() === 'remote') {
       try {
         const authHeader = useAuthStore.getState().getAuthHeader();
@@ -301,7 +280,6 @@ export function EditorPage() {
     setLoadedScriptId(scriptId);
     setScriptLabel(record.label);
     setScriptDescription(record.description);
-    setScriptVersion(manifest.version ?? '0.0.0');
     setScriptTags(manifest.tags ?? []);
     setIsPublished(!!record.published);
     setPromptAssemblyOrder(manifest.promptAssemblyOrder);
@@ -314,15 +292,11 @@ export function EditorPage() {
     setSaving(true);
     try {
       const id = loadedScriptId ?? uuid();
-      // Auto-increment patch version
-      const vParts = scriptVersion.split('.').map(Number);
-      const newVersion = `${vParts[0] || 0}.${vParts[1] || 0}.${(vParts[2] || 0) + 1}`;
-      setScriptVersion(newVersion);
+      // 旧的 patch+1 自增版本号逻辑已废弃，6.3 会引入真正的 script_versions 表管理
 
       const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
       const manifest: ScriptManifest = {
         id,
-        version: newVersion,
         label: scriptLabel,
         description: scriptDescription,
         tags: scriptTags.length > 0 ? scriptTags : undefined,
@@ -357,7 +331,7 @@ export function EditorPage() {
     } finally {
       setSaving(false);
     }
-  }, [loadedScriptId, scriptLabel, scriptDescription, scriptVersion, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, disabledAssemblySections, refreshScriptList]);
+  }, [loadedScriptId, scriptLabel, scriptDescription, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, disabledAssemblySections, refreshScriptList]);
 
   // --- Delete a script from IndexedDB ---
   const handleDeleteScript = useCallback(async (id: string) => {
@@ -388,7 +362,6 @@ export function EditorPage() {
     const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
     const manifest: ScriptManifest = {
       id,
-      version: scriptVersion,
       label: scriptLabel,
       description: scriptDescription,
       tags: scriptTags.length > 0 ? scriptTags : undefined,
@@ -443,7 +416,6 @@ export function EditorPage() {
       setLoadedScriptId(record.id);
       setScriptLabel(record.label);
       setScriptDescription(record.description);
-      setScriptVersion(record.manifest.version ?? '0.0.0');
       setScriptTags(record.manifest.tags ?? []);
       setPromptAssemblyOrder(record.manifest.promptAssemblyOrder);
       setDisabledAssemblySections(record.manifest.disabledAssemblySections ?? []);
@@ -460,7 +432,6 @@ export function EditorPage() {
     setLoadedScriptId(null);
     setScriptLabel('未命名剧本');
     setScriptDescription('');
-    setScriptVersion('0.0.0');
     setScriptTags([]);
     setStateSchema(defaultStateSchema);
     setMemoryConfig(defaultMemoryConfig);
@@ -1045,7 +1016,6 @@ ${doc.content}
               <ScriptInfoPanel
                 label={scriptLabel}
                 description={scriptDescription}
-                version={scriptVersion}
                 tags={scriptTags}
                 stateSchema={stateSchema}
                 memoryConfig={memoryConfig}
@@ -1053,7 +1023,6 @@ ${doc.content}
                 initialPrompt={initialPrompt}
                 onLabelChange={setScriptLabel}
                 onDescriptionChange={setScriptDescription}
-                onVersionChange={setScriptVersion}
                 onTagsChange={setScriptTags}
                 onStateSchemaChange={setStateSchema}
                 onMemoryConfigChange={setMemoryConfig}
@@ -1345,17 +1314,13 @@ function ScriptListEntry({
             {item.source === 'remote' && (
               <span className="ml-1 text-[9px] text-cyan-400">云端</span>
             )}
-            {item.source === 'both' && item.newerOnServer && (
-              <span className="ml-1 text-[9px] text-amber-400">有更新</span>
-            )}
-            {item.source === 'both' && !item.newerOnServer && (
+            {item.source === 'both' && (
               <span className="ml-1 text-[9px] text-zinc-500">已同步</span>
             )}
           </div>
         )}
         <div className="text-[10px] text-zinc-600">
           {item.source === 'remote' ? `${item.fileCount} 章` : `${item.fileCount} 文件`}
-          {item.version && <span className="ml-1">v{item.version}</span>}
           {item.source !== 'remote' && <span> · {new Date(item.updatedAt).toLocaleDateString()}</span>}
         </div>
       </div>

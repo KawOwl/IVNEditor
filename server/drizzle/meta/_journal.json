@@ -8,6 +8,13 @@
       "when": 1775684896977,
       "tag": "0000_boring_galactus",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1775902123815,
+      "tag": "0001_script_versions",
+      "breakpoints": true
     }
   ]
 }

@@ -29,7 +29,6 @@ export interface ScriptListItem {
   updatedAt: number;
   fileCount: number;
   tags?: string[];
-  version?: string;
   published?: boolean;
 }
 
@@ -77,7 +76,6 @@ export class ScriptStorage {
         updatedAt: r.updatedAt,
         fileCount: r.manifest.chapters.reduce((sum, ch) => sum + ch.segments.length, 0),
         tags: r.manifest.tags,
-        version: r.manifest.version,
         published: r.published,
       }));
   }

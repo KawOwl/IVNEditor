@@ -12,6 +12,9 @@ import { requirePlayer, isResponse } from '../auth-identity';
 export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
 
   // GET / — 列出当前用户的游玩记录
+  // 注意：6.1 阶段 API 契约还在用 scriptId（= scriptStore 的 key），
+  // 内部 service 层已经叫 scriptVersionId。6.3 前端适配时会把 API
+  // 契约也改成 scriptVersionId，6.2 加回真正的 script_versions 行。
   .get('/', async ({ query, request }) => {
     const id = await requirePlayer(request);
     if (isResponse(id)) return id;
@@ -19,13 +22,14 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
     const { scriptId } = query as { scriptId?: string };
     const playthroughs = await playthroughService.list({
       userId: id.userId,
-      scriptId,
+      scriptVersionId: scriptId,
     });
 
-    // 附加 scriptTitle（从 scriptStore 读取）
+    // 附加 scriptTitle（从 scriptStore 读取）—— 目前 scriptVersionId 存的是
+    // scriptStore 的 key，可以直接 get 拿 title
     const withTitles = playthroughs.map((pt) => {
-      const record = scriptStore.get(pt.scriptId);
-      return { ...pt, scriptTitle: record?.manifest.title ?? pt.scriptId };
+      const record = scriptStore.get(pt.scriptVersionId);
+      return { ...pt, scriptTitle: record?.manifest.label ?? pt.scriptVersionId };
     });
 
     return { playthroughs: withTitles };
@@ -50,7 +54,7 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
     const chapterId = record.manifest.chapters[0]?.id ?? 'ch1';
     const result = await playthroughService.create({
       userId: id.userId,
-      scriptId,
+      scriptVersionId: scriptId,
       chapterId,
       title,
     });

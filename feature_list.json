@@ -214,10 +214,11 @@
     "id": "4.1",
     "title": "存档/读档",
     "description": "IndexedDB 持久化：保存/加载游戏状态，含 segment ID 列表 + 剧本版本号",
-    "status": "done",
+    "status": "deprecated",
     "type": "e2e",
     "ref": "v2.0.md#四、Runtime Layer",
-    "verify": "存档后刷新页面，读档恢复到存档时的完整状态（进度、记忆、变量）"
+    "verify": "存档后刷新页面，读档恢复到存档时的完整状态（进度、记忆、变量）",
+    "note": "已被 v2.5 后端 playthroughs 持久化 + WebSocket 断线重连替代。SaveManager 从未接入 UI（编辑器从未有存档/读档按钮），相关类型和代码作为 6.1 的一部分已删除：save-manager.ts / SaveData / ProgressState / saveDataSchema"
   },
   {
     "id": "4.2",
@@ -304,11 +305,11 @@
   {
     "id": "6.1",
     "title": "剧本版本管理 schema 迁移",
-    "description": "新增 scripts + script_versions 表；playthroughs 破坏性迁移（drop 重建），新增 script_version_id FK + kind 字段；删除 ScriptManifest.version 字段",
-    "status": "pending",
+    "description": "新增 scripts + script_versions 表；playthroughs 加 script_version_id FK + kind 字段（破坏性：truncate 旧数据）；删除 ScriptManifest.version 字段 + 随之变成 dead code 的 save-manager/SaveData/ProgressState",
+    "status": "in-progress",
     "type": "logic",
     "ref": "PROGRESS.md#v2.6 剧本版本管理",
-    "verify": "bun tsc --noEmit 通过；bun run db:migrate 成功应用；server 启动不崩；旧 playthroughs 数据被清空"
+    "verify": "bun tsc --noEmit 通过；drizzle migration 0001_script_versions 能应用；server 启动不崩；旧 playthroughs 数据被 truncate"
   },
   {
     "id": "6.2",

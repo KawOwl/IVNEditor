@@ -136,34 +136,5 @@ export const changelogEntrySchema = z.object({
   source: z.enum(['llm', 'system']),
 });
 
-export const saveDataSchema = z.object({
-  version: z.string(),
-  scriptId: z.string(),
-  scriptVersion: z.string(),
-  timestamp: z.number(),
-  progress: z.object({
-    currentChapterId: z.string(),
-    totalTurns: z.number().int().nonnegative(),
-    inputNeeded: z.boolean(),
-    activeSegmentIds: z.array(z.string()),
-    scriptVersion: z.string(),
-  }),
-  scriptState: z.object({
-    vars: z.record(z.string(), z.unknown()),
-  }),
-  memory: z.object({
-    entries: z.array(memoryEntrySchema),
-    summaries: z.array(z.string()),
-    watermark: z.number().int().nonnegative(),
-    inheritedSummary: z.string().optional(),
-  }),
-  changelog: z.array(changelogEntrySchema),
-  activeSegmentIds: z.array(z.string()),
-  inheritanceSnapshot: z.object({
-    fromChapter: z.string(),
-    toChapter: z.string(),
-    timestamp: z.number(),
-    fields: z.record(z.string(), z.unknown()),
-    summary: z.string(),
-  }).optional(),
-});
+// 注：saveDataSchema 已随 v2.5 后端持久化上线而废弃（对应类型 SaveData
+// 也已从 types.ts 删除）。前端 IndexedDB 存档路径不再存在。

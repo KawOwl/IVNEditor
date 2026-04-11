@@ -235,7 +235,6 @@ const memoryConfig: MemoryConfig = {
 
 export const module7TestManifest: ScriptManifest = {
   id: 'module-7',
-  version: '3.0.0',
   label: 'MODULE_7 互动叙事',
   description: '你在一个陌生的地下设施中苏醒，身边有一个不会说话的女孩。在废墟与微光中，你们将一起探索这个被遗忘的世界。',
   author: '编剧团队',

@@ -24,7 +24,7 @@ async function cleanTables() {
   await db.delete(schema.users);
 }
 
-const TEST_SCRIPT_ID = 'test-script-001';
+const TEST_SCRIPT_VERSION_ID = 'test-script-version-001';
 const TEST_CHAPTER_ID = 'ch1';
 
 /** 创建一个测试用户（只写 users 表，不建 auth session） */
@@ -35,7 +35,7 @@ async function createTestUser(id?: string): Promise<string> {
 }
 
 async function createTestPlaythrough(overrides: Partial<{
-  scriptId: string;
+  scriptVersionId: string;
   chapterId: string;
   userId: string;
   title: string;
@@ -43,7 +43,7 @@ async function createTestPlaythrough(overrides: Partial<{
   // 自动创建 user 如果没指定
   const userId = overrides.userId ?? await createTestUser();
   return service.create({
-    scriptId: overrides.scriptId ?? TEST_SCRIPT_ID,
+    scriptVersionId: overrides.scriptVersionId ?? TEST_SCRIPT_VERSION_ID,
     chapterId: overrides.chapterId ?? TEST_CHAPTER_ID,
     userId,
     title: overrides.title,
@@ -92,9 +92,9 @@ describe('PlaythroughService', () => {
 
     it('should count titles per script independently for same user', async () => {
       const userId = await createTestUser();
-      await createTestPlaythrough({ userId, scriptId: 'script-a' });
-      await createTestPlaythrough({ userId, scriptId: 'script-a' });
-      const bFirst = await createTestPlaythrough({ userId, scriptId: 'script-b' });
+      await createTestPlaythrough({ userId, scriptVersionId: 'script-a' });
+      await createTestPlaythrough({ userId, scriptVersionId: 'script-a' });
+      const bFirst = await createTestPlaythrough({ userId, scriptVersionId: 'script-b' });
       expect(bFirst.title).toBe('游玩 #1');
     });
 
@@ -144,14 +144,14 @@ describe('PlaythroughService', () => {
       expect(result[1].title).toBe('B');
     });
 
-    it('should filter by scriptId', async () => {
+    it('should filter by scriptVersionId', async () => {
       const userId = await createTestUser();
-      await createTestPlaythrough({ userId, scriptId: 'script-a' });
-      await createTestPlaythrough({ userId, scriptId: 'script-b' });
+      await createTestPlaythrough({ userId, scriptVersionId: 'script-a' });
+      await createTestPlaythrough({ userId, scriptVersionId: 'script-b' });
 
-      const result = await service.list({ userId, scriptId: 'script-a' });
+      const result = await service.list({ userId, scriptVersionId: 'script-a' });
       expect(result.length).toBe(1);
-      expect(result[0].scriptId).toBe('script-a');
+      expect(result[0].scriptVersionId).toBe('script-a');
     });
 
     it('should NOT return other users playthroughs (ownership enforced)', async () => {
@@ -472,20 +472,20 @@ describe('PlaythroughService', () => {
   });
 
   // --------------------------------------------------------------------------
-  // countByScriptAndUser
+  // countByScriptVersionAndUser
   // --------------------------------------------------------------------------
 
-  describe('countByScriptAndUser', () => {
+  describe('countByScriptVersionAndUser', () => {
     it('should count correctly per user + script', async () => {
       const u1 = await createTestUser();
       const u2 = await createTestUser();
-      await createTestPlaythrough({ userId: u1, scriptId: 'sa' });
-      await createTestPlaythrough({ userId: u1, scriptId: 'sa' });
-      await createTestPlaythrough({ userId: u2, scriptId: 'sa' });
+      await createTestPlaythrough({ userId: u1, scriptVersionId: 'sa' });
+      await createTestPlaythrough({ userId: u1, scriptVersionId: 'sa' });
+      await createTestPlaythrough({ userId: u2, scriptVersionId: 'sa' });
 
-      expect(await service.countByScriptAndUser('sa', u1)).toBe(2);
-      expect(await service.countByScriptAndUser('sa', u2)).toBe(1);
-      expect(await service.countByScriptAndUser('sb', u1)).toBe(0);
+      expect(await service.countByScriptVersionAndUser('sa', u1)).toBe(2);
+      expect(await service.countByScriptVersionAndUser('sa', u2)).toBe(1);
+      expect(await service.countByScriptVersionAndUser('sb', u1)).toBe(0);
     });
   });
 

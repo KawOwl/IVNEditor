@@ -70,7 +70,9 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
       }
 
       // 3. 查 script manifest
-      const record = scriptStore.get(detail.scriptId);
+      // TODO(6.2): scriptVersionId 现在存的是 scriptStore 的 key，6.2 后改为从
+      // script_versions 表拿 manifest 快照
+      const record = scriptStore.get(detail.scriptVersionId);
       if (!record) {
         ws.send(JSON.stringify({ type: 'error', error: 'Script not found' }));
         ws.close();

@@ -156,7 +156,9 @@ export class GameSessionWrapper {
       tracing: createBoundTracing({
         playthroughId: this.playthroughId,
         userId: this.userId,
-        scriptId: manifest.id,
+        // TODO(6.3): 改用真实的 script_version_id；现在临时用 manifest.id
+        // 作为 trace label，语义上就是"这个 playthrough 基于哪份 manifest"
+        scriptVersionId: manifest.id,
       }),
     };
   }

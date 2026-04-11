@@ -23,7 +23,7 @@ async function cleanTables() {
   await db.delete(schema.users);
 }
 
-const TEST_SCRIPT_ID = 'test-script-persist';
+const TEST_SCRIPT_VERSION_ID = 'test-script-persist';
 const TEST_CHAPTER_ID = 'ch1';
 
 async function createTestUser(): Promise<string> {
@@ -35,7 +35,7 @@ async function createTestUser(): Promise<string> {
 async function createTestPlaythrough() {
   const userId = await createTestUser();
   const r = await service.create({
-    scriptId: TEST_SCRIPT_ID,
+    scriptVersionId: TEST_SCRIPT_VERSION_ID,
     chapterId: TEST_CHAPTER_ID,
     userId,
   });

@@ -36,7 +36,6 @@ interface PublicScriptInfo {
   coverImage?: string;
   author?: string;
   tags?: string[];
-  version: string;
   chapterCount: number;
   firstChapterId: string | null;
   openingMessages?: string[];
@@ -49,7 +48,6 @@ interface PublicScriptInfo {
 function publicInfoToManifest(info: PublicScriptInfo): ScriptManifest {
   return {
     id: info.id,
-    version: info.version,
     label: info.label,
     coverImage: info.coverImage,
     description: info.description,
@@ -139,7 +137,6 @@ export function App() {
           label: item.label,
           description: item.description,
           tags: item.tags,
-          version: item.version,
           chapterCount: item.fileCount,
         })));
       });

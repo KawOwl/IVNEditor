@@ -308,7 +308,6 @@ function buildManifest(result: ArchitectResult): ScriptManifest {
 
   return {
     id: `script-${Date.now()}`,
-    version: '1.0.0',
     label: '未命名剧本',
     stateSchema: result.stateExtraction.schema,
     memoryConfig: result.memoryStrategy.config,

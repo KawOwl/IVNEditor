@@ -16,7 +16,6 @@ import { cn } from '../../lib/utils';
 export interface ScriptInfoPanelProps {
   label: string;
   description: string;
-  version: string;
   tags: string[];
   stateSchema: StateSchema;
   memoryConfig: MemoryConfig;
@@ -24,7 +23,6 @@ export interface ScriptInfoPanelProps {
   initialPrompt: string;
   onLabelChange: (label: string) => void;
   onDescriptionChange: (desc: string) => void;
-  onVersionChange: (version: string) => void;
   onTagsChange: (tags: string[]) => void;
   onStateSchemaChange: (schema: StateSchema) => void;
   onMemoryConfigChange: (config: MemoryConfig) => void;
@@ -47,7 +45,6 @@ const VAR_TYPES: StateVariableType[] = ['number', 'string', 'boolean', 'array', 
 export function ScriptInfoPanel({
   label,
   description,
-  version,
   tags,
   stateSchema,
   memoryConfig,
@@ -55,7 +52,6 @@ export function ScriptInfoPanel({
   initialPrompt,
   onLabelChange,
   onDescriptionChange,
-  onVersionChange,
   onTagsChange,
   onStateSchemaChange,
   onMemoryConfigChange,
@@ -84,18 +80,6 @@ export function ScriptInfoPanel({
               rows={3}
               className={cn(inputClass, 'resize-none')}
             />
-          </Field>
-          <Field label="版本号">
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={version}
-                onChange={(e) => onVersionChange(e.target.value)}
-                placeholder="0.0.0"
-                className={cn(inputClass, 'w-24 font-mono')}
-              />
-              <span className="text-[10px] text-zinc-600">保存时自动 +1</span>
-            </div>
           </Field>
           <Field label="Initial Prompt">
             <input

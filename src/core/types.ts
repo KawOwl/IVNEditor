@@ -123,7 +123,6 @@ export interface CrossChapterConfig {
 
 export interface ScriptManifest {
   id: string;
-  version: string;                // 剧本版本号
   label: string;
   chapters: ChapterManifest[];
   stateSchema: StateSchema;
@@ -151,7 +150,6 @@ export interface ScriptCatalogEntry {
   description?: string;
   author?: string;
   tags?: string[];
-  version?: string;
   chapterCount: number;
 }
 
@@ -164,19 +162,15 @@ export interface ChapterManifest {
 }
 
 // ============================================================================
-// Four-Layer Runtime State — 四层运行时状态
+// Runtime State
 // ============================================================================
 
-// Layer 1: Progress — 流程进度
-export interface ProgressState {
-  currentChapterId: string;
-  totalTurns: number;
-  inputNeeded: boolean;
-  activeSegmentIds: string[];
-  scriptVersion: string;
-}
+// 注：旧版的 ProgressState（Layer 1，含 currentChapterId / totalTurns /
+// inputNeeded / activeSegmentIds / scriptVersion）已随 v2.5 后端持久化上线
+// 而废弃 —— 相应数据现在都在 playthroughs 表里维护，前端不再需要一个独立
+// 的 Layer 1 interface。删除时间：2026-04-11。
 
-// Layer 2: ScriptState — 编剧定义的游戏变量
+// ScriptState — 编剧定义的游戏变量
 export interface ScriptState {
   vars: Record<string, unknown>;
 }
@@ -279,22 +273,9 @@ export interface ToolCallResult {
   error?: string;
 }
 
-// ============================================================================
-// Save/Load — 存档结构
-// ============================================================================
-
-export interface SaveData {
-  version: string;
-  scriptId: string;
-  scriptVersion: string;
-  timestamp: number;
-  progress: ProgressState;
-  scriptState: ScriptState;
-  memory: MemoryState;
-  changelog: ChangelogEntry[];
-  activeSegmentIds: string[];         // 当前激活的 segment ID 列表
-  inheritanceSnapshot?: InheritanceSnapshot;
-}
+// 注：旧版的 SaveData（IndexedDB 存档结构）已随 v2.5 后端 playthroughs
+// 持久化上线而废弃。相应数据在 playthroughs + narrative_entries 两张表
+// 里，前端不再需要这个类型。删除时间：2026-04-11。
 
 // ============================================================================
 // Segment Activation — Segment 激活状态管理

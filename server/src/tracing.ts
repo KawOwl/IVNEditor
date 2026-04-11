@@ -54,7 +54,7 @@ if (enabled) {
 export interface BoundTracingContext {
   playthroughId: string;  // → Langfuse sessionId
   userId: string;         // → Langfuse userId
-  scriptId: string;
+  scriptVersionId: string;
 }
 
 /**
@@ -73,7 +73,7 @@ export function createBoundTracing(ctx: BoundTracingContext): SessionTracing | u
           userId: ctx.userId,
           metadata: {
             turn,
-            scriptId: ctx.scriptId,
+            scriptVersionId: ctx.scriptVersionId,
             ...metadata,
           },
         });
@@ -94,7 +94,7 @@ export function createBoundTracing(ctx: BoundTracingContext): SessionTracing | u
           output: { restored: true, turn },
           metadata: {
             turn,
-            scriptId: ctx.scriptId,
+            scriptVersionId: ctx.scriptVersionId,
             ...metadata,
           },
         });

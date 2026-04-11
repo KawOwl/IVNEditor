@@ -16,14 +16,14 @@ import { db, schema } from '../db';
 export interface ListFilter {
   /** 必填：只返回该用户的记录（ownership 隔离） */
   userId: string;
-  scriptId?: string;
+  scriptVersionId?: string;
   includeArchived?: boolean;
 }
 
 /** 列表项（不含 entries，用于列表展示） */
 export interface PlaythroughSummary {
   id: string;
-  scriptId: string;
+  scriptVersionId: string;
   title: string | null;
   turn: number;
   status: string;
@@ -36,9 +36,11 @@ export interface PlaythroughSummary {
 export interface CreateInput {
   /** 必填：归属的 user */
   userId: string;
-  scriptId: string;
+  scriptVersionId: string;
   chapterId: string;
   title?: string | null;
+  /** 'production' | 'playtest'，默认 'production' */
+  kind?: 'production' | 'playtest';
 }
 
 /** 更新参数 */
@@ -50,7 +52,7 @@ export interface UpdateInput {
 /** 详情（含 entries 分页） */
 export interface PlaythroughDetail {
   id: string;
-  scriptId: string;
+  scriptVersionId: string;
   title: string | null;
   chapterId: string;
   status: string;
@@ -96,14 +98,14 @@ export class PlaythroughService {
     if (!filter.includeArchived) {
       conditions.push(eq(schema.playthroughs.archived, false));
     }
-    if (filter.scriptId) {
-      conditions.push(eq(schema.playthroughs.scriptId, filter.scriptId));
+    if (filter.scriptVersionId) {
+      conditions.push(eq(schema.playthroughs.scriptVersionId, filter.scriptVersionId));
     }
 
     const rows = await db
       .select({
         id: schema.playthroughs.id,
-        scriptId: schema.playthroughs.scriptId,
+        scriptVersionId: schema.playthroughs.scriptVersionId,
         title: schema.playthroughs.title,
         turn: schema.playthroughs.turn,
         status: schema.playthroughs.status,
@@ -131,7 +133,7 @@ export class PlaythroughService {
         .from(schema.playthroughs)
         .where(
           and(
-            eq(schema.playthroughs.scriptId, input.scriptId),
+            eq(schema.playthroughs.scriptVersionId, input.scriptVersionId),
             eq(schema.playthroughs.userId, input.userId),
           ),
         );
@@ -144,7 +146,8 @@ export class PlaythroughService {
     await db.insert(schema.playthroughs).values({
       id,
       userId: input.userId,
-      scriptId: input.scriptId,
+      scriptVersionId: input.scriptVersionId,
+      kind: input.kind ?? 'production',
       title,
       chapterId: input.chapterId,
       status: 'idle',
@@ -193,7 +196,7 @@ export class PlaythroughService {
 
     return {
       id: pt.id,
-      scriptId: pt.scriptId,
+      scriptVersionId: pt.scriptVersionId,
       title: pt.title,
       chapterId: pt.chapterId,
       status: pt.status,
@@ -248,15 +251,15 @@ export class PlaythroughService {
   }
 
   /**
-   * 统计某用户的某剧本游玩数
+   * 统计某用户的某剧本版本游玩数
    */
-  async countByScriptAndUser(scriptId: string, userId: string): Promise<number> {
+  async countByScriptVersionAndUser(scriptVersionId: string, userId: string): Promise<number> {
     const result = await db
       .select({ count: sql<number>`count(*)` })
       .from(schema.playthroughs)
       .where(
         and(
-          eq(schema.playthroughs.scriptId, scriptId),
+          eq(schema.playthroughs.scriptVersionId, scriptVersionId),
           eq(schema.playthroughs.userId, userId),
         ),
       );

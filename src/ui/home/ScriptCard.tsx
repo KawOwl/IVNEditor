@@ -75,11 +75,6 @@ export function ScriptCard({ entry, onClick, onUnpublish }: ScriptCardProps) {
           {/* Bottom row: badges + author */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
-              {entry.version && (
-                <span className="bg-black/60 backdrop-blur-sm rounded px-2 py-0.5 text-[10px] text-zinc-400 font-mono">
-                  v{entry.version}
-                </span>
-              )}
               <span className="bg-black/60 backdrop-blur-sm rounded px-2 py-0.5 text-[10px] text-zinc-300">
                 {entry.chapterCount} 章
               </span>
