@@ -349,11 +349,11 @@
   },
   {
     "id": "6.6",
-    "title": "前端 IndexedDB 下线（可选）",
-    "description": "确认 6.1-6.5 稳定后，移除 src/storage/script-storage.ts；编辑器纯后端 + 内存状态",
-    "status": "pending",
+    "title": "前端 IndexedDB 下线",
+    "description": "删 script-storage + local engine mode；编辑器纯后端；LocalBackupGate 过渡期 modal 让用户先导出本地缓存再清理",
+    "status": "done",
     "type": "logic",
     "ref": "PROGRESS.md#v2.6 剧本版本管理",
-    "verify": "tsc 通过；编辑器完整流程无 IndexedDB 调用；删除相关死代码"
+    "verify": "tsc 通过；编辑器完整流程不触 IndexedDB；Gate 能在有本地数据时强制导出+清理；无本地数据 clean-pass"
   }
 ]
