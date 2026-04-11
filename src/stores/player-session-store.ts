@@ -92,6 +92,17 @@ export function clearSessionId(): void {
 }
 
 /**
+ * 手动切换 sessionId（用于 login 成功后把匿名 session 换成
+ * 登录用户的 session）。同步写 localStorage + 内存缓存，下次
+ * fetchWithAuth 立即用新的。
+ */
+export function setSessionId(newSessionId: string): void {
+  localStorage.setItem(LS_SESSION_ID_KEY, newSessionId);
+  cachedSessionId = newSessionId;
+  ensurePromise = null;
+}
+
+/**
  * 封装 fetch：自动注入 Authorization header，自动 ensure session
  * 用于所有 playerAuth 保护的 endpoint。
  *

@@ -73,23 +73,23 @@ function publicInfoToManifest(info: PublicScriptInfo): ScriptManifest {
 export function App() {
   const page = useAppStore((s) => s.page);
   const setCatalog = useAppStore((s) => s.setCatalog);
-  const checkToken = useAuthStore((s) => s.checkToken);
+  const checkMe = useAuthStore((s) => s.checkMe);
   const isAdmin = useAuthStore((s) => s.isAdmin);
   const [showLogin, setShowLogin] = useState(false);
   const [authReady, setAuthReady] = useState(engineMode === 'local');
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // 启动时：初始化 player session（匿名身份）+ 验证 admin token
+  // 启动时：初始化 session + checkMe 填充 auth store
   useEffect(() => {
     if (engineMode !== 'remote') return;
     ensureSessionId()
+      .then(() => checkMe())
       .then(() => setAuthReady(true))
       .catch((e) => {
         console.error('[Auth] Failed to init player session:', e);
         setAuthError(String(e));
       });
-    checkToken();
-  }, [checkToken]);
+  }, [checkMe]);
 
   // 全局快捷键 Ctrl+Shift+L 呼出管理员登录弹窗
   const handleKeyDown = useCallback((e: KeyboardEvent) => {

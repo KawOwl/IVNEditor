@@ -18,7 +18,6 @@ import {
   isResponse,
 } from '../auth-identity';
 import { userService } from '../services/user-service';
-import { generateToken } from '../auth';
 import { db, schema } from '../db';
 import { eq } from 'drizzle-orm';
 
@@ -29,8 +28,41 @@ import { eq } from 'drizzle-orm';
 async function cleanTables() {
   await db.delete(schema.narrativeEntries);
   await db.delete(schema.playthroughs);
+  await db.delete(schema.scriptVersions);
+  await db.delete(schema.scripts);
   await db.delete(schema.userSessions);
   await db.delete(schema.users);
+}
+
+/** 确保 roles 表有 'admin' 和 'user' 行（migration 0003 建的，cleanTables 不动） */
+async function ensureRolesSeeded() {
+  await db
+    .insert(schema.roles)
+    .values([
+      { id: 'user', name: '普通用户' },
+      { id: 'admin', name: '管理员' },
+    ])
+    .onConflictDoNothing({ target: schema.roles.id });
+}
+
+/** 创建一个 admin 用户 + session，返回 sessionId */
+async function createTestAdmin(): Promise<{ userId: string; sessionId: string }> {
+  await ensureRolesSeeded();
+  const userId = crypto.randomUUID();
+  const sessionId = crypto.randomUUID();
+  await db.insert(schema.users).values({
+    id: userId,
+    username: `test-admin-${userId.slice(0, 8)}`,
+    passwordHash: 'not-used-in-tests',
+    displayName: 'test admin',
+    roleId: 'admin',
+  });
+  await db.insert(schema.userSessions).values({
+    id: sessionId,
+    userId,
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  });
+  return { userId, sessionId };
 }
 
 function makeReq(headers: Record<string, string> = {}): Request {
@@ -133,7 +165,7 @@ describe('auth-identity', () => {
       expect(identity).not.toBeNull();
       expect(identity!.kind).toBe('registered');
       expect(identity!.isRegistered).toBe(true);
-      expect(identity!.playerUsername).toBe('testuser');
+      expect(identity!.username).toBe('testuser');
     });
   });
 
@@ -162,22 +194,21 @@ describe('auth-identity', () => {
       expect(identity!.userId).toBe(userId);
     });
 
-    it('should resolve admin token', async () => {
-      const adminToken = await generateToken('admin');
+    it('should resolve admin session (role_id=admin)', async () => {
+      const { userId, sessionId } = await createTestAdmin();
       const identity = await resolveIdentity(
-        makeReq({ Authorization: `Bearer ${adminToken}` }),
+        makeReq({ Authorization: `Bearer ${sessionId}` }),
       );
       expect(identity).not.toBeNull();
       expect(identity!.kind).toBe('admin');
-      expect(identity!.userId).toBe('admin');
+      expect(identity!.userId).toBe(userId);
       expect(identity!.isRegistered).toBe(true);
+      expect(identity!.roleId).toBe('admin');
     });
 
-    it('should reject invalid admin token format without trying player', async () => {
-      // 构造看起来像 admin token 但签名错误的 token
-      const fakeToken = 'fake:123:bad-signature';
+    it('should return null for garbage token', async () => {
       const identity = await resolveIdentity(
-        makeReq({ Authorization: `Bearer ${fakeToken}` }),
+        makeReq({ Authorization: 'Bearer not-a-real-session-id' }),
       );
       expect(identity).toBeNull();
     });
@@ -206,9 +237,9 @@ describe('auth-identity', () => {
     });
 
     it('should return 403 Response for admin identity', async () => {
-      const adminToken = await generateToken('admin');
+      const { sessionId } = await createTestAdmin();
       const result = await requirePlayer(
-        makeReq({ Authorization: `Bearer ${adminToken}` }),
+        makeReq({ Authorization: `Bearer ${sessionId}` }),
       );
       expect(isResponse(result)).toBe(true);
       if (isResponse(result)) expect(result.status).toBe(403);
@@ -217,9 +248,9 @@ describe('auth-identity', () => {
 
   describe('requireAdmin', () => {
     it('should return identity for admin', async () => {
-      const adminToken = await generateToken('admin');
+      const { sessionId } = await createTestAdmin();
       const result = await requireAdmin(
-        makeReq({ Authorization: `Bearer ${adminToken}` }),
+        makeReq({ Authorization: `Bearer ${sessionId}` }),
       );
       expect(isResponse(result)).toBe(false);
       if (!isResponse(result)) expect(result.kind).toBe('admin');
@@ -243,9 +274,9 @@ describe('auth-identity', () => {
 
   describe('requireAnyIdentity', () => {
     it('should return identity for admin', async () => {
-      const adminToken = await generateToken('admin');
+      const { sessionId } = await createTestAdmin();
       const result = await requireAnyIdentity(
-        makeReq({ Authorization: `Bearer ${adminToken}` }),
+        makeReq({ Authorization: `Bearer ${sessionId}` }),
       );
       expect(isResponse(result)).toBe(false);
     });

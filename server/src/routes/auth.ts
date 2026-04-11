@@ -1,17 +1,14 @@
 /**
  * Auth Routes
  *
- * 管理员（编辑器）:
- *   POST /api/auth/login   — 登录
- *
- * 玩家（匿名 + 未来注册）:
- *   POST /api/auth/init    — 创建匿名用户 + session（无需任何凭证）
+ * 统一的 user_sessions 认证（6.2b 起）：
+ *   POST /api/auth/init    — 创建匿名用户 + session
+ *   POST /api/auth/login   — 用户名/密码登录（admin + 注册玩家都走这条）
  *   POST /api/auth/logout  — 销毁当前 session
+ *   GET  /api/auth/me      — 返回当前身份（含 isAdmin）
  *
- * 通用:
- *   GET  /api/auth/me      — 返回当前身份（根据 token 自动识别 admin / player）
- *
- * 注意：/api/auth/login 当前只服务 admin。未来做玩家登录时在这里补。
+ * admin 通过 seed 脚本从 env 上架到 users 表（role_id='admin'），
+ * 登录后拿到的 sessionId 和匿名玩家一样。区别只在 /me 返回的 isAdmin 标志。
  */
 
 import { Elysia } from 'elysia';
@@ -22,7 +19,7 @@ import { userService } from '../services/user-service';
 export const authRoutes = new Elysia({ prefix: '/api/auth' })
 
   // ============================================================================
-  // POST /login — 管理员登录（保留原有行为）
+  // POST /login — 用户名/密码登录
   // ============================================================================
   .post('/login', async ({ body }) => {
     const { username, password } = body as { username: string; password: string };
@@ -37,9 +34,12 @@ export const authRoutes = new Elysia({ prefix: '/api/auth' })
 
     return {
       ok: true,
-      token: result.token,
+      sessionId: result.sessionId,
+      userId: result.userId,
       username: result.username,
       displayName: result.displayName,
+      roleId: result.roleId,
+      isAdmin: result.isAdmin,
     };
   })
 
@@ -56,7 +56,7 @@ export const authRoutes = new Elysia({ prefix: '/api/auth' })
   })
 
   // ============================================================================
-  // POST /logout — 销毁当前 player session
+  // POST /logout — 销毁当前 session
   // ============================================================================
   .post('/logout', async ({ request }) => {
     const authHeader = request.headers.get('Authorization');
@@ -69,7 +69,7 @@ export const authRoutes = new Elysia({ prefix: '/api/auth' })
   })
 
   // ============================================================================
-  // GET /me — 当前身份（admin 或 player 都支持）
+  // GET /me — 当前身份
   // ============================================================================
   .get('/me', async ({ request }) => {
     const identity = await resolveIdentity(request);
@@ -77,22 +77,14 @@ export const authRoutes = new Elysia({ prefix: '/api/auth' })
       return new Response(JSON.stringify({ error: '未登录或 token 已过期' }), { status: 401 });
     }
 
-    // admin 响应：保持向后兼容（username 字段）
-    if (identity.kind === 'admin') {
-      return {
-        ok: true,
-        kind: 'admin',
-        username: identity.adminUsername,
-      };
-    }
-
-    // player 响应
     return {
       ok: true,
-      kind: identity.kind, // 'anonymous' | 'registered'
+      kind: identity.kind,             // 'anonymous' | 'registered' | 'admin'
       userId: identity.userId,
-      isRegistered: identity.isRegistered,
-      username: identity.playerUsername ?? null,
+      username: identity.username,
+      displayName: identity.displayName,
+      roleId: identity.roleId,
+      isAdmin: identity.kind === 'admin',
     };
   });
 

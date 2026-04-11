@@ -1,48 +1,40 @@
 /**
  * Identity Resolution — 统一的身份解析中间件
  *
- * 从 Authorization header 提取 token，判断 token 类型（admin / player），
- * 查到对应的 identity。所有需要 auth 的 route 都调这个函数。
+ * 从 Authorization header 提取 sessionId token，查 user_sessions + users
+ * 表，返回 Identity。6.2b 之后只有一种 token 类型：user_sessions.id (UUID)，
+ * admin 和普通玩家用同一套 token 格式，区别只在 users.role_id。
  *
- * Token 类型判断：
- *   - admin token: "username:timestamp:signature"（3 段冒号分隔）
- *   - player token: UUID 格式（user_sessions.id，36 字符）
+ * 调用方通常走 requireAdmin / requirePlayer / requireAnyIdentity 获取
+ * 典型权限语义。
  */
 
 import { eq, gt, and } from 'drizzle-orm';
 import { db, schema } from './db';
-import { verifyToken as verifyAdminToken } from './auth';
 
 // ============================================================================
 // Types
 // ============================================================================
 
+/**
+ * 'anonymous'  — users.username 为空（未登录、自动创建的匿名行）
+ * 'registered' — 注册普通玩家（users.username 非空，role_id='user'）
+ * 'admin'      — users.role_id='admin'
+ */
 export type IdentityKind = 'anonymous' | 'registered' | 'admin';
 
 export interface Identity {
   kind: IdentityKind;
-  /**
-   * 身份的稳定 ID：
-   * - player (匿名/注册): users.id (uuid)
-   * - admin: username
-   */
+  /** users.id（UUID） */
   userId: string;
-  /** 用于 player 区分匿名/注册；admin 视同 true */
+  /** 便捷字段：kind !== 'anonymous' */
   isRegistered: boolean;
-  /** 仅 admin 有值 */
-  adminUsername?: string;
-  /** 仅 player 注册用户有值 */
-  playerUsername?: string;
-}
-
-// ============================================================================
-// Token 类型判断
-// ============================================================================
-
-/** admin token 形如 "username:timestamp:signature" */
-function looksLikeAdminToken(token: string): boolean {
-  const parts = token.split(':');
-  return parts.length === 3 && parts.every((p) => p.length > 0);
+  /** 用户名（anonymous 无） */
+  username: string | null;
+  /** users.role_id */
+  roleId: string;
+  /** 显示名（可能为空） */
+  displayName: string | null;
 }
 
 // ============================================================================
@@ -50,7 +42,8 @@ function looksLikeAdminToken(token: string): boolean {
 // ============================================================================
 
 /**
- * 从 Request 解析身份。失败返回 null。
+ * 从 Request 的 Authorization header 解析身份。
+ * 失败返回 null（没有 header / token 过期 / session 不存在）。
  */
 export async function resolveIdentity(request: Request): Promise<Identity | null> {
   const authHeader = request.headers.get('Authorization');
@@ -58,28 +51,11 @@ export async function resolveIdentity(request: Request): Promise<Identity | null
   const token = authHeader.slice(7).trim();
   if (!token) return null;
 
-  // 1. 先尝试 admin token
-  if (looksLikeAdminToken(token)) {
-    const username = await verifyAdminToken(token);
-    if (username) {
-      return {
-        kind: 'admin',
-        userId: username,
-        isRegistered: true,
-        adminUsername: username,
-      };
-    }
-    // admin token 格式但验证失败，不再尝试 player（避免假阳性）
-    return null;
-  }
-
-  // 2. player session lookup
   return resolvePlayerSession(token);
 }
 
 /**
- * 仅从 player session token（UUID）解析，不接受 admin token。
- * 用于 WS 连接等只允许 player 的场景。
+ * 从 sessionId 解析身份（WS 连接 query / Authorization header 都用这个）。
  */
 export async function resolvePlayerSession(token: string): Promise<Identity | null> {
   if (!token) return null;
@@ -88,30 +64,43 @@ export async function resolvePlayerSession(token: string): Promise<Identity | nu
   const rows = await db
     .select({
       userId: schema.userSessions.userId,
-      expiresAt: schema.userSessions.expiresAt,
       username: schema.users.username,
+      displayName: schema.users.displayName,
+      roleId: schema.users.roleId,
     })
     .from(schema.userSessions)
     .innerJoin(schema.users, eq(schema.userSessions.userId, schema.users.id))
-    .where(and(eq(schema.userSessions.id, token), gt(schema.userSessions.expiresAt, now)))
+    .where(
+      and(
+        eq(schema.userSessions.id, token),
+        gt(schema.userSessions.expiresAt, now),
+      ),
+    )
     .limit(1);
 
   if (rows.length === 0) return null;
-  const row = rows[0];
+  const row = rows[0]!;
 
-  // 滑动续期 last_used_at（异步 fire-and-forget，不阻塞）
-  db
-    .update(schema.userSessions)
+  // 滑动续期 last_used_at（fire-and-forget）
+  db.update(schema.userSessions)
     .set({ lastUsedAt: now })
     .where(eq(schema.userSessions.id, token))
     .catch(() => {});
 
-  const isRegistered = row.username !== null;
+  const kind: IdentityKind =
+    row.roleId === 'admin'
+      ? 'admin'
+      : row.username !== null
+        ? 'registered'
+        : 'anonymous';
+
   return {
-    kind: isRegistered ? 'registered' : 'anonymous',
+    kind,
     userId: row.userId,
-    isRegistered,
-    playerUsername: row.username ?? undefined,
+    isRegistered: kind !== 'anonymous',
+    username: row.username,
+    roleId: row.roleId,
+    displayName: row.displayName,
   };
 }
 
@@ -131,7 +120,12 @@ export async function requireAdmin(request: Request): Promise<Identity | Respons
   return identity;
 }
 
-/** 要求 player 身份（匿名或注册，admin 不算） */
+/**
+ * 要求 player 身份：匿名或注册的普通玩家。
+ *
+ * admin 不算"玩家"——避免 admin 用同一套 session 去玩游戏时把 admin
+ * 的 userId 污染到 playthroughs 上。
+ */
 export async function requirePlayer(request: Request): Promise<Identity | Response> {
   const identity = await resolveIdentity(request);
   if (!identity) {

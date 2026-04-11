@@ -8,25 +8,21 @@
 
 import { Elysia } from 'elysia';
 import { getLLMConfig, updateLLMConfig, resetLLMConfig } from '../storage/llm-config-store';
-import { extractAdmin } from '../auth';
+import { requireAdmin, isResponse } from '../auth-identity';
 
 export const configRoutes = new Elysia({ prefix: '/api/config' })
 
   // 获取当前配置（管理员返回完整 API key）
   .get('/llm', async ({ request }) => {
-    const admin = await extractAdmin(request);
-    if (!admin) {
-      return new Response(JSON.stringify({ error: '需要管理员权限' }), { status: 403 });
-    }
+    const auth = await requireAdmin(request);
+    if (isResponse(auth)) return auth;
     return getLLMConfig();
   })
 
   // 更新配置（需管理员）
   .put('/llm', async ({ body, request }) => {
-    const admin = await extractAdmin(request);
-    if (!admin) {
-      return new Response(JSON.stringify({ error: '需要管理员权限' }), { status: 403 });
-    }
+    const auth = await requireAdmin(request);
+    if (isResponse(auth)) return auth;
 
     const patch = body as Partial<{
       provider: string;
@@ -42,10 +38,8 @@ export const configRoutes = new Elysia({ prefix: '/api/config' })
 
   // 重置为默认值（需管理员）
   .post('/llm/reset', async ({ request }) => {
-    const admin = await extractAdmin(request);
-    if (!admin) {
-      return new Response(JSON.stringify({ error: '需要管理员权限' }), { status: 403 });
-    }
+    const auth = await requireAdmin(request);
+    if (isResponse(auth)) return auth;
     resetLLMConfig();
     return { ok: true, config: getLLMConfig() };
   });

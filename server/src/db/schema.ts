@@ -30,24 +30,54 @@ import {
 import type { ScriptManifest } from '../../../src/core/types';
 
 // ============================================================================
-// Users — 玩家用户表
+// Roles — 用户角色表
 // ============================================================================
 
 /**
- * 统一的用户表：匿名和注册用户都在这里。
- * - 匿名用户：username / password_hash 都为 null
- * - 注册用户：username 非 null
- * 通过 username IS NOT NULL 判断是否注册。
- * 从匿名到注册只需 UPDATE 同一行，user.id 不变，playthroughs 自动继承。
+ * 用户角色定义，供 users.role_id FK 引用。
+ *
+ * 初始两个角色（seed）:
+ *   - admin: 管理员，完全访问权限，编辑/发布剧本
+ *   - user:  普通用户，默认角色（包括匿名 + 注册玩家）
+ *
+ * 以后可以按需加角色（比如 'reviewer'、'support'），不需要改 users schema。
+ */
+export const roles = pgTable('roles', {
+  id: text('id').primaryKey(),            // slug，例 'admin' / 'user'
+  name: text('name').notNull(),           // 显示名，例 '管理员' / '普通用户'
+  description: text('description'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================================================
+// Users — 用户表
+// ============================================================================
+
+/**
+ * 统一的用户表：匿名、注册玩家、管理员都在这里。
+ *
+ * - 匿名用户：username / password_hash 都为 null；role_id = 'user'
+ * - 注册玩家（未来做登录）：username 非 null + password_hash；role_id = 'user'
+ * - 管理员：username 非 null + password_hash；role_id = 'admin'
+ *   管理员通过 seed 脚本从 env 一次性创建（见 scripts/seed-admin.ts）
+ *
+ * v2.6 之前 admin 走单独的 HMAC token 认证、不进 users 表。6.2b 合并进来：
+ * admin 和玩家用同一套 user_sessions token，区别只在 role_id='admin'。
  */
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
   username: text('username').unique(), // NULL = 未注册（匿名）
   passwordHash: text('password_hash'), // NULL = 未注册
   displayName: text('display_name'),
+  roleId: text('role_id')
+    .notNull()
+    .default('user')
+    .references(() => roles.id),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => [
+  index('idx_users_role').on(table.roleId),
+]);
 
 // ============================================================================
 // User Sessions — Auth 会话（DB 映射 sessionId → userId）

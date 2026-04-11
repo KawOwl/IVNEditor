@@ -1,107 +1,87 @@
 /**
- * Auth — 简单的管理员认证模块
+ * Auth — 统一的用户名/密码登录（6.2b 合并 admin + player）
  *
- * 3 个硬编码管理员用户，基于 HMAC-SHA256 token 认证。
- * token 格式：`username:timestamp:signature`
- * 有效期 7 天。
+ * 和 6.2b 之前的版本不同：
+ * - 不再硬编码 admin 用户列表，也不再用 HMAC self-contained token
+ * - 所有用户（admin、注册玩家）都从 users 表读，靠 role_id 区分权限
+ * - 登录成功产出 user_sessions 行，客户端拿 sessionId 作为 token
+ *   （和匿名玩家用同一套 token 格式）
+ * - 密码用 bcrypt 哈希存在 users.password_hash
+ *
+ * admin 用户通过 seed 脚本 `bun run seed:admin` 从 env 变量上架，
+ * 详见 scripts/seed-admin.ts。
  */
 
-// ============================================================================
-// Admin Users（硬编码）
-// ============================================================================
+import { randomUUID } from 'node:crypto';
+import bcrypt from 'bcryptjs';
+import { eq, sql } from 'drizzle-orm';
+import { db, schema } from './db';
 
-interface AdminUser {
+/** 登录返回体 */
+export interface LoginResult {
+  sessionId: string;
+  userId: string;
   username: string;
-  password: string;
-  displayName: string;
+  displayName: string | null;
+  roleId: string;
+  isAdmin: boolean;
 }
 
-const ADMIN_USERS: AdminUser[] = [
-  { username: 'admin', password: 'ivn@2024', displayName: '管理员' },
-  { username: 'kawowl', password: 'kawowl@ivn', displayName: 'KawOwl' },
-  { username: 'editor', password: 'editor@ivn', displayName: '编剧' },
-];
+/** 匿名 session 默认 1 年 */
+const SESSION_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
-// Token 签名密钥（生产环境应使用环境变量）
-const TOKEN_SECRET = process.env.AUTH_SECRET ?? 'ivn-auth-secret-2024';
-const TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-
-// ============================================================================
-// Token 生成 / 验证
-// ============================================================================
-
-async function hmacSign(data: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(TOKEN_SECRET),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(data));
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-/** 生成认证 token */
-export async function generateToken(username: string): Promise<string> {
-  const timestamp = Date.now().toString();
-  const payload = `${username}:${timestamp}`;
-  const signature = await hmacSign(payload);
-  return `${payload}:${signature}`;
-}
-
-/** 验证 token，返回用户名或 null */
-export async function verifyToken(token: string): Promise<string | null> {
-  const parts = token.split(':');
-  if (parts.length !== 3) return null;
-
-  const [username, timestampStr, signature] = parts;
-  if (!username || !timestampStr || !signature) return null;
-
-  // 检查过期
-  const timestamp = parseInt(timestampStr, 10);
-  if (isNaN(timestamp) || Date.now() - timestamp > TOKEN_EXPIRY_MS) return null;
-
-  // 检查签名
-  const payload = `${username}:${timestampStr}`;
-  const expectedSig = await hmacSign(payload);
-  if (signature !== expectedSig) return null;
-
-  // 检查用户是否存在
-  if (!ADMIN_USERS.some((u) => u.username === username)) return null;
-
-  return username;
-}
-
-// ============================================================================
-// Login
-// ============================================================================
-
-/** 验证用户名密码，返回 { token, user } 或 null */
+/**
+ * 验证用户名密码，成功则返回一个新的 session。
+ * 失败（用户不存在 / 密码错 / 密码 hash 为空）都返回 null。
+ */
 export async function login(
   username: string,
   password: string,
-): Promise<{ token: string; username: string; displayName: string } | null> {
-  const user = ADMIN_USERS.find(
-    (u) => u.username === username && u.password === password,
-  );
-  if (!user) return null;
+): Promise<LoginResult | null> {
+  const rows = await db
+    .select({
+      id: schema.users.id,
+      username: schema.users.username,
+      passwordHash: schema.users.passwordHash,
+      displayName: schema.users.displayName,
+      roleId: schema.users.roleId,
+    })
+    .from(schema.users)
+    .where(eq(schema.users.username, username))
+    .limit(1);
 
-  const token = await generateToken(user.username);
-  return { token, username: user.username, displayName: user.displayName };
-}
+  const user = rows[0];
+  if (!user || !user.passwordHash) return null;
 
-// ============================================================================
-// Middleware helper
-// ============================================================================
+  const ok = await bcrypt.compare(password, user.passwordHash);
+  if (!ok) return null;
 
-/** 从请求中提取并验证 token，返回用户名或 null */
-export async function extractAdmin(request: Request): Promise<string | null> {
-  const authHeader = request.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) return null;
-  const token = authHeader.slice(7);
-  return verifyToken(token);
+  // 创建新 session
+  const sessionId = randomUUID();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
+  await db.insert(schema.userSessions).values({
+    id: sessionId,
+    userId: user.id,
+    expiresAt,
+  });
+
+  // 更新 last_seen_at（非关键，失败忽略）
+  try {
+    await db
+      .update(schema.users)
+      .set({ lastSeenAt: sql`NOW()` })
+      .where(eq(schema.users.id, user.id));
+  } catch {
+    // ignore
+  }
+
+  return {
+    sessionId,
+    userId: user.id,
+    username: user.username!,
+    displayName: user.displayName,
+    roleId: user.roleId,
+    isAdmin: user.roleId === 'admin',
+  };
 }

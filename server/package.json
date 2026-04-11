@@ -13,6 +13,7 @@
     "db:studio": "bun drizzle-kit studio",
     "db:check": "bun drizzle-kit check",
     "db:bootstrap": "bun run scripts/bootstrap-drizzle-migrations.ts",
+    "seed:admin": "bun run scripts/seed-admin.ts",
     "test": "bun test",
     "test:watch": "bun test --watch"
   },
@@ -20,7 +21,9 @@
     "@ai-sdk/openai-compatible": "^2.0.37",
     "@elysiajs/cors": "^1.2.0",
     "@elysiajs/static": "^1.4.7",
+    "@types/bcryptjs": "^3.0.0",
     "ai": "^6.0.141",
+    "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.45.2",
     "elysia": "^1.2.25",
     "langfuse": "^3.38.20",
