@@ -693,6 +693,9 @@ ${doc.content}
         systemPrompt: '你是 prompt 改写助手。只输出改写后的 prompt 全文，不要输出任何额外说明。',
         messages: [{ role: 'user', content: rewritePrompt }],
         tools: {},
+        // 长剧本改写容易触发 provider 默认 max_tokens（常见 4096）导致中途截断
+        // 设高一点，provider 端会自动 clamp 到各家模型的实际上限
+        maxOutputTokens: 16384,
       });
 
       if (result.text) {
@@ -701,6 +704,13 @@ ${doc.content}
             ? { ...d, derivedContent: result.text, useDerived: false }
             : d,
           ),
+        );
+      }
+
+      if (result.finishReason === 'length') {
+        alert(
+          'AI 改写输出被模型 max_tokens 限制截断（finishReason=length）。\n' +
+          '已保存截断后的部分结果，请检查是否需要手动补齐或重试。',
         );
       }
     } catch (err) {
