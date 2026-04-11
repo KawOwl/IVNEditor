@@ -342,7 +342,7 @@
     "id": "6.5",
     "title": "玩家侧适配新版本路径",
     "description": "首页列表改为 GET /api/scripts/published；玩家创建 playthrough 用当前 published version 的 id；玩家'我的游玩记录'按 kind=production 过滤",
-    "status": "pending",
+    "status": "done",
     "type": "e2e",
     "ref": "PROGRESS.md#v2.6 剧本版本管理",
     "verify": "完整玩家流程跑通：看列表 → 选剧本 → 开游戏 → 断线重连 → 继续；编辑器试玩记录不出现在玩家记录里"

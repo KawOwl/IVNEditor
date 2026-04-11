@@ -44,7 +44,11 @@ export function PlaythroughList({ scriptId, onSelect }: PlaythroughListProps) {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetchWithAuth(`${getBackendUrl()}/api/playthroughs?scriptId=${scriptId}`);
+      // 玩家侧只显示 kind=production 的记录，避免把 admin 自己的编辑器
+      // 试玩（kind=playtest）混进玩家 UI 里
+      const res = await fetchWithAuth(
+        `${getBackendUrl()}/api/playthroughs?scriptId=${scriptId}&kind=production`,
+      );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setItems(data.playthroughs ?? []);

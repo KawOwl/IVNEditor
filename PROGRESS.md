@@ -1,10 +1,10 @@
 # 项目进度
 
 ## 当前状态
-v2.5 会话持久化 + Langfuse 可观测性已上线。v2.6 剧本版本管理 + 编辑器试玩走后端开发中——为了消除"编辑器试玩无 trace"、"剧本无历史版本"、"playthrough 引用会被剧本改版意外破坏"三个问题，做一次破坏性迁移引入 scripts + script_versions 双表结构。
+v2.6 剧本版本管理 + 编辑器试玩走后端开发中。6.1-6.5 全部完成，只剩可选的 6.6（前端 IndexedDB 下线）。玩家侧和编辑器侧都已经走后端 scripts + script_versions 双表路径，Langfuse trace 能区分 production / editor-playtest。
 
 ## 当前任务
-**v2.6 剧本版本管理 + 编辑器试玩走后端（6.1-6.2 完成，6.3 待做）**
+**v2.6 剧本版本管理 + 编辑器试玩走后端（6.1-6.5 全部完成）**
 - 类型：重构 + 新功能 + 破坏性迁移
 - 来源：本轮讨论（见"v2.6 剧本版本管理"设计决策段）
 - 目标：后端统一存剧本 + 引入版本概念，编辑器试玩走后端便于排查
@@ -13,24 +13,11 @@ v2.5 会话持久化 + Langfuse 可观测性已上线。v2.6 剧本版本管理 
 
 1. ✅ **6.1 schema 迁移**（破坏性）—— 完成
 2. ✅ **6.2 后端路由 + 删 scriptStore** —— 完成
-3. 🔜 **6.3 前端编辑器适配** —— 下一个
-4. **6.4 编辑器试玩走后端** —— PlayPanel 改 editorMode + Langfuse 覆盖编剧试玩
-5. **6.5 玩家侧适配** —— 首页 + 游玩记录按新路径
-6. **6.6 前端 IndexedDB 下线（可选）** —— 全稳定后再做
-
-### 6.3 改动设计（下一个动手的）
-
-**目标**：前端编辑器从 IndexedDB 路径切换到后端 scripts/script_versions API。
-
-**主要改动**：
-- 编辑器"我的剧本"列表：从 `GET /api/scripts/mine`（需 6.2 已提供）拉取
-- "保存"按钮：POST /api/scripts/:id/versions 创建 draft 版本（后端 hash 去重）
-- "加载剧本"：拿到 scriptId 后调 GET /api/scripts/:id/full 拉 manifest
-- "发布"按钮：POST /api/script-versions/:id/publish
-- 新增"版本历史"面板：GET /api/scripts/:id/versions 列出所有版本（只读列表，不做 diff）
-- 支持"基于历史版本新建 draft"（从 archived 复制出 manifest）
-
-**过渡期**：IndexedDB 保留作离线缓存，断网时编辑可继续，但 save/publish 必须联网。
+3. ✅ **6.2b admin 账号合并进 users 表 + roles 角色表** —— 完成
+4. ✅ **6.3 前端编辑器适配** —— 完成
+5. ✅ **6.4 编辑器试玩走后端** —— 完成，Langfuse 能按 editor-playtest tag 区分
+6. ✅ **6.5 玩家侧适配** —— 完成，PlaythroughList 加了 kind=production 过滤
+7. **6.6 前端 IndexedDB 下线（可选）** —— 全稳定后再做
 
 ## 已完成的里程碑
 
