@@ -15,6 +15,8 @@
 import { useState, useMemo, useRef, useCallback } from 'react';
 import type { PromptSegment, StateSchema } from '../../core/types';
 import { estimateTokens } from '../../core/memory';
+import { ENGINE_RULES_CONTENT } from '../../core/engine-rules';
+import { VIRTUAL_IDS, buildStateSection } from '../../core/context-assembler';
 import { cn } from '../../lib/utils';
 
 // ============================================================================
@@ -53,18 +55,6 @@ interface PreviewSection {
   /** 是否被用户手动禁用 */
   disabled?: boolean;
 }
-
-// ============================================================================
-// Virtual Section IDs
-// ============================================================================
-
-const VIRTUAL_IDS = {
-  STATE: '_engine_state',
-  MEMORY: '_engine_memory',
-  HISTORY: '_engine_history',
-  RULES: '_engine_rules',
-  INITIAL_PROMPT: '_initial_prompt',
-} as const;
 
 // ============================================================================
 // Condition evaluator (mirror of context-assembler)
@@ -133,10 +123,8 @@ function buildAllSections(
   }
 
   // --- Virtual: State YAML ---
-  const stateYaml = stateSchema.variables
-    .map((v) => `  ${v.name}: ${JSON.stringify(v.initial)}`)
-    .join('\n');
-  const stateContent = `---\nINTERNAL_STATE:\n${stateYaml}\n---`;
+  // 用 core/context-assembler 的 buildStateSection 保证和运行时 section 完全一致
+  const stateContent = buildStateSection(vars);
   sections.push({
     id: VIRTUAL_IDS.STATE,
     label: 'State YAML',
@@ -176,22 +164,14 @@ function buildAllSections(
   });
 
   // --- Virtual: ENGINE RULES ---
-  const rulesContent =
-    `---\n[ENGINE RULES]\n` +
-    `你运行在互动叙事引擎中。你是GM，不是玩家。\n` +
-    `- 绝对不要替玩家行动、观察、思考或说话。\n` +
-    `- 你的回复结束后，引擎会自动等待玩家输入（和聊天一样）。\n` +
-    `- 叙事到达需要等待玩家的时刻时，正常结束你的回复即可。\n` +
-    `- 可用 update_state 更新状态变量，signal_input_needed 提供输入提示。\n` +
-    `- 输出只包含叙事正文和工具调用，不要输出计划、分析或元叙述。\n` +
-    `---`;
+  // 从 core/engine-rules 读真源，和运行时 context-assembler 共用同一份文本
   sections.push({
     id: VIRTUAL_IDS.RULES,
     label: 'ENGINE RULES (tail reminder)',
     source: '引擎自动生成 · 固定',
     role: 'engine',
-    content: rulesContent,
-    tokenCount: estimateTokens(rulesContent),
+    content: ENGINE_RULES_CONTENT,
+    tokenCount: estimateTokens(ENGINE_RULES_CONTENT),
     injected: true,
     virtual: true,
     stability: 'stable',

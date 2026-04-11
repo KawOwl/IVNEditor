@@ -6,6 +6,7 @@
 
 import { useCallback, useState } from 'react';
 import type { StateSchema, StateVariable, StateVariableType, MemoryConfig } from '../../core/types';
+import { listTools } from '../../core/tool-catalog';
 import { cn } from '../../lib/utils';
 
 // ============================================================================
@@ -32,16 +33,10 @@ export interface ScriptInfoPanelProps {
 }
 
 // ============================================================================
-// Available tools
+// Available optional tools —— 从 tool-catalog 单一真源派生
 // ============================================================================
 
-const ALL_TOOLS = [
-  { id: 'read_state', label: '读取状态', desc: 'read_state' },
-  { id: 'query_changelog', label: '查询变更日志', desc: 'query_changelog' },
-  { id: 'pin_memory', label: '钉住记忆', desc: 'pin_memory' },
-  { id: 'query_memory', label: '查询记忆', desc: 'query_memory' },
-  { id: 'set_mood', label: '设置情绪', desc: 'set_mood' },
-];
+const OPTIONAL_TOOLS = listTools({ required: false });
 
 const VAR_TYPES: StateVariableType[] = ['number', 'string', 'boolean', 'array', 'object'];
 
@@ -159,22 +154,25 @@ export function ScriptInfoPanel({
         {/* Enabled tools */}
         <Section title="启用工具">
           <div className="space-y-1.5">
-            {ALL_TOOLS.map((tool) => (
-              <label key={tool.id} className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+            {OPTIONAL_TOOLS.map((tool) => (
+              <label key={tool.name} className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={enabledTools.includes(tool.id)}
+                  checked={enabledTools.includes(tool.name)}
                   onChange={(e) => {
                     if (e.target.checked) {
-                      onEnabledToolsChange([...enabledTools, tool.id]);
+                      onEnabledToolsChange([...enabledTools, tool.name]);
                     } else {
-                      onEnabledToolsChange(enabledTools.filter((t) => t !== tool.id));
+                      onEnabledToolsChange(enabledTools.filter((t) => t !== tool.name));
                     }
                   }}
                   className="rounded border-zinc-600 bg-zinc-900"
                 />
-                <span>{tool.label}</span>
-                <span className="text-[10px] text-zinc-600 font-mono">{tool.desc}</span>
+                <span>{tool.uiLabel}</span>
+                <span className="text-[10px] text-zinc-600 font-mono">{tool.name}</span>
+                <span className="text-[10px] text-zinc-500" title={tool.uiDescription}>
+                  {tool.uiDescription.slice(0, 24)}{tool.uiDescription.length > 24 ? '…' : ''}
+                </span>
               </label>
             ))}
           </div>

@@ -10,9 +10,10 @@
  */
 
 import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete';
+import { listTools } from '../tool-catalog';
 
 // ============================================================================
-// Tool References — 所有可用工具（与 SegmentEditor 共享）
+// Tool References — 从 tool-catalog 单一真源派生
 // ============================================================================
 
 export interface ToolReference {
@@ -21,20 +22,19 @@ export interface ToolReference {
   category: 'mandatory' | 'optional';
 }
 
-export const TOOL_REFERENCES: ToolReference[] = [
-  // Mandatory
-  { name: 'update_state', description: '更新状态变量', category: 'mandatory' },
-  { name: 'signal_input_needed', description: '请求玩家输入', category: 'mandatory' },
-  // Optional
-  { name: 'read_state', description: '读取完整状态快照', category: 'optional' },
-  { name: 'query_changelog', description: '查询状态变更记录', category: 'optional' },
-  { name: 'pin_memory', description: '固定重要记忆', category: 'optional' },
-  { name: 'query_memory', description: '搜索历史记忆', category: 'optional' },
-  { name: 'set_mood', description: '设置 UI 氛围', category: 'optional' },
-  { name: 'play_sfx', description: '播放音效', category: 'optional' },
-  { name: 'show_image', description: '展示插图', category: 'optional' },
-  { name: 'roll_dice', description: '掷骰子', category: 'optional' },
-];
+/**
+ * 运行时可用的工具清单，由 tool-catalog 动态派生。
+ *
+ * 以前这里是手写硬编码列表，结果和 tool-executor 漂移到不一致：
+ * play_sfx / roll_dice 是幻觉（补全提示但实际没实现），
+ * inject_context / list_context 是遗漏（实现了但补全没列）。
+ * 现在从真源派生，永远不会再漂。
+ */
+export const TOOL_REFERENCES: ToolReference[] = listTools().map((t) => ({
+  name: t.name,
+  description: t.uiDescription,
+  category: t.required ? 'mandatory' : 'optional',
+}));
 
 // ============================================================================
 // Completion Source 1: `/` → Tool Reference

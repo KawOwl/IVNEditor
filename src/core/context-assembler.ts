@@ -17,6 +17,7 @@ import type {
 } from './types';
 import type { MemoryManager } from './memory';
 import type { StateStore } from './state-store';
+import { serializeStateVars } from './state-store';
 import { estimateTokens } from './memory';
 import { ENGINE_RULES_CONTENT } from './engine-rules';
 
@@ -91,14 +92,32 @@ function evaluateCondition(
 // ContextAssembler
 // ============================================================================
 
-// Virtual section IDs (must match PromptPreviewPanel)
-const VIRTUAL_IDS = {
+/**
+ * 引擎虚拟 section 的 ID 常量。
+ *
+ * 编剧创建的 segment 使用自己的 id；引擎动态填充的内容（状态、记忆、历史、
+ * 规则、首轮 prompt）则使用这些固定 ID，供 context-assembler 和编辑器
+ * PromptPreviewPanel 共享同一套"虚拟 section"定义。
+ */
+export const VIRTUAL_IDS = {
   STATE: '_engine_state',
   MEMORY: '_engine_memory',
   HISTORY: '_engine_history',
   RULES: '_engine_rules',
   INITIAL_PROMPT: '_initial_prompt',
 } as const;
+
+/**
+ * 构建 INTERNAL_STATE section 的完整文本。
+ *
+ * 运行时和编辑器预览都用这个函数，确保两侧的 section 分隔符、头部标签、
+ * YAML 缩进风格完全一致，不会再出现"预览里带 2 空格缩进而运行时不带"
+ * 这类漂移。
+ */
+export function buildStateSection(vars: Record<string, unknown>): string {
+  const body = serializeStateVars(vars);
+  return `---\nINTERNAL_STATE:\n${body}\n---`;
+}
 
 // ENGINE_RULES_CONTENT 现在在 ./engine-rules.ts 单独维护，
 // 玩家侧运行时 + 编剧侧 AI 改写都从那里 import，保持单一真源。
@@ -141,9 +160,8 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
   }
 
   // State YAML
-  const stateYaml = stateStore.serialize();
-  const stateSection = `---\nINTERNAL_STATE:\n${stateYaml}\n---`;
-  const stateTokenCount = estimateTokens(stateYaml);
+  const stateSection = buildStateSection(stateStore.getAll());
+  const stateTokenCount = estimateTokens(stateSection);
   sectionContent.set(VIRTUAL_IDS.STATE, stateSection);
   sectionTokens.set(VIRTUAL_IDS.STATE, stateTokenCount);
 

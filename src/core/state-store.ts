@@ -86,11 +86,7 @@ export class StateStore {
 
   /** Serialize state to YAML-like string for prompt injection */
   serialize(): string {
-    const lines: string[] = [];
-    for (const [key, value] of Object.entries(this.state.vars)) {
-      lines.push(`${key}: ${formatValue(value)}`);
-    }
-    return lines.join('\n');
+    return serializeStateVars(this.state.vars);
   }
 
   /** Export full state for save/cross-chapter */
@@ -174,6 +170,26 @@ export class StateStore {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/**
+ * 序列化状态变量为 YAML-like 字符串。
+ *
+ * 无缩进、每行一个 `key: value`。对不同类型的 value：
+ * - string → 原样（不加引号）
+ * - number / boolean → String()
+ * - array / object → JSON.stringify
+ * - null / undefined → 'null'
+ *
+ * 导出为独立函数以便 context-assembler 的预览路径（没有 StateStore 实例时）
+ * 也能用同一套格式生成 INTERNAL_STATE section，和运行时保持一致。
+ */
+export function serializeStateVars(vars: Record<string, unknown>): string {
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(vars)) {
+    lines.push(`${key}: ${formatValue(value)}`);
+  }
+  return lines.join('\n');
+}
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return 'null';
