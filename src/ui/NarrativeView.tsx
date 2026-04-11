@@ -51,9 +51,14 @@ export function setTypewriterSpeed(cps: number): void {
  * 实现注意：useEffect 只依赖 fullText 和 cps，不依赖 visibleLen。
  * tick 通过 closure 内的局部变量管理 RAF id 和时间戳，避免
  * 每次 setState 触发 cleanup+重启造成的性能问题甚至卡死。
+ *
+ * 恢复场景：如果 mount 时 fullText 就已经是最终内容（比如从 DB
+ * restore 回来的历史 entry），visibleLen 初值直接对齐到 fullText.length，
+ * 这样 GenerateBlock 不会从 0 重新回放打字机动画。流式新 entry
+ * mount 时 fullText=''（由 beginStreamingEntry 创建），初值为 0 正常追赶。
  */
 function useTypewriter(fullText: string, cps: number): string {
-  const [visibleLen, setVisibleLen] = useState(0);
+  const [visibleLen, setVisibleLen] = useState(() => fullText.length);
 
   // fullText 缩短时（新 entry / reset），同步裁剪 visibleLen
   useEffect(() => {

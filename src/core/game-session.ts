@@ -483,6 +483,16 @@ export class GameSession {
       // 🔭 可观测性：在当前 trace 上记录 player_input 事件
       this.currentTraceHandle?.event('player_input', { text }, { via: 'signal', turn });
 
+      // 持久化：把玩家输入写入 narrative_entries，并清理输入状态。
+      // 这个分支之前漏掉了持久化，导致挂起模式下的玩家消息重启后丢失。
+      this.persistence?.onReceiveComplete({
+        entry: { role: 'receive', content: text },
+        stateVars: this.stateStore.getAll(),
+        turn,
+        memoryEntries: this.memory.getAllEntries(),
+        memorySummaries: this.memory.getSummaries(),
+      }).catch((e) => console.error('[Persistence] onReceiveComplete (signal) failed:', e));
+
       // resolve → agentic loop 继续
       resolve(text);
     } else if (this.inputResolve) {
