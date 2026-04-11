@@ -872,9 +872,10 @@ ${doc.content}
         systemPrompt: '你是 prompt 改写助手。只输出改写后的 prompt 全文，不要输出任何额外说明。',
         messages: [{ role: 'user', content: rewritePrompt }],
         tools: {},
-        // 长剧本改写容易触发 provider 默认 max_tokens（常见 4096）导致中途截断
-        // 设高一点，provider 端会自动 clamp 到各家模型的实际上限
-        maxOutputTokens: 16384,
+        // 设到 8192，DeepSeek / 大部分 OpenAI-compatible 模型的硬上限就是
+        // 8192（超过会直接报 "Invalid max_tokens value"）。比 provider 默认
+        // 的 4096 宽一倍，对长剧本改写已经够用。
+        maxOutputTokens: 8192,
       });
 
       if (result.text) {
