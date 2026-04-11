@@ -391,41 +391,73 @@ export function EditorPage() {
 
   // --- Save current editor state ---
   //
-  // Remote 模式（6.3 新 flow）:
-  //   1. 如果还没 scriptId → POST /api/scripts 建空 script 行
-  //   2. POST /api/scripts/:id/versions 创建 draft 版本（后端按 content hash
-  //      去重；相同内容不产生新版本）
-  //   3. 更新 loadedScriptId / loadedVersionId 并刷新版本列表
+  // Remote 模式 flow:
+  //   1. 如果有 loadedScriptId → 先 PATCH /api/scripts/:id 同步元数据
+  //      - PATCH 200：scriptId 在 backend 已存在，直接复用
+  //      - PATCH 404：scriptId 是 IndexedDB 留下的"孤儿"（比如 backend
+  //        TRUNCATE 后第一次保存这个本地缓存剧本）→ 转成 POST 新建，
+  //        但**复用相同的 id**（让本地缓存和后端 id 一致）
+  //      - 其他 4xx/5xx：弹 alert 中断
+  //   2. 如果 scriptId 是空（真新建剧本）→ POST /api/scripts 让后端
+  //      分配 UUID
+  //   3. POST /api/scripts/:id/versions 创建 draft 版本（后端按 content
+  //      hash 去重）
   //   4. 同步一份到 IndexedDB 作离线缓存
   //
-  // Local 模式：直接走 IndexedDB（和 6.2 之前的行为一致）
+  // Local 模式：直接写 IndexedDB
   const handleSaveScript = useCallback(async () => {
     setSaving(true);
     try {
       const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
-
-      // 先确定 scriptId：remote 新建场景需要 POST 后拿
       let scriptId = loadedScriptId;
       const isRemote = getEngineMode() === 'remote';
 
-      if (isRemote && !scriptId) {
-        // Step 1: 后端建空 script 行
+      if (isRemote) {
         const authHeader = useAuthStore.getState().getAuthHeader();
-        const createRes = await fetch(`${getBackendUrl()}/api/scripts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeader },
-          body: JSON.stringify({
-            label: scriptLabel,
-            description: scriptDescription,
-          }),
-        });
-        if (!createRes.ok) {
-          alert(`创建剧本失败: ${createRes.status}`);
-          return;
+        let scriptExistsOnBackend = false;
+
+        // Step 1a: 如果已有 scriptId，先 PATCH 试试
+        if (scriptId) {
+          const patchRes = await fetch(`${getBackendUrl()}/api/scripts/${scriptId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...authHeader },
+            body: JSON.stringify({
+              label: scriptLabel,
+              description: scriptDescription,
+            }),
+          });
+          if (patchRes.ok) {
+            scriptExistsOnBackend = true;
+          } else if (patchRes.status === 404) {
+            // 后端没这个 id（多半是 IndexedDB 缓存里的旧 id）
+            // → 走下面的 POST 重建路径，复用同一 id
+            console.warn(`[save] scriptId ${scriptId} 在后端不存在，作为新建上传`);
+          } else {
+            alert(`保存失败 (PATCH ${patchRes.status})`);
+            return;
+          }
         }
-        const { id: newId } = (await createRes.json()) as { id: string };
-        scriptId = newId;
-        setLoadedScriptId(newId);
+
+        // Step 1b: 不存在就 POST 新建（带 id 复用旧 id；不带 id 则后端
+        // 分配 UUID）
+        if (!scriptExistsOnBackend) {
+          const createRes = await fetch(`${getBackendUrl()}/api/scripts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeader },
+            body: JSON.stringify({
+              id: scriptId ?? undefined,
+              label: scriptLabel,
+              description: scriptDescription,
+            }),
+          });
+          if (!createRes.ok) {
+            alert(`创建剧本失败 (${createRes.status})`);
+            return;
+          }
+          const { id: newId } = (await createRes.json()) as { id: string };
+          scriptId = newId;
+          setLoadedScriptId(newId);
+        }
       }
 
       // local 模式或 remote 已有 id 时，生成新的 id
@@ -450,19 +482,9 @@ export function EditorPage() {
         }],
       };
 
-      // Remote 模式：POST version（后端 hash 去重）
+      // Step 2: POST 新版本
       if (isRemote) {
         const authHeader = useAuthStore.getState().getAuthHeader();
-        // 同步元数据（label/description 可能在 editor 里改了）
-        await fetch(`${getBackendUrl()}/api/scripts/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', ...authHeader },
-          body: JSON.stringify({
-            label: scriptLabel,
-            description: scriptDescription,
-          }),
-        });
-
         const vres = await fetch(`${getBackendUrl()}/api/scripts/${id}/versions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...authHeader },
@@ -479,7 +501,8 @@ export function EditorPage() {
             console.log('[save] 内容未变化，复用现有版本', versionId);
           }
         } else {
-          alert(`保存版本失败: ${vres.status}`);
+          alert(`保存版本失败 (${vres.status})`);
+          return;
         }
       }
 
