@@ -50,14 +50,22 @@ export class GameSessionWrapper {
   private manifest: ScriptManifest;
   private playthroughId: string;
   private userId: string;
+  /** 'production' | 'playtest'，用于 Langfuse trace environment 区分 */
+  private kind: string;
   private ws: WS | null = null;
   /** 断线后的 TTL 定时器 */
   private ttlTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(manifest: ScriptManifest, playthroughId: string, userId: string) {
+  constructor(
+    manifest: ScriptManifest,
+    playthroughId: string,
+    userId: string,
+    kind: string = 'production',
+  ) {
     this.manifest = manifest;
     this.playthroughId = playthroughId;
     this.userId = userId;
+    this.kind = kind;
   }
 
   attachWebSocket(ws: WS): void {
@@ -159,6 +167,7 @@ export class GameSessionWrapper {
         // TODO(6.3): 改用真实的 script_version_id；现在临时用 manifest.id
         // 作为 trace label，语义上就是"这个 playthrough 基于哪份 manifest"
         scriptVersionId: manifest.id,
+        kind: this.kind,
       }),
     };
   }
@@ -180,10 +189,11 @@ export class SessionManager {
     playthroughId: string,
     manifest: ScriptManifest,
     userId: string,
+    kind: string = 'production',
   ): GameSessionWrapper {
     let wrapper = this.sessions.get(playthroughId);
     if (!wrapper) {
-      wrapper = new GameSessionWrapper(manifest, playthroughId, userId);
+      wrapper = new GameSessionWrapper(manifest, playthroughId, userId, kind);
       this.sessions.set(playthroughId, wrapper);
     }
     return wrapper;

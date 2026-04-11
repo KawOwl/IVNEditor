@@ -68,15 +68,31 @@ export function clearStoredPlaythroughId(scriptId: string): void {
 // 2. WS 连接 → 新游戏流程
 // ============================================================================
 
+export interface CreateRemoteSessionOptions {
+  /** 玩家正式游玩走 production；编辑器试玩走 playtest */
+  kind?: 'production' | 'playtest';
+}
+
 export async function createRemoteSession(
   baseUrl: string,
-  scriptId: string,
+  /**
+   * 兼容两种入参：
+   * - 玩家流：传 scriptId（剧本 id）→ 后端自动用当前 published 版本
+   * - 编辑器试玩流：传 { scriptVersionId } → 后端用指定的 draft 版本
+   */
+  target: string | { scriptVersionId: string },
+  options: CreateRemoteSessionOptions = {},
 ): Promise<RemoteSession> {
+  const isVersionTarget = typeof target === 'object';
+  const body = isVersionTarget
+    ? { scriptVersionId: target.scriptVersionId, kind: options.kind ?? 'playtest' }
+    : { scriptId: target, kind: options.kind ?? 'production' };
+
   // 1. 创建 playthrough
   const res = await fetchWithAuth(`${baseUrl}/api/playthroughs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scriptId }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -87,7 +103,9 @@ export async function createRemoteSession(
   const { id: playthroughId } = await res.json() as { id: string; title: string };
 
   // 存储 playthroughId 供下次重连
-  storePlaythroughId(scriptId, playthroughId);
+  // 编辑器试玩用 versionId 作为 storage key（每个版本独立的"上次试玩"）
+  const storageKey = isVersionTarget ? `version:${target.scriptVersionId}` : target;
+  storePlaythroughId(storageKey, playthroughId);
 
   // 2. WS 连接
   return connectWebSocket(baseUrl, playthroughId);

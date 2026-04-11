@@ -1293,7 +1293,8 @@ ${doc.content}
                 compact
                 showDebug={false}
                 showReasoning
-                forceLocal
+                editorMode
+                scriptVersionId={loadedVersionId ?? undefined}
               />
             </div>
             <div className={cn('absolute inset-0', rightTab !== 'debug' && 'hidden')}>

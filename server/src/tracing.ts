@@ -55,6 +55,8 @@ export interface BoundTracingContext {
   playthroughId: string;  // → Langfuse sessionId
   userId: string;         // → Langfuse userId
   scriptVersionId: string;
+  /** 'production' | 'playtest'，用于在 Langfuse 区分编辑器试玩 */
+  kind?: string;
 }
 
 /**
@@ -64,6 +66,10 @@ export interface BoundTracingContext {
 export function createBoundTracing(ctx: BoundTracingContext): SessionTracing | undefined {
   if (!langfuse) return undefined;
 
+  // playtest → 用 'editor-playtest' 作为 trace tag，方便在 Langfuse UI
+  // 里筛选/隐藏编剧试玩流量
+  const traceTags = ctx.kind === 'playtest' ? ['editor-playtest'] : ['production'];
+
   return {
     startGenerateTrace(turn: number, metadata?: Record<string, unknown>): GenerateTraceHandle {
       try {
@@ -71,9 +77,11 @@ export function createBoundTracing(ctx: BoundTracingContext): SessionTracing | u
           name: 'game-generate',
           sessionId: ctx.playthroughId,
           userId: ctx.userId,
+          tags: traceTags,
           metadata: {
             turn,
             scriptVersionId: ctx.scriptVersionId,
+            kind: ctx.kind,
             ...metadata,
           },
         });
@@ -90,11 +98,13 @@ export function createBoundTracing(ctx: BoundTracingContext): SessionTracing | u
           name: 'session-restored',
           sessionId: ctx.playthroughId,
           userId: ctx.userId,
+          tags: traceTags,
           input: { turn, ...metadata },
           output: { restored: true, turn },
           metadata: {
             turn,
             scriptVersionId: ctx.scriptVersionId,
+            kind: ctx.kind,
             ...metadata,
           },
         });

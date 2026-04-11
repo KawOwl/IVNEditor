@@ -56,6 +56,7 @@ export interface UpdateInput {
 export interface PlaythroughDetail {
   id: string;
   scriptVersionId: string;
+  kind: string;
   title: string | null;
   chapterId: string;
   status: string;
@@ -204,6 +205,7 @@ export class PlaythroughService {
     return {
       id: pt.id,
       scriptVersionId: pt.scriptVersionId,
+      kind: pt.kind,
       title: pt.title,
       chapterId: pt.chapterId,
       status: pt.status,

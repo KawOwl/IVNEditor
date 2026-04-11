@@ -18,7 +18,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../db';
 import { playthroughService } from '../services/playthrough-service';
 import { scriptVersionService } from '../services/script-version-service';
-import { requirePlayer, isResponse } from '../auth-identity';
+import { requireAnyIdentity, isResponse } from '../auth-identity';
 
 export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
 
@@ -29,7 +29,7 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
   //   - scriptVersionId: 按具体版本 id 过滤
   //   - kind: 'production' | 'playtest'
   .get('/', async ({ query, request }) => {
-    const id = await requirePlayer(request);
+    const id = await requireAnyIdentity(request);
     if (isResponse(id)) return id;
 
     const q = query as { scriptId?: string; scriptVersionId?: string; kind?: 'production' | 'playtest' };
@@ -78,7 +78,7 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
 
   // POST / — 为当前用户创建新游玩
   .post('/', async ({ body, request }) => {
-    const id = await requirePlayer(request);
+    const id = await requireAnyIdentity(request);
     if (isResponse(id)) return id;
 
     const input = body as {
@@ -128,7 +128,7 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
 
   // GET /:id — 游玩详情 + entries（分页），ownership 强制
   .get('/:id', async ({ params, query, request }) => {
-    const id = await requirePlayer(request);
+    const id = await requireAnyIdentity(request);
     if (isResponse(id)) return id;
 
     const limit = Number((query as any).limit) || 50;
@@ -143,7 +143,7 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
 
   // PATCH /:id — 更新（改标题/归档），ownership 强制
   .patch('/:id', async ({ params, body, request }) => {
-    const id = await requirePlayer(request);
+    const id = await requireAnyIdentity(request);
     if (isResponse(id)) return id;
 
     const { title, archived } = body as { title?: string; archived?: boolean };
@@ -159,7 +159,7 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
 
   // DELETE /:id — 硬删除，ownership 强制
   .delete('/:id', async ({ params, request }) => {
-    const id = await requirePlayer(request);
+    const id = await requireAnyIdentity(request);
     if (isResponse(id)) return id;
 
     const deleted = await playthroughService.delete(params.id, id.userId);

@@ -78,7 +78,14 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
       }
 
       // 4. getOrCreate wrapper（按 playthroughId 索引）
-      const wrapper = sessionManager.getOrCreate(playthroughId, version.manifest, identity.userId);
+      // 把 playthrough 的 kind 透传给 wrapper，让 Langfuse trace 能据此区分
+      // production / playtest（编辑器试玩）
+      const wrapper = sessionManager.getOrCreate(
+        playthroughId,
+        version.manifest,
+        identity.userId,
+        detail.kind,
+      );
       wrapper.attachWebSocket(ws);
 
       // 5. 推送 connected

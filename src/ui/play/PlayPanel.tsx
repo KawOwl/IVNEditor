@@ -6,7 +6,8 @@
  *
  * 使用场景：
  *   - PlayPage（全屏对话）— 根据 engineMode 选择 local 或 remote
- *   - EditorPage 右侧试玩面板 — 始终 local（编剧自带 API key）
+ *   - EditorPage 右侧试玩面板 — editorMode=true → remote 模式 +
+ *     scriptVersionId + kind=playtest（6.4 起；之前是 forceLocal）
  */
 
 import { useCallback, useEffect, useRef } from 'react';
@@ -35,7 +36,7 @@ import { cn } from '../../lib/utils';
 export interface PlayPanelProps {
   /** 剧本数据 */
   manifest: ScriptManifest;
-  /** 剧本 ID（remote 模式需要传给后端） */
+  /** 剧本 ID（remote 玩家模式需要传给后端） */
   scriptId?: string;
   /**
    * 指定的游玩记录 ID（远程模式）
@@ -50,8 +51,18 @@ export interface PlayPanelProps {
   showDebug?: boolean;
   /** 是否显示 LLM 推理过程（debug 模式） */
   showReasoning?: boolean;
-  /** 强制使用 local 模式（编辑器试玩始终 local） */
-  forceLocal?: boolean;
+  /**
+   * 编辑器模式（编剧侧试玩）。
+   *
+   * 6.4 起：editorMode=true 时强制走 remote 后端 + 用 scriptVersionId
+   * 创建 kind='playtest' 的 playthrough，让试玩走和正式玩家完全相同的
+   * GameSession 代码路径，并被 Langfuse trace 完整覆盖。
+   *
+   * 必须配合 scriptVersionId prop 使用——没有当前 draft 版本时不能试玩。
+   */
+  editorMode?: boolean;
+  /** 编辑器模式下要试玩的 script_version_id（loadedVersionId） */
+  scriptVersionId?: string;
   /** 挂载后自动开始（列表选择模式下使用） */
   autoStart?: boolean;
 }
@@ -67,7 +78,8 @@ export function PlayPanel({
   compact = false,
   showDebug = true,
   showReasoning = false,
-  forceLocal = false,
+  editorMode = false,
+  scriptVersionId,
   autoStart = false,
 }: PlayPanelProps) {
   const status = useGameStore((s) => s.status);
@@ -78,7 +90,9 @@ export function PlayPanel({
   // Remote mode refs
   const remoteRef = useRef<RemoteSession | null>(null);
 
-  const mode = forceLocal ? 'local' : getEngineMode();
+  // 编辑器模式强制走 remote（6.4 后），让试玩走和玩家一样的 backend
+  // GameSession + Langfuse trace 路径
+  const mode = editorMode ? 'remote' : getEngineMode();
 
   // Show opening messages on mount (only for new games, not when restoring)
   useEffect(() => {
@@ -102,8 +116,15 @@ export function PlayPanel({
       // Remote mode: connect to backend via WebSocket
       if (remoteRef.current) return;
 
-      const id = scriptId ?? manifest.id;
-      if (!id) {
+      // 编辑器模式必须有 scriptVersionId（否则没有可试玩的版本）
+      if (editorMode && !scriptVersionId) {
+        useGameStore.getState().setError('请先保存剧本（创建一个版本）后再试玩');
+        return;
+      }
+
+      // 玩家模式用 scriptId 创建 playthrough（指向当前 published 版本）
+      const playerScriptId = scriptId ?? manifest.id;
+      if (!editorMode && !playerScriptId) {
         useGameStore.getState().setError('缺少剧本 ID');
         return;
       }
@@ -111,19 +132,21 @@ export function PlayPanel({
       try {
         useGameStore.getState().setStatus('loading');
 
-        // 决定目标 playthroughId：
-        //   显式传入 'new' → 新建（忽略 localStorage）
-        //   显式传入真实 ID → 恢复该游玩
-        //   未传 → 回退到 localStorage
+        // 决定目标 playthroughId（仅玩家模式从 localStorage 恢复；
+        // 编辑器模式每次都新建，不复用上次的试玩）
+        const storageKey = editorMode
+          ? `version:${scriptVersionId}`
+          : playerScriptId!;
         const targetPtId =
-          playthroughId === 'new'
-            ? null
-            : playthroughId ?? getStoredPlaythroughId(id);
+          editorMode
+            ? null  // 编辑器试玩永远新建（lossless 试玩快照）
+            : playthroughId === 'new'
+              ? null
+              : playthroughId ?? getStoredPlaythroughId(storageKey);
 
         if (targetPtId) {
           // 恢复指定的游玩 —— 直接 WS 连接，服务端会自动发 'restored' 快照
           try {
-            // 先清空 store（去掉 opening messages 等占位内容）
             useGameStore.getState().reset();
             const remote = await reconnectRemoteSession(getBackendUrl(), targetPtId);
             remoteRef.current = remote;
@@ -133,8 +156,14 @@ export function PlayPanel({
           }
         }
 
-        // 新建游玩 —— createRemoteSession 内部会 POST /playthroughs + WS 连接
-        const remote = await createRemoteSession(getBackendUrl(), id);
+        // 新建游玩
+        const remote = editorMode
+          ? await createRemoteSession(
+              getBackendUrl(),
+              { scriptVersionId: scriptVersionId! },
+              { kind: 'playtest' },
+            )
+          : await createRemoteSession(getBackendUrl(), playerScriptId!, { kind: 'production' });
         remoteRef.current = remote;
         remote.start();
       } catch (err) {
@@ -163,7 +192,7 @@ export function PlayPanel({
       sessionRef.current = session;
       session.start(config);
     }
-  }, [manifest, scriptId, mode, playthroughId]);
+  }, [manifest, scriptId, mode, playthroughId, editorMode, scriptVersionId]);
 
   // 即时同步 LLM 设置变更到活跃会话（无需重启）
   const thinkingEnabled = useLLMSettingsStore((s) => s.thinkingEnabled);
