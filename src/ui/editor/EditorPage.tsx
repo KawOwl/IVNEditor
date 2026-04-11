@@ -396,7 +396,9 @@ export function EditorPage() {
   //      - PATCH 200：scriptId 在 backend 已存在，直接复用
   //      - PATCH 404：scriptId 是 IndexedDB 留下的"孤儿"（比如 backend
   //        TRUNCATE 后第一次保存这个本地缓存剧本）→ 转成 POST 新建，
-  //        但**复用相同的 id**（让本地缓存和后端 id 一致）
+  //        让 backend 生成新 UUID（不复用旧 id），保证所有上传后的剧本
+  //        id 都是 UUID 格式。原 IndexedDB 行在保存成功后被删掉避免
+  //        本地列表里同一剧本出现两条。
   //      - 其他 4xx/5xx：弹 alert 中断
   //   2. 如果 scriptId 是空（真新建剧本）→ POST /api/scripts 让后端
   //      分配 UUID
@@ -409,6 +411,7 @@ export function EditorPage() {
     setSaving(true);
     try {
       const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
+      const oldScriptId = loadedScriptId;  // 用于"陈旧 id 上传后清理"
       let scriptId = loadedScriptId;
       const isRemote = getEngineMode() === 'remote';
 
@@ -430,7 +433,7 @@ export function EditorPage() {
             scriptExistsOnBackend = true;
           } else if (patchRes.status === 404) {
             // 后端没这个 id（多半是 IndexedDB 缓存里的旧 id）
-            // → 走下面的 POST 重建路径，复用同一 id
+            // → 走下面的 POST 新建路径，让 backend 生成 UUID
             console.warn(`[save] scriptId ${scriptId} 在后端不存在，作为新建上传`);
           } else {
             alert(`保存失败 (PATCH ${patchRes.status})`);
@@ -438,14 +441,12 @@ export function EditorPage() {
           }
         }
 
-        // Step 1b: 不存在就 POST 新建（带 id 复用旧 id；不带 id 则后端
-        // 分配 UUID）
+        // Step 1b: 不存在就 POST 新建（不带 id，让 backend 分配 UUID）
         if (!scriptExistsOnBackend) {
           const createRes = await fetch(`${getBackendUrl()}/api/scripts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeader },
             body: JSON.stringify({
-              id: scriptId ?? undefined,
               label: scriptLabel,
               description: scriptDescription,
             }),
@@ -518,6 +519,14 @@ export function EditorPage() {
         manifest,
       };
       await scriptStorage.save(record);
+
+      // 陈旧 id 上传后清理：如果保存前的 oldScriptId 和最终 id 不同
+      // （只在 backend 重新分配 UUID 时发生），把旧的 IndexedDB 行删掉，
+      // 避免本地剧本列表里出现两个同名条目（旧的孤儿 id + 新的 UUID）
+      if (oldScriptId && oldScriptId !== id) {
+        await scriptStorage.delete(oldScriptId);
+      }
+
       setLoadedScriptId(id);
       await refreshScriptList();
     } finally {
