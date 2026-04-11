@@ -127,16 +127,16 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
   // PATCH /:id — 更新剧本元数据（label/description）
   // ============================================================================
   //
-  // Admin only + 作者 ownership 强制。只动 scripts 表，不创建新版本。
+  // Admin only。当前所有 admin 都能改任意剧本（不限于自己创建的）。
   .patch('/:id', async ({ params, body, request }) => {
-    const id = await requireAdmin(request);
-    if (isResponse(id)) return id;
+    const auth = await requireAdmin(request);
+    if (isResponse(auth)) return auth;
 
     const patch = body as { label?: string; description?: string | null };
-    const ok = await scriptService.update(params.id, id.userId, patch);
+    const ok = await scriptService.update(params.id, patch);
     if (!ok) {
       return new Response(
-        JSON.stringify({ error: 'Script not found or not owned by you' }),
+        JSON.stringify({ error: 'Script not found' }),
         { status: 404 },
       );
     }
@@ -221,15 +221,15 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
   // DELETE /:id — 删除剧本（级联删 script_versions 和相关 playthroughs）
   // ============================================================================
   //
-  // Admin only + 作者 ownership 强制。
+  // Admin only。当前所有 admin 都能删任意剧本。
   .delete('/:id', async ({ params, request }) => {
-    const id = await requireAdmin(request);
-    if (isResponse(id)) return id;
+    const auth = await requireAdmin(request);
+    if (isResponse(auth)) return auth;
 
-    const deleted = await scriptService.delete(params.id, id.userId);
+    const deleted = await scriptService.delete(params.id);
     if (!deleted) {
       return new Response(
-        JSON.stringify({ error: 'Script not found or not owned by you' }),
+        JSON.stringify({ error: 'Script not found' }),
         { status: 404 },
       );
     }
@@ -237,16 +237,17 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
   })
 
   // ============================================================================
-  // GET /mine — 列出当前 admin 作为作者的所有剧本（编剧工作区用）
+  // GET /mine — 列出剧本（编剧工作区用）
   // ============================================================================
   //
-  // 6.3 编辑器会用这个代替本地 IndexedDB 列表。返回 scripts 表行 +
-  // 每个剧本的最新版本状态（draft/published/archived）方便前端展示。
+  // 当前所有 admin 都能看所有剧本，所以"mine"不再按作者过滤——返回
+  // 系统中所有 scripts。等以后做细化权限时再恢复按 authorUserId 过滤。
+  // 路由名暂保留为 /mine 不动前端。
   .get('/mine', async ({ request }) => {
-    const id = await requireAdmin(request);
-    if (isResponse(id)) return id;
+    const auth = await requireAdmin(request);
+    if (isResponse(auth)) return auth;
 
-    const scripts = await scriptService.listByAuthor(id.userId);
+    const scripts = await scriptService.listAll();
     // 为每个 script 附带最新版本信息
     const withVersions = await Promise.all(
       scripts.map(async (s) => {

@@ -10,7 +10,7 @@
  * - published 状态列表（玩家首页）通过 ScriptVersionService.listPublishedScripts 走
  */
 
-import { eq, and, sql, desc } from 'drizzle-orm';
+import { eq, sql, desc } from 'drizzle-orm';
 import { db, schema } from '../db';
 
 // ============================================================================
@@ -100,7 +100,16 @@ export class ScriptService {
     return (rows[0] as ScriptRow | undefined) ?? null;
   }
 
-  /** 列出某作者的所有剧本（编剧工作区） */
+  /** 列出所有剧本（按 updatedAt desc）—— 当前所有 admin 都能看所有剧本 */
+  async listAll(): Promise<ScriptRow[]> {
+    const rows = await db
+      .select()
+      .from(schema.scripts)
+      .orderBy(desc(schema.scripts.updatedAt));
+    return rows as ScriptRow[];
+  }
+
+  /** 列出某作者的所有剧本（保留用于"按作者过滤"场景） */
   async listByAuthor(authorUserId: string): Promise<ScriptRow[]> {
     const rows = await db
       .select()
@@ -112,11 +121,13 @@ export class ScriptService {
 
   /**
    * 更新剧本元数据（label/description）。
-   * 必须传 authorUserId，只能更新自己的剧本。
+   *
+   * 注意：本方法**不做 ownership 检查**，调用方（路由层）应该已经
+   * 验证了请求者有权操作。当前所有 scripts 路由都是 admin-only +
+   * 暂时放开 admin 互相操作权限，所以 service 层不再过滤 authorUserId。
    */
   async update(
     id: string,
-    authorUserId: string,
     input: UpdateScriptInput,
   ): Promise<boolean> {
     const patch: Record<string, unknown> = { updatedAt: sql`NOW()` };
@@ -126,37 +137,28 @@ export class ScriptService {
     const result = await db
       .update(schema.scripts)
       .set(patch)
-      .where(
-        and(
-          eq(schema.scripts.id, id),
-          eq(schema.scripts.authorUserId, authorUserId),
-        ),
-      )
+      .where(eq(schema.scripts.id, id))
       .returning({ id: schema.scripts.id });
 
     return result.length > 0;
   }
 
   /**
-   * 删除剧本身份（级联删除 script_versions 和相关 playthroughs）。
-   * 必须传 authorUserId，只能删除自己的剧本。
+   * 删除剧本（级联删除 script_versions 和相关 playthroughs）。
+   *
+   * 同 update：不做 ownership，由路由层把关。
    */
-  async delete(id: string, authorUserId: string): Promise<boolean> {
+  async delete(id: string): Promise<boolean> {
     const result = await db
       .delete(schema.scripts)
-      .where(
-        and(
-          eq(schema.scripts.id, id),
-          eq(schema.scripts.authorUserId, authorUserId),
-        ),
-      )
+      .where(eq(schema.scripts.id, id))
       .returning({ id: schema.scripts.id });
 
     return result.length > 0;
   }
 
   /**
-   * 取剧本的 ownership（给路由层权限判断用）
+   * 取剧本的 ownership（仍然保留：将来若需要按作者过滤的接口可以用）
    * 返回 authorUserId 或 null（不存在）
    */
   async getOwnerId(id: string): Promise<string | null> {

@@ -22,17 +22,14 @@ import { scriptService } from '../services/script-service';
 import { scriptVersionService } from '../services/script-version-service';
 import { requireAdmin, isResponse } from '../auth-identity';
 
-/** 校验请求者是某剧本的作者 */
-async function requireScriptOwner(
-  scriptId: string,
-  userId: string,
-): Promise<true | Response> {
+/**
+ * 校验某剧本存在（不再做 ownership 检查——当前所有 admin 都能操作所有
+ * 剧本，由路由层 requireAdmin 把关）
+ */
+async function requireScriptExists(scriptId: string): Promise<true | Response> {
   const ownerId = await scriptService.getOwnerId(scriptId);
   if (!ownerId) {
     return new Response(JSON.stringify({ error: 'Script not found' }), { status: 404 });
-  }
-  if (ownerId !== userId) {
-    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
   }
   return true;
 }
@@ -49,8 +46,8 @@ export const scriptVersionsForScriptRoutes = new Elysia({ prefix: '/api/scripts/
     if (isResponse(auth)) return auth;
 
     const scriptId = params.id;  // URL :id 实际是 script id
-    const ownership = await requireScriptOwner(scriptId, auth.userId);
-    if (ownership !== true) return ownership;
+    const exists = await requireScriptExists(scriptId);
+    if (exists !== true) return exists;
 
     const input = body as Partial<{
       manifest: ScriptManifest;
@@ -83,8 +80,8 @@ export const scriptVersionsForScriptRoutes = new Elysia({ prefix: '/api/scripts/
     if (isResponse(auth)) return auth;
 
     const scriptId = params.id;
-    const ownership = await requireScriptOwner(scriptId, auth.userId);
-    if (ownership !== true) return ownership;
+    const exists = await requireScriptExists(scriptId);
+    if (exists !== true) return exists;
 
     const versions = await scriptVersionService.listByScript(scriptId);
     return { versions };
@@ -106,8 +103,8 @@ export const scriptVersionRoutes = new Elysia({ prefix: '/api/script-versions' }
       return new Response(JSON.stringify({ error: 'Version not found' }), { status: 404 });
     }
 
-    const ownership = await requireScriptOwner(version.scriptId, auth.userId);
-    if (ownership !== true) return ownership;
+    const exists = await requireScriptExists(version.scriptId);
+    if (exists !== true) return exists;
 
     return version;
   })
@@ -122,8 +119,8 @@ export const scriptVersionRoutes = new Elysia({ prefix: '/api/script-versions' }
       return new Response(JSON.stringify({ error: 'Version not found' }), { status: 404 });
     }
 
-    const ownership = await requireScriptOwner(version.scriptId, auth.userId);
-    if (ownership !== true) return ownership;
+    const exists = await requireScriptExists(version.scriptId);
+    if (exists !== true) return exists;
 
     const ok = await scriptVersionService.publish(params.versionId);
     if (!ok) {
@@ -145,8 +142,8 @@ export const scriptVersionRoutes = new Elysia({ prefix: '/api/script-versions' }
       return new Response(JSON.stringify({ error: 'Version not found' }), { status: 404 });
     }
 
-    const ownership = await requireScriptOwner(version.scriptId, auth.userId);
-    if (ownership !== true) return ownership;
+    const exists = await requireScriptExists(version.scriptId);
+    if (exists !== true) return exists;
 
     const result = await scriptVersionService.deleteDraft(params.versionId);
     if (!result.ok) {
