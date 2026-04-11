@@ -41,6 +41,13 @@ export interface StepInfo {
   outputTokens?: number;
   toolCalls: Array<{ name: string; args: unknown }>;
   model?: string;
+  /**
+   * 此 step 中 LLM 输出 content 里存在的 part 类型集合（去重）。
+   * 例如 ['text', 'tool-call'] 表示既有叙事文本又有工具调用；
+   * 只有 ['tool-call'] 则表示纯工具步。
+   * 这是模型协议层面的结构信号，比字数判断更可靠。
+   */
+  partKinds: string[];
 }
 
 export interface GenerateOptions {
@@ -181,6 +188,9 @@ export class LLMClient {
       onStepFinish: (step) => {
         if (!onStep) return;
         try {
+          const partKinds = Array.from(
+            new Set(((step.content ?? []) as Array<{ type: string }>).map((p) => p.type)),
+          );
           onStep({
             stepNumber: step.stepNumber,
             text: step.text,
@@ -193,6 +203,7 @@ export class LLMClient {
               args: tc.input,
             })),
             model: step.model?.modelId,
+            partKinds,
           });
         } catch (err) {
           console.error('[llm-client] onStep handler threw:', err);

@@ -189,6 +189,12 @@ export interface GenerateTraceHandle {
     inputTokens?: number;
     outputTokens?: number;
     model?: string;
+    /**
+     * 此 step 的 content parts 类型集合（去重）。
+     * 例：['text', 'tool-call'] = 叙事 + 工具；['tool-call'] = 纯工具步。
+     * tracing 实现可据此对 span 命名、打 metadata，不用字数判断。
+     */
+    partKinds: string[];
   }): void;
 
   /** 开始一次工具调用，返回 handle 用于结束 */
@@ -666,6 +672,7 @@ export class GameSession {
               inputTokens: step.inputTokens,
               outputTokens: step.outputTokens,
               model: step.model,
+              partKinds: step.partKinds,
             });
           },
         });

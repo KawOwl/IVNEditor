@@ -150,14 +150,29 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
     inputTokens?: number;
     outputTokens?: number;
     model?: string;
+    partKinds: string[];
   }): void {
     try {
       // 创建一个已完成的 generation span（创建时即 end）
       // 每个 step 一条独立 span，Langfuse UI 里可以看到完整的 agentic loop 时间线
       const startTime = new Date();
       const endTime = new Date();
+
+      // 确定性地判断该 step 是否包含叙事文本：
+      // 看 AI SDK content parts 里是否存在 'text' 类型的 part，而不是看 text.length
+      const hasNarrative = step.partKinds.includes('text');
+      const hasToolCall = step.partKinds.includes('tool-call');
+      // span name 后缀：一眼看出是纯工具步还是含叙事
+      const kindSuffix = hasNarrative
+        ? hasToolCall
+          ? 'narrative+tool'
+          : 'narrative'
+        : hasToolCall
+          ? 'tool'
+          : 'empty';
+
       const gen = this.trace.generation({
-        name: `llm-step-${step.stepNumber}`,
+        name: `llm-step-${step.stepNumber}-${kindSuffix}`,
         model: step.model,
         // 只在第一个 step 带完整上下文；后续 step 的 input 主要是上一轮工具结果
         // 展示简洁起见，都挂初始 input 作为上下文参考
@@ -168,6 +183,9 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
         metadata: {
           stepNumber: step.stepNumber,
           finishReason: step.finishReason,
+          partKinds: step.partKinds,
+          hasNarrative,
+          hasToolCall,
         },
       });
       gen.end({
