@@ -1,33 +1,93 @@
 # 项目进度
 
 ## 当前状态
-v2.5 会话持久化 + 可观测性开发中。Drizzle + PG 基础搭建完成，Playthrough CRUD API 完成。
+v2.5 会话持久化 + Langfuse 可观测性已上线。v2.6 剧本版本管理 + 编辑器试玩走后端开发中——为了消除"编辑器试玩无 trace"、"剧本无历史版本"、"playthrough 引用会被剧本改版意外破坏"三个问题，做一次破坏性迁移引入 scripts + script_versions 双表结构。
 
 ## 当前任务
-**5.3 GameSession 持久化接入**
-- 类型：新功能
-- 来源：v2.5.md 会话持久化方案
-- 目标：在 GameSession coreLoop 的关键节点写 DB，保存游玩进度
+**v2.6 剧本版本管理 + 编辑器试玩走后端（拆为 6.1-6.6 六个 feature 逐个推进）**
+- 类型：重构 + 新功能 + 破坏性迁移
+- 来源：本轮讨论（见"v2.6 剧本版本管理"设计决策段）
+- 目标：后端统一存剧本 + 引入版本概念，编辑器试玩走后端便于排查
 
-### 5.3 改动设计
+### 推进顺序（逐个 feature 串行，上一个 verify 通过再开下一个）
 
-**方案：GameSession 可选回调注入（方案 B）**
+1. **6.1 schema 迁移**（破坏性）—— 先定型数据层
+2. **6.2 后端路由** —— 有了 schema 填实现 + 删 scriptStore
+3. **6.3 前端编辑器适配** —— 保存/加载/版本列表走后端
+4. **6.4 编辑器试玩走后端** —— PlayPanel 改 editorMode + Langfuse 覆盖编剧试玩
+5. **6.5 玩家侧适配** —— 首页 + 游玩记录按新路径
+6. **6.6 前端 IndexedDB 下线（可选）** —— 全稳定后再做
 
-GameSession 持有全部上下文（memory、stateVars、result.text），通过可选的 `SessionPersistence` 接口在关键节点调用持久化。
+### 6.1 改动设计（下一个动手的）
 
-**持久化时机：**
-1. generate 开始 → 存 status + turn
-2. generate 完成 → 存 narrative_entry(generate) + memory 快照 + preview
-3. signal_input_needed → 存 status='waiting-input' + choices + narrative_entry
-4. receive 完成 → 存 narrative_entry(receive) + stateVars + memory 快照
+**目标**：建立新的 schema，破坏性清空旧 playthroughs。
 
-**文件改动清单：**
-- 新增 `server/src/db/playthrough-persistence.ts` — DB 操作封装
-- 修改 `src/core/game-session.ts` — 新增 SessionPersistence 接口 + 可选注入 + coreLoop 调用
-- 修改 `server/src/session-manager.ts` — 关联 playthroughId，创建 persistence 注入
-- 修改 `server/src/routes/sessions.ts` — POST /sessions 改为创建 playthrough 记录
+**新 schema**：
+
+```sql
+CREATE TABLE scripts (
+  id text PRIMARY KEY,
+  author_user_id text NOT NULL REFERENCES users(id),
+  label text NOT NULL,
+  description text,
+  created_at timestamptz DEFAULT NOW() NOT NULL,
+  updated_at timestamptz DEFAULT NOW() NOT NULL
+);
+
+CREATE TABLE script_versions (
+  id text PRIMARY KEY,
+  script_id text NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+  version_number integer NOT NULL,        -- 机器排序
+  label text,                             -- 人看的可选文本
+  status text NOT NULL,                   -- 'draft' | 'published' | 'archived'
+  manifest jsonb NOT NULL,
+  content_hash text NOT NULL,             -- sha256(manifest) 去重
+  note text,
+  created_at timestamptz DEFAULT NOW() NOT NULL,
+  published_at timestamptz,
+  archived_at timestamptz,
+  UNIQUE (script_id, version_number)
+);
+
+CREATE UNIQUE INDEX idx_one_published_per_script
+  ON script_versions(script_id) WHERE status = 'published';
+
+-- playthroughs 破坏性重建
+DROP TABLE playthroughs;
+CREATE TABLE playthroughs (
+  id text PRIMARY KEY,
+  user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  script_version_id text NOT NULL REFERENCES script_versions(id),
+  kind text NOT NULL,                     -- 'production' | 'playtest'
+  ... (其他字段保留原结构)
+);
+```
+
+**文件改动清单**：
+- 修改 `server/src/db/schema.ts` — 新增 scripts / script_versions 表定义，playthroughs 改字段
+- 新增 Drizzle migration — drop playthroughs 并重建 + 建新表
+- 修改 `src/core/types.ts` — 删除 ScriptManifest.version 字段
+- 修改 `src/ui/editor/EditorPage.tsx` + `ScriptInfoPanel.tsx` — 移除前端 version 引用（只是编译通过即可，后续 6.3 再改 UI）
+- 修改 `src/fixtures/module7-test.ts` — 移除 version 字段
 
 ## 已完成的里程碑
+
+### v2.5 会话持久化 + Langfuse 可观测性（2026-04）
+- Drizzle + PostgreSQL 接入，playthroughs 表完成持久化
+- GameSession 通过可选 SessionPersistence 接口在关键节点写 DB
+- WebSocket 推流 + 断线重连 + restore 完整链路
+- 匿名 sessionId → userId 映射，player identity 混合方案 Plan 4
+- Langfuse 自部署 docker-compose，trace 覆盖 generate / tool span / player_input events
+- agentic loop 多 step tracing（每个 step 一条 llm-step-N generation span）
+- partKinds 标记 narrative / tool-only 步
+- 上线正在运行，但编辑器试玩不在 trace 内（触发 v2.6 改造）
+
+### 引擎知识单一真源重构（2026-04-11）
+- 抽出 `src/core/tool-catalog.ts` 作为工具元数据单一真源（name/description/uiLabel/required）
+- 抽出 `src/core/engine-rules.ts` 作为运行时规则 + 编剧改写规范单一真源
+- 修掉 5 处硬编码漂移：PromptPreviewPanel 的旧版 ENGINE RULES（真 bug）、VIRTUAL_IDS 重复、INTERNAL_STATE 格式不一致、ScriptInfoPanel 缺 3 个可选工具、completion-sources 有 2 个幻觉工具（play_sfx / roll_dice）
+- 修掉 signal_input_needed prompt 矛盾（轻路径 vs 硬性调用）
+- 修掉 AI 改写 maxOutputTokens 缺失导致的中途截断
 
 ### UI 路由重构（2026-03-31）
 - 新增 Zustand 状态路由（app-store.ts）

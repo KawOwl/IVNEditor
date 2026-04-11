@@ -300,5 +300,59 @@
     "type": "ui",
     "ref": "v2.0.md#二、Authoring Layer",
     "verify": "左侧编辑文档，右侧实时显示大纲、工具引用列表、token 统计"
+  },
+  {
+    "id": "6.1",
+    "title": "剧本版本管理 schema 迁移",
+    "description": "新增 scripts + script_versions 表；playthroughs 破坏性迁移（drop 重建），新增 script_version_id FK + kind 字段；删除 ScriptManifest.version 字段",
+    "status": "pending",
+    "type": "logic",
+    "ref": "PROGRESS.md#v2.6 剧本版本管理",
+    "verify": "bun tsc --noEmit 通过；bun run db:migrate 成功应用；server 启动不崩；旧 playthroughs 数据被清空"
+  },
+  {
+    "id": "6.2",
+    "title": "后端 scripts + script-versions 路由",
+    "description": "重写 /api/scripts 路由（按 DB 而非 JSON 文件）+ 新增 /api/script-versions 路由（创建/列表/发布/删除）；改 playthroughs 和 sessions 路由走新表；删除 server/src/storage/script-store.ts",
+    "status": "pending",
+    "type": "logic",
+    "ref": "PROGRESS.md#v2.6 剧本版本管理",
+    "verify": "bun tsc --noEmit 通过；所有新路由单测覆盖；E2E 能跑通 '创建剧本 → 存版本 → 发布 → 创建 playthrough' 全链路"
+  },
+  {
+    "id": "6.3",
+    "title": "前端编辑器适配版本管理",
+    "description": "移除 ScriptManifest.version 前端引用；编辑器保存/加载走后端 API；新增'版本历史'面板（只读列表，不做 diff）；发布按钮 + 基于历史版本新建 draft",
+    "status": "pending",
+    "type": "ui",
+    "ref": "PROGRESS.md#v2.6 剧本版本管理",
+    "verify": "dev server 跑通 '新建 → 编辑 → 保存多次 → 发布 → 从列表选历史版本 → 基于历史版本新建 draft' 全流程"
+  },
+  {
+    "id": "6.4",
+    "title": "编辑器试玩走后端",
+    "description": "PlayPanel forceLocal → editorMode；试玩时 POST /playthroughs kind=playtest；新增'试玩历史'tab 放在编辑器右侧",
+    "status": "pending",
+    "type": "e2e",
+    "ref": "PROGRESS.md#v2.6 剧本版本管理",
+    "verify": "编辑器点试玩走后端完整跑通；Langfuse trace 带 environment=editor-playtest 标签；'试玩历史'tab 能看到自己的 playtest 记录并能继续"
+  },
+  {
+    "id": "6.5",
+    "title": "玩家侧适配新版本路径",
+    "description": "首页列表改为 GET /api/scripts/published；玩家创建 playthrough 用当前 published version 的 id；玩家'我的游玩记录'按 kind=production 过滤",
+    "status": "pending",
+    "type": "e2e",
+    "ref": "PROGRESS.md#v2.6 剧本版本管理",
+    "verify": "完整玩家流程跑通：看列表 → 选剧本 → 开游戏 → 断线重连 → 继续；编辑器试玩记录不出现在玩家记录里"
+  },
+  {
+    "id": "6.6",
+    "title": "前端 IndexedDB 下线（可选）",
+    "description": "确认 6.1-6.5 稳定后，移除 src/storage/script-storage.ts；编辑器纯后端 + 内存状态",
+    "status": "pending",
+    "type": "logic",
+    "ref": "PROGRESS.md#v2.6 剧本版本管理",
+    "verify": "tsc 通过；编辑器完整流程无 IndexedDB 调用；删除相关死代码"
   }
 ]
