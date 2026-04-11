@@ -31,7 +31,7 @@ import { Elysia } from 'elysia';
 import type { ScriptManifest } from '../../../src/core/types';
 import { scriptService } from '../services/script-service';
 import { scriptVersionService } from '../services/script-version-service';
-import { requireAdmin, requireAnyIdentity, requirePlayer, isResponse } from '../auth-identity';
+import { requireAnyIdentity, requirePlayer, isResponse } from '../auth-identity';
 
 /** 剧本公开信息（不含 prompt segments，玩家可见） */
 interface PublicScriptInfo {
@@ -74,36 +74,73 @@ function manifestToPublicInfo(scriptId: string, manifest: ScriptManifest): Publi
 export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
 
   // ============================================================================
-  // POST / — "发布"剧本：upsert script + 创建 published version
+  // POST / — 创建剧本（player auth，作者是当前用户）
   // ============================================================================
   //
-  // 现阶段只允许 admin 发布（保留原权限模型）。6.3 后编辑器会改走
-  // /api/scripts + /api/scripts/:id/versions 分步 flow。
+  // 接受两种 body 形状：
+  //   1) 新 flow（6.3 起推荐）：{ id?, label, description? }
+  //      只创建 scripts 行，不创建任何版本。
+  //      后续 POST /api/scripts/:id/versions 创建 draft。
+  //
+  //   2) 旧 flow（legacy 发布路径，向后兼容）：{ id, label, manifest,
+  //      description? }
+  //      原子性地 upsert scripts + 创建 published 版本，保留旧编辑器的
+  //      "一键发布" 路径。
+  //
+  // 作者权限模型：当前登录用户自动成为作者（authorUserId）。后续
+  // PATCH/DELETE 只允许作者自己操作。
   .post('/', async ({ body, request }) => {
-    const id = await requireAdmin(request);
+    const id = await requirePlayer(request);
     if (isResponse(id)) return id;
 
     const record = body as Partial<LegacyScriptRecord>;
-    if (!record.id || !record.manifest) {
-      return new Response(JSON.stringify({ error: 'Missing id or manifest' }), { status: 400 });
+    if (!record.label) {
+      return new Response(
+        JSON.stringify({ error: 'Missing label' }),
+        { status: 400 },
+      );
     }
 
     // 1. Upsert scripts 行
     const script = await scriptService.create({
       id: record.id,
-      authorUserId: id.userId,  // 当前 admin 是作者
-      label: record.label ?? record.manifest.label ?? '未命名剧本',
-      description: record.description ?? record.manifest.description,
+      authorUserId: id.userId,
+      label: record.label,
+      description: record.description ?? record.manifest?.description,
     });
 
-    // 2. 创建 published 版本（去重：相同 manifest 不会重复建行）
-    const result = await scriptVersionService.create({
-      scriptId: script.id,
-      manifest: record.manifest,
-      status: 'published',
-    });
+    // 2. 如果 body 带了 manifest，走 legacy 路径：创建 published 版本
+    if (record.manifest) {
+      const result = await scriptVersionService.create({
+        scriptId: script.id,
+        manifest: record.manifest,
+        status: 'published',
+      });
+      return { ok: true, id: script.id, versionId: result.version.id, created: result.created };
+    }
 
-    return { ok: true, id: script.id, versionId: result.version.id, created: result.created };
+    // 3. 新 flow：只返回 scriptId，前端另行调用 /versions
+    return { ok: true, id: script.id };
+  })
+
+  // ============================================================================
+  // PATCH /:id — 更新剧本元数据（label/description）
+  // ============================================================================
+  //
+  // 作者 ownership 强制。只动 scripts 表，不创建新版本。
+  .patch('/:id', async ({ params, body, request }) => {
+    const id = await requirePlayer(request);
+    if (isResponse(id)) return id;
+
+    const patch = body as { label?: string; description?: string | null };
+    const ok = await scriptService.update(params.id, id.userId, patch);
+    if (!ok) {
+      return new Response(
+        JSON.stringify({ error: 'Script not found or not owned by you' }),
+        { status: 404 },
+      );
+    }
+    return { ok: true };
   })
 
   // ============================================================================
@@ -138,16 +175,20 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
   })
 
   // ============================================================================
-  // GET /:id/full — 完整 ScriptRecord（编辑器加载用）
+  // GET /:id/full — 完整 ScriptRecord（编辑器加载用，legacy 兼容）
   // ============================================================================
   //
-  // 6.1/6.2 阶段编辑器仍走此端点；6.3 会改用 GET /api/scripts/:id/versions
-  // 取版本列表再选一个拉 manifest。
+  // 6.3 编辑器会优先走 GET /api/scripts/:id/versions + GET
+  // /api/script-versions/:versionId；此端点保留给未迁移的代码路径。
+  // 作者 ownership 强制：只能读自己的剧本。
   .get('/:id/full', async ({ params, request }) => {
-    const _id = await requireAdmin(request);
-    if (isResponse(_id)) return _id;
+    const auth = await requirePlayer(request);
+    if (isResponse(auth)) return auth;
 
     const script = await scriptService.getById(params.id);
+    if (script && script.authorUserId !== auth.userId) {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
+    }
     if (!script) {
       return new Response(JSON.stringify({ error: 'Script not found' }), { status: 404 });
     }
@@ -183,13 +224,19 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
   // DELETE /:id — 删除剧本（级联删 script_versions 和相关 playthroughs）
   // ============================================================================
   //
-  // 要求 admin 且 ownership（只能删自己的剧本）。
+  // 作者 ownership 强制。
   .delete('/:id', async ({ params, request }) => {
-    const id = await requireAdmin(request);
+    const id = await requirePlayer(request);
     if (isResponse(id)) return id;
 
     const deleted = await scriptService.delete(params.id, id.userId);
-    return { ok: deleted };
+    if (!deleted) {
+      return new Response(
+        JSON.stringify({ error: 'Script not found or not owned by you' }),
+        { status: 404 },
+      );
+    }
+    return { ok: true };
   })
 
   // ============================================================================
