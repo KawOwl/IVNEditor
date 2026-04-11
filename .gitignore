@@ -9,4 +9,4 @@ dist/
 scenario
 .DS_Store
 server/data/
-server/node_modules/
+server/node_modules/trace-*.json
