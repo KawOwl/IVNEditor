@@ -18,12 +18,15 @@ export interface ListFilter {
   userId: string;
   scriptVersionId?: string;
   includeArchived?: boolean;
+  /** 'production' | 'playtest'，不传返回全部 */
+  kind?: 'production' | 'playtest';
 }
 
 /** 列表项（不含 entries，用于列表展示） */
 export interface PlaythroughSummary {
   id: string;
   scriptVersionId: string;
+  kind: string;
   title: string | null;
   turn: number;
   status: string;
@@ -101,11 +104,15 @@ export class PlaythroughService {
     if (filter.scriptVersionId) {
       conditions.push(eq(schema.playthroughs.scriptVersionId, filter.scriptVersionId));
     }
+    if (filter.kind) {
+      conditions.push(eq(schema.playthroughs.kind, filter.kind));
+    }
 
     const rows = await db
       .select({
         id: schema.playthroughs.id,
         scriptVersionId: schema.playthroughs.scriptVersionId,
+        kind: schema.playthroughs.kind,
         title: schema.playthroughs.title,
         turn: schema.playthroughs.turn,
         status: schema.playthroughs.status,

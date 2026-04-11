@@ -1,0 +1,1 @@
+ALTER TABLE "playthroughs" ADD CONSTRAINT "playthroughs_script_version_id_script_versions_id_fk" FOREIGN KEY ("script_version_id") REFERENCES "public"."script_versions"("id") ON DELETE no action ON UPDATE no action;

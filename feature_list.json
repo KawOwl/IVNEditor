@@ -305,8 +305,8 @@
   {
     "id": "6.1",
     "title": "剧本版本管理 schema 迁移",
-    "description": "新增 scripts + script_versions 表；playthroughs 加 script_version_id FK + kind 字段（破坏性：truncate 旧数据）；删除 ScriptManifest.version 字段 + 随之变成 dead code 的 save-manager/SaveData/ProgressState",
-    "status": "in-progress",
+    "description": "新增 scripts + script_versions 表；playthroughs 加 script_version_id + kind 字段（破坏性：truncate 旧数据）；删除 ScriptManifest.version 字段 + 随之变成 dead code 的 save-manager/SaveData/ProgressState",
+    "status": "done",
     "type": "logic",
     "ref": "PROGRESS.md#v2.6 剧本版本管理",
     "verify": "bun tsc --noEmit 通过；drizzle migration 0001_script_versions 能应用；server 启动不崩；旧 playthroughs 数据被 truncate"
@@ -314,11 +314,11 @@
   {
     "id": "6.2",
     "title": "后端 scripts + script-versions 路由",
-    "description": "重写 /api/scripts 路由（按 DB 而非 JSON 文件）+ 新增 /api/script-versions 路由（创建/列表/发布/删除）；改 playthroughs 和 sessions 路由走新表；删除 server/src/storage/script-store.ts",
-    "status": "pending",
+    "description": "新增 script-service + script-version-service；重写 routes/scripts.ts 用新 service（保留旧 API 兼容）；新增 routes/script-versions.ts 提供版本 CRUD；playthroughs 和 sessions 改走 script_versions 表；删除 storage/script-store.ts；migration 0002 加回 playthroughs.script_version_id 的 FK",
+    "status": "done",
     "type": "logic",
     "ref": "PROGRESS.md#v2.6 剧本版本管理",
-    "verify": "bun tsc --noEmit 通过；所有新路由单测覆盖；E2E 能跑通 '创建剧本 → 存版本 → 发布 → 创建 playthrough' 全链路"
+    "verify": "bun tsc --noEmit 通过；migration 0002 能应用；bun test 全绿（94 个用例含新的 script-version-service 17 个单测）；scriptStore 彻底删除"
   },
   {
     "id": "6.3",

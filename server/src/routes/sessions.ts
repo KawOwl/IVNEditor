@@ -15,9 +15,9 @@
  */
 
 import { Elysia } from 'elysia';
-import { scriptStore } from '../storage/script-store';
 import { SessionManager } from '../session-manager';
 import { playthroughService } from '../services/playthrough-service';
+import { scriptVersionService } from '../services/script-version-service';
 import { resolvePlayerSession } from '../auth-identity';
 
 const sessionManager = new SessionManager();
@@ -69,18 +69,16 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
         return;
       }
 
-      // 3. 查 script manifest
-      // TODO(6.2): scriptVersionId 现在存的是 scriptStore 的 key，6.2 后改为从
-      // script_versions 表拿 manifest 快照
-      const record = scriptStore.get(detail.scriptVersionId);
-      if (!record) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Script not found' }));
+      // 3. 从 script_versions 表拿 manifest 快照
+      const version = await scriptVersionService.getById(detail.scriptVersionId);
+      if (!version) {
+        ws.send(JSON.stringify({ type: 'error', error: 'Script version not found' }));
         ws.close();
         return;
       }
 
       // 4. getOrCreate wrapper（按 playthroughId 索引）
-      const wrapper = sessionManager.getOrCreate(playthroughId, record.manifest, identity.userId);
+      const wrapper = sessionManager.getOrCreate(playthroughId, version.manifest, identity.userId);
       wrapper.attachWebSocket(ws);
 
       // 5. 推送 connected

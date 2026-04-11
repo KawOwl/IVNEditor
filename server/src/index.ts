@@ -16,6 +16,7 @@ import { cors } from '@elysiajs/cors';
 import { existsSync } from 'fs';
 import { join, extname } from 'path';
 import { scriptRoutes } from './routes/scripts';
+import { scriptVersionsForScriptRoutes, scriptVersionRoutes } from './routes/script-versions';
 import { sessionRoutes } from './routes/sessions';
 import { configRoutes } from './routes/config';
 import { authRoutes } from './routes/auth';
@@ -50,6 +51,8 @@ const MIME_MAP: Record<string, string> = {
 const app = new Elysia()
   .use(cors())
   .use(scriptRoutes)
+  .use(scriptVersionsForScriptRoutes)
+  .use(scriptVersionRoutes)
   .use(sessionRoutes)
   .use(configRoutes)
   .use(authRoutes)

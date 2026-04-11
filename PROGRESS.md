@@ -4,71 +4,33 @@
 v2.5 会话持久化 + Langfuse 可观测性已上线。v2.6 剧本版本管理 + 编辑器试玩走后端开发中——为了消除"编辑器试玩无 trace"、"剧本无历史版本"、"playthrough 引用会被剧本改版意外破坏"三个问题，做一次破坏性迁移引入 scripts + script_versions 双表结构。
 
 ## 当前任务
-**v2.6 剧本版本管理 + 编辑器试玩走后端（拆为 6.1-6.6 六个 feature 逐个推进）**
+**v2.6 剧本版本管理 + 编辑器试玩走后端（6.1-6.2 完成，6.3 待做）**
 - 类型：重构 + 新功能 + 破坏性迁移
 - 来源：本轮讨论（见"v2.6 剧本版本管理"设计决策段）
 - 目标：后端统一存剧本 + 引入版本概念，编辑器试玩走后端便于排查
 
-### 推进顺序（逐个 feature 串行，上一个 verify 通过再开下一个）
+### 推进顺序
 
-1. **6.1 schema 迁移**（破坏性）—— 先定型数据层
-2. **6.2 后端路由** —— 有了 schema 填实现 + 删 scriptStore
-3. **6.3 前端编辑器适配** —— 保存/加载/版本列表走后端
+1. ✅ **6.1 schema 迁移**（破坏性）—— 完成
+2. ✅ **6.2 后端路由 + 删 scriptStore** —— 完成
+3. 🔜 **6.3 前端编辑器适配** —— 下一个
 4. **6.4 编辑器试玩走后端** —— PlayPanel 改 editorMode + Langfuse 覆盖编剧试玩
 5. **6.5 玩家侧适配** —— 首页 + 游玩记录按新路径
 6. **6.6 前端 IndexedDB 下线（可选）** —— 全稳定后再做
 
-### 6.1 改动设计（下一个动手的）
+### 6.3 改动设计（下一个动手的）
 
-**目标**：建立新的 schema，破坏性清空旧 playthroughs。
+**目标**：前端编辑器从 IndexedDB 路径切换到后端 scripts/script_versions API。
 
-**新 schema**：
+**主要改动**：
+- 编辑器"我的剧本"列表：从 `GET /api/scripts/mine`（需 6.2 已提供）拉取
+- "保存"按钮：POST /api/scripts/:id/versions 创建 draft 版本（后端 hash 去重）
+- "加载剧本"：拿到 scriptId 后调 GET /api/scripts/:id/full 拉 manifest
+- "发布"按钮：POST /api/script-versions/:id/publish
+- 新增"版本历史"面板：GET /api/scripts/:id/versions 列出所有版本（只读列表，不做 diff）
+- 支持"基于历史版本新建 draft"（从 archived 复制出 manifest）
 
-```sql
-CREATE TABLE scripts (
-  id text PRIMARY KEY,
-  author_user_id text NOT NULL REFERENCES users(id),
-  label text NOT NULL,
-  description text,
-  created_at timestamptz DEFAULT NOW() NOT NULL,
-  updated_at timestamptz DEFAULT NOW() NOT NULL
-);
-
-CREATE TABLE script_versions (
-  id text PRIMARY KEY,
-  script_id text NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
-  version_number integer NOT NULL,        -- 机器排序
-  label text,                             -- 人看的可选文本
-  status text NOT NULL,                   -- 'draft' | 'published' | 'archived'
-  manifest jsonb NOT NULL,
-  content_hash text NOT NULL,             -- sha256(manifest) 去重
-  note text,
-  created_at timestamptz DEFAULT NOW() NOT NULL,
-  published_at timestamptz,
-  archived_at timestamptz,
-  UNIQUE (script_id, version_number)
-);
-
-CREATE UNIQUE INDEX idx_one_published_per_script
-  ON script_versions(script_id) WHERE status = 'published';
-
--- playthroughs 破坏性重建
-DROP TABLE playthroughs;
-CREATE TABLE playthroughs (
-  id text PRIMARY KEY,
-  user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  script_version_id text NOT NULL REFERENCES script_versions(id),
-  kind text NOT NULL,                     -- 'production' | 'playtest'
-  ... (其他字段保留原结构)
-);
-```
-
-**文件改动清单**：
-- 修改 `server/src/db/schema.ts` — 新增 scripts / script_versions 表定义，playthroughs 改字段
-- 新增 Drizzle migration — drop playthroughs 并重建 + 建新表
-- 修改 `src/core/types.ts` — 删除 ScriptManifest.version 字段
-- 修改 `src/ui/editor/EditorPage.tsx` + `ScriptInfoPanel.tsx` — 移除前端 version 引用（只是编译通过即可，后续 6.3 再改 UI）
-- 修改 `src/fixtures/module7-test.ts` — 移除 version 字段
+**过渡期**：IndexedDB 保留作离线缓存，断网时编辑可继续，但 save/publish 必须联网。
 
 ## 已完成的里程碑
 

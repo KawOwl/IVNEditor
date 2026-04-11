@@ -2,35 +2,76 @@
  * Playthrough Routes — 游玩记录 HTTP 接口
  *
  * 所有接口都要求 playerAuth。ownership 校验通过 service 层的 WHERE 子句强制。
+ *
+ * v2.6 改动：创建 playthrough 的 API 契约扩展：
+ *   - 旧字段 scriptId（= scripts.id）依然接受，后端会查该 script 当前
+ *     published 版本 id 塞给 playthroughs.script_version_id（玩家走正式
+ *     published 流程）
+ *   - 新字段 scriptVersionId 可以直接指定具体版本 id（6.4 编辑器试玩走这个）
+ *   - 新字段 kind：'production' | 'playtest'，默认 'production'
+ *
+ * 列表时 join scripts + script_versions 拿 scriptTitle（scripts.label）。
  */
 
 import { Elysia } from 'elysia';
+import { eq, inArray } from 'drizzle-orm';
+import { db, schema } from '../db';
 import { playthroughService } from '../services/playthrough-service';
-import { scriptStore } from '../storage/script-store';
+import { scriptVersionService } from '../services/script-version-service';
 import { requirePlayer, isResponse } from '../auth-identity';
 
 export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
 
   // GET / — 列出当前用户的游玩记录
-  // 注意：6.1 阶段 API 契约还在用 scriptId（= scriptStore 的 key），
-  // 内部 service 层已经叫 scriptVersionId。6.3 前端适配时会把 API
-  // 契约也改成 scriptVersionId，6.2 加回真正的 script_versions 行。
+  //
+  // 过滤参数：
+  //   - scriptId: 按原始 script id 过滤（先查 published 版本，拿到其 version id）
+  //   - scriptVersionId: 按具体版本 id 过滤
+  //   - kind: 'production' | 'playtest'
   .get('/', async ({ query, request }) => {
     const id = await requirePlayer(request);
     if (isResponse(id)) return id;
 
-    const { scriptId } = query as { scriptId?: string };
+    const q = query as { scriptId?: string; scriptVersionId?: string; kind?: 'production' | 'playtest' };
+    // 如果传了 scriptId 而不是 scriptVersionId，尝试转成 version id（用当前 published）
+    let filterVersionId = q.scriptVersionId;
+    if (!filterVersionId && q.scriptId) {
+      const published = await scriptVersionService.getCurrentPublished(q.scriptId);
+      filterVersionId = published?.id;
+      // 如果剧本没 published 版本，filter 就留空——但前端在这种情况下
+      // 拿到空列表是合理的
+      if (!filterVersionId) {
+        return { playthroughs: [] };
+      }
+    }
+
     const playthroughs = await playthroughService.list({
       userId: id.userId,
-      scriptVersionId: scriptId,
+      scriptVersionId: filterVersionId,
+      kind: q.kind,
     });
 
-    // 附加 scriptTitle（从 scriptStore 读取）—— 目前 scriptVersionId 存的是
-    // scriptStore 的 key，可以直接 get 拿 title
-    const withTitles = playthroughs.map((pt) => {
-      const record = scriptStore.get(pt.scriptVersionId);
-      return { ...pt, scriptTitle: record?.manifest.label ?? pt.scriptVersionId };
-    });
+    // 附加 scriptTitle（batch join scripts 表拿）
+    const versionIds = Array.from(new Set(playthroughs.map((pt) => pt.scriptVersionId)));
+    const titleMap = new Map<string, string>();  // versionId → scriptLabel
+    if (versionIds.length > 0) {
+      const joined = await db
+        .select({
+          versionId: schema.scriptVersions.id,
+          scriptLabel: schema.scripts.label,
+        })
+        .from(schema.scriptVersions)
+        .innerJoin(schema.scripts, eq(schema.scriptVersions.scriptId, schema.scripts.id))
+        .where(inArray(schema.scriptVersions.id, versionIds));
+      for (const row of joined) {
+        titleMap.set(row.versionId, row.scriptLabel);
+      }
+    }
+
+    const withTitles = playthroughs.map((pt) => ({
+      ...pt,
+      scriptTitle: titleMap.get(pt.scriptVersionId) ?? pt.scriptVersionId,
+    }));
 
     return { playthroughs: withTitles };
   })
@@ -40,23 +81,47 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
     const id = await requirePlayer(request);
     if (isResponse(id)) return id;
 
-    const { scriptId, title } = body as { scriptId: string; title?: string };
+    const input = body as {
+      scriptId?: string;           // legacy：按剧本 id 创建，用当前 published 版本
+      scriptVersionId?: string;    // 新：直接指定版本 id（试玩用）
+      kind?: 'production' | 'playtest';
+      title?: string;
+    };
 
-    if (!scriptId) {
-      return new Response(JSON.stringify({ error: 'Missing scriptId' }), { status: 400 });
+    // 解析出实际要用的 script_version_id
+    let versionId: string | undefined;
+    let chapterId: string | undefined;
+
+    if (input.scriptVersionId) {
+      const version = await scriptVersionService.getById(input.scriptVersionId);
+      if (!version) {
+        return new Response(JSON.stringify({ error: 'Version not found' }), { status: 404 });
+      }
+      versionId = version.id;
+      chapterId = version.manifest.chapters[0]?.id ?? 'ch1';
+    } else if (input.scriptId) {
+      const published = await scriptVersionService.getCurrentPublished(input.scriptId);
+      if (!published) {
+        return new Response(
+          JSON.stringify({ error: 'Script has no published version' }),
+          { status: 404 },
+        );
+      }
+      versionId = published.id;
+      chapterId = published.manifest.chapters[0]?.id ?? 'ch1';
+    } else {
+      return new Response(
+        JSON.stringify({ error: 'Missing scriptId or scriptVersionId' }),
+        { status: 400 },
+      );
     }
 
-    const record = scriptStore.get(scriptId);
-    if (!record) {
-      return new Response(JSON.stringify({ error: 'Script not found' }), { status: 404 });
-    }
-
-    const chapterId = record.manifest.chapters[0]?.id ?? 'ch1';
     const result = await playthroughService.create({
       userId: id.userId,
-      scriptVersionId: scriptId,
-      chapterId,
-      title,
+      scriptVersionId: versionId,
+      chapterId: chapterId,
+      title: input.title,
+      kind: input.kind ?? 'production',
     });
     return result;
   })

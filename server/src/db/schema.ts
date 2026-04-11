@@ -155,11 +155,9 @@ export const playthroughs = pgTable('playthroughs', {
   userId: text('user_id')
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
-  // 注意：FK references() 暂时关闭 —— 6.1 阶段 service/routes 还没接 scripts
-  // + script_versions 路由，script_versions 表为空。真正的 FK 约束会在 6.2
-  // 做完 "后端 scripts + script-versions 路由" 后补上。
-  // TODO(6.2): add .references(() => scriptVersions.id)
-  scriptVersionId: text('script_version_id').notNull(),
+  scriptVersionId: text('script_version_id')
+    .notNull()
+    .references(() => scriptVersions.id),
   // 'production' | 'playtest'
   // production = 玩家正式游玩；playtest = 编剧在编辑器里试玩
   kind: text('kind').notNull(),

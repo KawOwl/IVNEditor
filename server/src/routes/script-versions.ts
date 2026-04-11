@@ -1,0 +1,153 @@
+/**
+ * Script Version Routes — 剧本版本管理 HTTP 接口
+ *
+ * 这些是 v2.6 新增的 "版本感知" 接口，6.3 前端会开始使用。
+ * 权限：只有剧本的作者能操作自己剧本的版本（按 scriptService.getOwnerId）。
+ *
+ *   POST   /api/scripts/:scriptId/versions       — 创建新 draft 版本
+ *   GET    /api/scripts/:scriptId/versions       — 列出该剧本所有版本
+ *   GET    /api/script-versions/:versionId       — 取单个版本详情（含 manifest）
+ *   POST   /api/script-versions/:versionId/publish — 发布一个 draft 版本
+ *   DELETE /api/script-versions/:versionId       — 删除 draft 版本
+ */
+
+import { Elysia } from 'elysia';
+import type { ScriptManifest } from '../../../src/core/types';
+import { scriptService } from '../services/script-service';
+import { scriptVersionService } from '../services/script-version-service';
+import { requirePlayer, isResponse } from '../auth-identity';
+
+/** 校验请求者是某剧本的作者 */
+async function requireScriptOwner(
+  scriptId: string,
+  userId: string,
+): Promise<true | Response> {
+  const ownerId = await scriptService.getOwnerId(scriptId);
+  if (!ownerId) {
+    return new Response(JSON.stringify({ error: 'Script not found' }), { status: 404 });
+  }
+  if (ownerId !== userId) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
+  }
+  return true;
+}
+
+// ============================================================================
+// Routes mounted on /api/scripts/:scriptId/versions
+// ============================================================================
+
+export const scriptVersionsForScriptRoutes = new Elysia({ prefix: '/api/scripts/:scriptId/versions' })
+
+  // POST — 创建新 draft 版本
+  .post('/', async ({ params, body, request }) => {
+    const id = await requirePlayer(request);
+    if (isResponse(id)) return id;
+
+    const ownership = await requireScriptOwner(params.scriptId, id.userId);
+    if (ownership !== true) return ownership;
+
+    const input = body as Partial<{
+      manifest: ScriptManifest;
+      label: string;
+      note: string;
+    }>;
+    if (!input.manifest) {
+      return new Response(JSON.stringify({ error: 'Missing manifest' }), { status: 400 });
+    }
+
+    const result = await scriptVersionService.create({
+      scriptId: params.scriptId,
+      manifest: input.manifest,
+      label: input.label,
+      note: input.note,
+      status: 'draft',
+    });
+
+    return {
+      versionId: result.version.id,
+      versionNumber: result.version.versionNumber,
+      created: result.created,
+      status: result.version.status,
+    };
+  })
+
+  // GET — 列出某剧本所有版本（summary，不含 manifest）
+  .get('/', async ({ params, request }) => {
+    const id = await requirePlayer(request);
+    if (isResponse(id)) return id;
+
+    const ownership = await requireScriptOwner(params.scriptId, id.userId);
+    if (ownership !== true) return ownership;
+
+    const versions = await scriptVersionService.listByScript(params.scriptId);
+    return { versions };
+  });
+
+// ============================================================================
+// Routes mounted on /api/script-versions/:versionId
+// ============================================================================
+
+export const scriptVersionRoutes = new Elysia({ prefix: '/api/script-versions' })
+
+  // GET /:versionId — 取单个版本详情（含 manifest）
+  .get('/:versionId', async ({ params, request }) => {
+    const id = await requirePlayer(request);
+    if (isResponse(id)) return id;
+
+    const version = await scriptVersionService.getById(params.versionId);
+    if (!version) {
+      return new Response(JSON.stringify({ error: 'Version not found' }), { status: 404 });
+    }
+
+    const ownership = await requireScriptOwner(version.scriptId, id.userId);
+    if (ownership !== true) return ownership;
+
+    return version;
+  })
+
+  // POST /:versionId/publish — 发布一个 draft
+  .post('/:versionId/publish', async ({ params, request }) => {
+    const id = await requirePlayer(request);
+    if (isResponse(id)) return id;
+
+    const version = await scriptVersionService.getById(params.versionId);
+    if (!version) {
+      return new Response(JSON.stringify({ error: 'Version not found' }), { status: 404 });
+    }
+
+    const ownership = await requireScriptOwner(version.scriptId, id.userId);
+    if (ownership !== true) return ownership;
+
+    const ok = await scriptVersionService.publish(params.versionId);
+    if (!ok) {
+      return new Response(
+        JSON.stringify({ error: 'Cannot publish: version is not in draft status' }),
+        { status: 409 },
+      );
+    }
+    return { ok: true };
+  })
+
+  // DELETE /:versionId — 删除 draft 版本
+  .delete('/:versionId', async ({ params, request }) => {
+    const id = await requirePlayer(request);
+    if (isResponse(id)) return id;
+
+    const version = await scriptVersionService.getById(params.versionId);
+    if (!version) {
+      return new Response(JSON.stringify({ error: 'Version not found' }), { status: 404 });
+    }
+
+    const ownership = await requireScriptOwner(version.scriptId, id.userId);
+    if (ownership !== true) return ownership;
+
+    const result = await scriptVersionService.deleteDraft(params.versionId);
+    if (!result.ok) {
+      const status = result.reason === 'not_found' ? 404 : 409;
+      return new Response(
+        JSON.stringify({ error: `Cannot delete: ${result.reason}` }),
+        { status },
+      );
+    }
+    return { ok: true };
+  });

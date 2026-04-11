@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterAll } from 'bun:test';
 import { createPlaythroughPersistence } from '../services/playthrough-persistence';
 import { PlaythroughService } from '../services/playthrough-service';
 import { db, schema } from '../db';
+import type { ScriptManifest } from '../../../src/core/types';
 
 const service = new PlaythroughService();
 
@@ -19,12 +20,29 @@ const service = new PlaythroughService();
 async function cleanTables() {
   await db.delete(schema.narrativeEntries);
   await db.delete(schema.playthroughs);
+  await db.delete(schema.scriptVersions);
+  await db.delete(schema.scripts);
   await db.delete(schema.userSessions);
   await db.delete(schema.users);
 }
 
-const TEST_SCRIPT_VERSION_ID = 'test-script-persist';
 const TEST_CHAPTER_ID = 'ch1';
+
+function makeMinimalManifest(): ScriptManifest {
+  return {
+    id: 'placeholder',
+    label: 'test script',
+    stateSchema: { variables: [] },
+    memoryConfig: { contextBudget: 100000, compressionThreshold: 50000, recencyWindow: 10 },
+    enabledTools: [],
+    chapters: [{
+      id: TEST_CHAPTER_ID,
+      label: '第一章',
+      flowGraph: { id: 'fg', label: 'fg', nodes: [], edges: [] },
+      segments: [],
+    }],
+  };
+}
 
 async function createTestUser(): Promise<string> {
   const id = crypto.randomUUID();
@@ -32,14 +50,35 @@ async function createTestUser(): Promise<string> {
   return id;
 }
 
+/** 为测试建一个 script + version，返回 versionId */
+async function createTestScriptVersion(authorUserId: string): Promise<string> {
+  const scriptId = `test-script-${crypto.randomUUID().slice(0, 8)}`;
+  const versionId = `test-version-${crypto.randomUUID().slice(0, 8)}`;
+  await db.insert(schema.scripts).values({
+    id: scriptId,
+    authorUserId,
+    label: 'test script',
+  });
+  await db.insert(schema.scriptVersions).values({
+    id: versionId,
+    scriptId,
+    versionNumber: 1,
+    status: 'draft',
+    manifest: makeMinimalManifest(),
+    contentHash: `hash-${versionId}`,
+  });
+  return versionId;
+}
+
 async function createTestPlaythrough() {
   const userId = await createTestUser();
+  const scriptVersionId = await createTestScriptVersion(userId);
   const r = await service.create({
-    scriptVersionId: TEST_SCRIPT_VERSION_ID,
+    scriptVersionId,
     chapterId: TEST_CHAPTER_ID,
     userId,
   });
-  return { ...r, userId };
+  return { ...r, userId, scriptVersionId };
 }
 
 // ============================================================================

@@ -4,12 +4,15 @@
  * 使用真实 PostgreSQL 数据库（测试用 ivn_engine 库）。
  * 每个测试用例前清空表，保证隔离。
  *
- * 新 schema 下所有 playthroughs 必须属于某个 user，测试 helper 会自动创建。
+ * 新 schema 下所有 playthroughs 必须属于某个 user；并且
+ * playthroughs.script_version_id 有 FK 指向 script_versions 表，
+ * 测试 helper 会自动创建 user + script + script_version。
  */
 
 import { describe, it, expect, beforeEach, afterAll } from 'bun:test';
 import { PlaythroughService } from '../services/playthrough-service';
 import { db, schema } from '../db';
+import type { ScriptManifest } from '../../../src/core/types';
 
 const service = new PlaythroughService();
 
@@ -20,12 +23,30 @@ const service = new PlaythroughService();
 async function cleanTables() {
   await db.delete(schema.narrativeEntries);
   await db.delete(schema.playthroughs);
+  await db.delete(schema.scriptVersions);
+  await db.delete(schema.scripts);
   await db.delete(schema.userSessions);
   await db.delete(schema.users);
 }
 
-const TEST_SCRIPT_VERSION_ID = 'test-script-version-001';
 const TEST_CHAPTER_ID = 'ch1';
+
+/** 一个最小可用的 ScriptManifest，用于测试 script_versions.manifest 字段 */
+function makeMinimalManifest(label: string = 'test script'): ScriptManifest {
+  return {
+    id: 'placeholder',
+    label,
+    stateSchema: { variables: [] },
+    memoryConfig: { contextBudget: 100000, compressionThreshold: 50000, recencyWindow: 10 },
+    enabledTools: [],
+    chapters: [{
+      id: TEST_CHAPTER_ID,
+      label: '第一章',
+      flowGraph: { id: 'fg', label: 'fg', nodes: [], edges: [] },
+      segments: [],
+    }],
+  };
+}
 
 /** 创建一个测试用户（只写 users 表，不建 auth session） */
 async function createTestUser(id?: string): Promise<string> {
@@ -34,20 +55,51 @@ async function createTestUser(id?: string): Promise<string> {
   return userId;
 }
 
+/**
+ * 创建测试用的 script + script_version，返回 versionId
+ * scriptKey 可选用于同一测试里建多个不同剧本
+ */
+async function createTestScriptVersion(
+  authorUserId: string,
+  scriptKey: string = 'default',
+): Promise<string> {
+  const scriptId = `test-script-${scriptKey}-${crypto.randomUUID().slice(0, 6)}`;
+  const versionId = `test-version-${scriptKey}-${crypto.randomUUID().slice(0, 6)}`;
+  await db.insert(schema.scripts).values({
+    id: scriptId,
+    authorUserId,
+    label: `test script ${scriptKey}`,
+  });
+  await db.insert(schema.scriptVersions).values({
+    id: versionId,
+    scriptId,
+    versionNumber: 1,
+    status: 'draft',
+    manifest: makeMinimalManifest(`test script ${scriptKey}`),
+    contentHash: `hash-${scriptKey}-${versionId}`,
+  });
+  return versionId;
+}
+
 async function createTestPlaythrough(overrides: Partial<{
   scriptVersionId: string;
+  scriptKey: string;
   chapterId: string;
   userId: string;
   title: string;
 }> = {}) {
   // 自动创建 user 如果没指定
   const userId = overrides.userId ?? await createTestUser();
+  // 自动创建 script + version 如果没指定 versionId
+  const scriptVersionId =
+    overrides.scriptVersionId ??
+    (await createTestScriptVersion(userId, overrides.scriptKey ?? 'default'));
   return service.create({
-    scriptVersionId: overrides.scriptVersionId ?? TEST_SCRIPT_VERSION_ID,
+    scriptVersionId,
     chapterId: overrides.chapterId ?? TEST_CHAPTER_ID,
     userId,
     title: overrides.title,
-  }).then((r) => ({ ...r, userId }));
+  }).then((r) => ({ ...r, userId, scriptVersionId }));
 }
 
 // ============================================================================
@@ -80,11 +132,12 @@ describe('PlaythroughService', () => {
       expect(pt.title).toBe('自定义存档');
     });
 
-    it('should auto-increment title number for same user', async () => {
+    it('should auto-increment title number for same user + same version', async () => {
       const userId = await createTestUser();
-      const first = await createTestPlaythrough({ userId });
-      const second = await createTestPlaythrough({ userId });
-      const third = await createTestPlaythrough({ userId });
+      const versionId = await createTestScriptVersion(userId, 'same');
+      const first = await createTestPlaythrough({ userId, scriptVersionId: versionId });
+      const second = await createTestPlaythrough({ userId, scriptVersionId: versionId });
+      const third = await createTestPlaythrough({ userId, scriptVersionId: versionId });
       expect(first.title).toBe('游玩 #1');
       expect(second.title).toBe('游玩 #2');
       expect(third.title).toBe('游玩 #3');
@@ -92,9 +145,12 @@ describe('PlaythroughService', () => {
 
     it('should count titles per script independently for same user', async () => {
       const userId = await createTestUser();
-      await createTestPlaythrough({ userId, scriptVersionId: 'script-a' });
-      await createTestPlaythrough({ userId, scriptVersionId: 'script-a' });
-      const bFirst = await createTestPlaythrough({ userId, scriptVersionId: 'script-b' });
+      // 建两个独立的 script + version，让同一 user 在两个剧本上各玩几次
+      const versionA = await createTestScriptVersion(userId, 'a');
+      const versionB = await createTestScriptVersion(userId, 'b');
+      await createTestPlaythrough({ userId, scriptVersionId: versionA });
+      await createTestPlaythrough({ userId, scriptVersionId: versionA });
+      const bFirst = await createTestPlaythrough({ userId, scriptVersionId: versionB });
       expect(bFirst.title).toBe('游玩 #1');
     });
 
@@ -146,12 +202,14 @@ describe('PlaythroughService', () => {
 
     it('should filter by scriptVersionId', async () => {
       const userId = await createTestUser();
-      await createTestPlaythrough({ userId, scriptVersionId: 'script-a' });
-      await createTestPlaythrough({ userId, scriptVersionId: 'script-b' });
+      const versionA = await createTestScriptVersion(userId, 'a');
+      const versionB = await createTestScriptVersion(userId, 'b');
+      await createTestPlaythrough({ userId, scriptVersionId: versionA });
+      await createTestPlaythrough({ userId, scriptVersionId: versionB });
 
-      const result = await service.list({ userId, scriptVersionId: 'script-a' });
+      const result = await service.list({ userId, scriptVersionId: versionA });
       expect(result.length).toBe(1);
-      expect(result[0].scriptVersionId).toBe('script-a');
+      expect(result[0].scriptVersionId).toBe(versionA);
     });
 
     it('should NOT return other users playthroughs (ownership enforced)', async () => {
@@ -479,13 +537,16 @@ describe('PlaythroughService', () => {
     it('should count correctly per user + script', async () => {
       const u1 = await createTestUser();
       const u2 = await createTestUser();
-      await createTestPlaythrough({ userId: u1, scriptVersionId: 'sa' });
-      await createTestPlaythrough({ userId: u1, scriptVersionId: 'sa' });
-      await createTestPlaythrough({ userId: u2, scriptVersionId: 'sa' });
+      // 建两个版本：sa / sb；各 user 在 sa 上游玩不同次数
+      const va = await createTestScriptVersion(u1, 'sa');
+      const vb = await createTestScriptVersion(u1, 'sb');
+      await createTestPlaythrough({ userId: u1, scriptVersionId: va });
+      await createTestPlaythrough({ userId: u1, scriptVersionId: va });
+      await createTestPlaythrough({ userId: u2, scriptVersionId: va });
 
-      expect(await service.countByScriptVersionAndUser('sa', u1)).toBe(2);
-      expect(await service.countByScriptVersionAndUser('sa', u2)).toBe(1);
-      expect(await service.countByScriptVersionAndUser('sb', u1)).toBe(0);
+      expect(await service.countByScriptVersionAndUser(va, u1)).toBe(2);
+      expect(await service.countByScriptVersionAndUser(va, u2)).toBe(1);
+      expect(await service.countByScriptVersionAndUser(vb, u1)).toBe(0);
     });
   });
 
