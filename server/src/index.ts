@@ -11,16 +11,9 @@
  * Vite 产物冲突。改用 Bun.file() 直接 serve 静态文件。
  */
 
-import { Elysia } from 'elysia';
-import { cors } from '@elysiajs/cors';
 import { existsSync } from 'fs';
 import { join, extname } from 'path';
-import { scriptRoutes } from './routes/scripts';
-import { scriptVersionsForScriptRoutes, scriptVersionRoutes } from './routes/script-versions';
-import { sessionRoutes } from './routes/sessions';
-import { configRoutes } from './routes/config';
-import { authRoutes } from './routes/auth';
-import { playthroughRoutes } from './routes/playthroughs';
+import { buildApp } from './app';
 import { testConnection, runMigrations, closePool } from './db';
 import { shutdownTracing } from './tracing';
 
@@ -48,16 +41,8 @@ const MIME_MAP: Record<string, string> = {
   '.eot': 'application/vnd.ms-fontobject',
 };
 
-const app = new Elysia()
-  .use(cors())
-  .use(scriptRoutes)
-  .use(scriptVersionsForScriptRoutes)
-  .use(scriptVersionRoutes)
-  .use(sessionRoutes)
-  .use(configRoutes)
-  .use(authRoutes)
-  .use(playthroughRoutes)
-  .get('/health', () => ({ ok: true, timestamp: Date.now() }));
+// Elysia app 在 ./app.ts 里构造（纯函数 buildApp），供 tests 复用
+const app = buildApp();
 
 // 托管前端静态资源（仅在 dist/ 存在时启用）
 if (HAS_DIST) {
