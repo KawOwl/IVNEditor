@@ -4,11 +4,16 @@
  * 这些是 v2.6 新增的 "版本感知" 接口，6.3 前端会开始使用。
  * 权限：只有剧本的作者能操作自己剧本的版本（按 scriptService.getOwnerId）。
  *
- *   POST   /api/scripts/:scriptId/versions       — 创建新 draft 版本
- *   GET    /api/scripts/:scriptId/versions       — 列出该剧本所有版本
- *   GET    /api/script-versions/:versionId       — 取单个版本详情（含 manifest）
+ *   POST   /api/scripts/:id/versions               — 创建新 draft 版本
+ *   GET    /api/scripts/:id/versions               — 列出该剧本所有版本
+ *   GET    /api/script-versions/:versionId         — 取单个版本详情（含 manifest）
  *   POST   /api/script-versions/:versionId/publish — 发布一个 draft 版本
- *   DELETE /api/script-versions/:versionId       — 删除 draft 版本
+ *   DELETE /api/script-versions/:versionId         — 删除 draft 版本
+ *
+ * 注意：URL 参数用 `:id` 而不是 `:scriptId`。原因是 Elysia / memoirist
+ * router 不允许同一路径位置出现不同名字的参数——`/api/scripts/:id`（来自
+ * scriptRoutes）已经占了 `:id` 这个 slot，新 routes 必须沿用同样的名字，
+ * 否则启动时会抛 "different parameter name" 错误。
  */
 
 import { Elysia } from 'elysia';
@@ -33,17 +38,18 @@ async function requireScriptOwner(
 }
 
 // ============================================================================
-// Routes mounted on /api/scripts/:scriptId/versions
+// Routes mounted on /api/scripts/:id/versions
 // ============================================================================
 
-export const scriptVersionsForScriptRoutes = new Elysia({ prefix: '/api/scripts/:scriptId/versions' })
+export const scriptVersionsForScriptRoutes = new Elysia({ prefix: '/api/scripts/:id/versions' })
 
   // POST — 创建新 draft 版本
   .post('/', async ({ params, body, request }) => {
-    const id = await requirePlayer(request);
-    if (isResponse(id)) return id;
+    const auth = await requirePlayer(request);
+    if (isResponse(auth)) return auth;
 
-    const ownership = await requireScriptOwner(params.scriptId, id.userId);
+    const scriptId = params.id;  // URL :id 实际是 script id
+    const ownership = await requireScriptOwner(scriptId, auth.userId);
     if (ownership !== true) return ownership;
 
     const input = body as Partial<{
@@ -56,7 +62,7 @@ export const scriptVersionsForScriptRoutes = new Elysia({ prefix: '/api/scripts/
     }
 
     const result = await scriptVersionService.create({
-      scriptId: params.scriptId,
+      scriptId,
       manifest: input.manifest,
       label: input.label,
       note: input.note,
@@ -73,13 +79,14 @@ export const scriptVersionsForScriptRoutes = new Elysia({ prefix: '/api/scripts/
 
   // GET — 列出某剧本所有版本（summary，不含 manifest）
   .get('/', async ({ params, request }) => {
-    const id = await requirePlayer(request);
-    if (isResponse(id)) return id;
+    const auth = await requirePlayer(request);
+    if (isResponse(auth)) return auth;
 
-    const ownership = await requireScriptOwner(params.scriptId, id.userId);
+    const scriptId = params.id;
+    const ownership = await requireScriptOwner(scriptId, auth.userId);
     if (ownership !== true) return ownership;
 
-    const versions = await scriptVersionService.listByScript(params.scriptId);
+    const versions = await scriptVersionService.listByScript(scriptId);
     return { versions };
   });
 
@@ -91,15 +98,15 @@ export const scriptVersionRoutes = new Elysia({ prefix: '/api/script-versions' }
 
   // GET /:versionId — 取单个版本详情（含 manifest）
   .get('/:versionId', async ({ params, request }) => {
-    const id = await requirePlayer(request);
-    if (isResponse(id)) return id;
+    const auth = await requirePlayer(request);
+    if (isResponse(auth)) return auth;
 
     const version = await scriptVersionService.getById(params.versionId);
     if (!version) {
       return new Response(JSON.stringify({ error: 'Version not found' }), { status: 404 });
     }
 
-    const ownership = await requireScriptOwner(version.scriptId, id.userId);
+    const ownership = await requireScriptOwner(version.scriptId, auth.userId);
     if (ownership !== true) return ownership;
 
     return version;
@@ -107,15 +114,15 @@ export const scriptVersionRoutes = new Elysia({ prefix: '/api/script-versions' }
 
   // POST /:versionId/publish — 发布一个 draft
   .post('/:versionId/publish', async ({ params, request }) => {
-    const id = await requirePlayer(request);
-    if (isResponse(id)) return id;
+    const auth = await requirePlayer(request);
+    if (isResponse(auth)) return auth;
 
     const version = await scriptVersionService.getById(params.versionId);
     if (!version) {
       return new Response(JSON.stringify({ error: 'Version not found' }), { status: 404 });
     }
 
-    const ownership = await requireScriptOwner(version.scriptId, id.userId);
+    const ownership = await requireScriptOwner(version.scriptId, auth.userId);
     if (ownership !== true) return ownership;
 
     const ok = await scriptVersionService.publish(params.versionId);
@@ -130,15 +137,15 @@ export const scriptVersionRoutes = new Elysia({ prefix: '/api/script-versions' }
 
   // DELETE /:versionId — 删除 draft 版本
   .delete('/:versionId', async ({ params, request }) => {
-    const id = await requirePlayer(request);
-    if (isResponse(id)) return id;
+    const auth = await requirePlayer(request);
+    if (isResponse(auth)) return auth;
 
     const version = await scriptVersionService.getById(params.versionId);
     if (!version) {
       return new Response(JSON.stringify({ error: 'Version not found' }), { status: 404 });
     }
 
-    const ownership = await requireScriptOwner(version.scriptId, id.userId);
+    const ownership = await requireScriptOwner(version.scriptId, auth.userId);
     if (ownership !== true) return ownership;
 
     const result = await scriptVersionService.deleteDraft(params.versionId);
