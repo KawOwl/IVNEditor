@@ -20,6 +20,7 @@ import { PromptPreviewPanel } from './PromptPreviewPanel';
 import { PlayPanel } from '../play/PlayPanel';
 import { LLMSettingsPanel } from '../settings/LLMSettingsPanel';
 import { ScriptInfoPanel } from './ScriptInfoPanel';
+import { VersionHistoryList, type VersionSummary } from './VersionHistoryList';
 import { estimateTokens } from '../../core/memory';
 import { ScriptStorage, exportScript, parseImportedScript } from '../../storage/script-storage';
 import type { ScriptRecord, ScriptListItem } from '../../storage/script-storage';
@@ -182,47 +183,67 @@ export function EditorPage() {
   const [promptAssemblyOrder, setPromptAssemblyOrder] = useState<string[] | undefined>(undefined);
   const [disabledAssemblySections, setDisabledAssemblySections] = useState<string[]>([]);
 
+  // --- v2.6 version management state ---
+  /** 当前编辑的 version id（6.3：只在 remote 模式下有意义） */
+  const [loadedVersionId, setLoadedVersionId] = useState<string | null>(null);
+  /** 版本列表（当前加载剧本的所有 version，按 versionNumber 降序） */
+  const [versionList, setVersionList] = useState<VersionSummary[]>([]);
+  const [versionListLoading, setVersionListLoading] = useState(false);
+  /** 正在发布的 versionId（用于禁用按钮） */
+  const [publishingVersionId, setPublishingVersionId] = useState<string | null>(null);
+
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;
 
-  // --- Load script list: local + remote merge ---
+  // --- Load script list: local IndexedDB + remote GET /api/scripts/mine merge ---
+  //
+  // 6.3 改动：remote 模式下用 GET /api/scripts/mine（作者视角）而不是
+  // /catalog（已发布列表）；编辑器展示的是"我的所有剧本"，包含未发布的
+  // draft。local 模式继续走 IndexedDB。
   const refreshScriptList = useCallback(async () => {
     const localList = await scriptStorage.list();
 
-    // Remote mode + admin: also fetch server catalog
-    if (getEngineMode() === 'remote' && useAuthStore.getState().isAdmin) {
+    if (getEngineMode() === 'remote') {
       try {
         const authHeader = useAuthStore.getState().getAuthHeader();
-        const res = await fetch(`${getBackendUrl()}/api/scripts/catalog`, { headers: authHeader });
+        const res = await fetch(`${getBackendUrl()}/api/scripts/mine`, { headers: authHeader });
         if (res.ok) {
-          const remoteCatalog: Array<{ id: string; label: string; description?: string; tags?: string[]; version?: string; chapterCount: number }> = await res.json();
+          const { scripts: mineScripts } = (await res.json()) as {
+            scripts: Array<{
+              id: string;
+              label: string;
+              description: string | null;
+              createdAt: string;
+              updatedAt: string;
+              versionCount: number;
+              hasPublished: boolean;
+              publishedVersionId: string | null;
+              latestDraftVersionId: string | null;
+            }>;
+          };
 
           const merged: MergedScriptItem[] = [];
           const seenIds = new Set<string>();
 
-          // Process local items first
           for (const local of localList) {
-            const remote = remoteCatalog.find((r) => r.id === local.id);
+            const remote = mineScripts.find((r) => r.id === local.id);
             if (remote) {
-              // Exists on both sides —— 6.3 会引入真正的版本对比
-              merged.push({ ...local, source: 'both' });
+              merged.push({ ...local, source: 'both', published: remote.hasPublished });
             } else {
-              // Local only
               merged.push({ ...local, source: 'local' });
             }
             seenIds.add(local.id);
           }
 
-          // Process remote-only items
-          for (const remote of remoteCatalog) {
+          for (const remote of mineScripts) {
             if (seenIds.has(remote.id)) continue;
             merged.push({
               id: remote.id,
               label: remote.label,
               description: remote.description ?? '',
-              updatedAt: Date.now(),
-              fileCount: remote.chapterCount,
-              tags: remote.tags,
+              updatedAt: new Date(remote.updatedAt).getTime(),
+              fileCount: 0,  // version count 在列表里显示不重要
               source: 'remote',
+              published: remote.hasPublished,
             });
           }
 
@@ -238,37 +259,44 @@ export function EditorPage() {
     setScriptList(localList.map((l) => ({ ...l, source: 'local' as ScriptSource })));
   }, []);
 
+  // --- v2.6: 拉当前剧本的 version list ---
+  const refreshVersionList = useCallback(async (scriptId: string | null) => {
+    if (!scriptId || getEngineMode() !== 'remote') {
+      setVersionList([]);
+      return;
+    }
+    setVersionListLoading(true);
+    try {
+      const authHeader = useAuthStore.getState().getAuthHeader();
+      const res = await fetch(
+        `${getBackendUrl()}/api/scripts/${scriptId}/versions`,
+        { headers: authHeader },
+      );
+      if (res.ok) {
+        const { versions } = (await res.json()) as { versions: VersionSummary[] };
+        setVersionList(versions);
+      } else {
+        setVersionList([]);
+      }
+    } catch {
+      setVersionList([]);
+    } finally {
+      setVersionListLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     refreshScriptList();
   }, [refreshScriptList]);
 
-  // --- Load a script (local or from server) ---
-  const handleLoadScript = useCallback(async (scriptId: string) => {
-    // Find merged item to check source
-    const mergedItem = scriptList.find((s) => s.id === scriptId);
-    // TODO(6.3): 引入版本管理后这里会改成"后端 latest draft 比本地新就拉"
-    const needsFetch = mergedItem && mergedItem.source === 'remote';
-
-    // If remote-only, fetch from server first
-    if (needsFetch && getEngineMode() === 'remote') {
-      try {
-        const authHeader = useAuthStore.getState().getAuthHeader();
-        // 编辑器需要完整 manifest（含 segments）→ 走 admin-only /full 端点
-        const res = await fetch(`${getBackendUrl()}/api/scripts/${scriptId}/full`, { headers: authHeader });
-        if (res.ok) {
-          const serverRecord: ScriptRecord = await res.json();
-          // Save to local IndexedDB
-          await scriptStorage.save(serverRecord);
-          await refreshScriptList();
-        }
-      } catch {
-        // If fetch fails, try loading from local
-      }
-    }
-
-    const record = await scriptStorage.get(scriptId);
-    if (!record) return;
-
+  // --- applyManifest: helper to flush a ScriptRecord-like object to editor state ---
+  const applyRecordToEditor = useCallback((record: {
+    id: string;
+    label: string;
+    description: string;
+    published?: boolean;
+    manifest: ScriptManifest;
+  }) => {
     const manifest = record.manifest;
     const docs = manifestToDocuments(manifest);
     setDocuments(docs);
@@ -277,7 +305,7 @@ export function EditorPage() {
     setMemoryConfig(manifest.memoryConfig);
     setEnabledTools(manifest.enabledTools);
     setInitialPrompt(manifest.initialPrompt ?? '开始测试');
-    setLoadedScriptId(scriptId);
+    setLoadedScriptId(record.id);
     setScriptLabel(record.label);
     setScriptDescription(record.description);
     setScriptTags(manifest.tags ?? []);
@@ -285,16 +313,124 @@ export function EditorPage() {
     setPromptAssemblyOrder(manifest.promptAssemblyOrder);
     setDisabledAssemblySections(manifest.disabledAssemblySections ?? []);
     setShowScriptLibrary(false);
-  }, [scriptList, refreshScriptList]);
+  }, []);
 
-  // --- Save current editor state to IndexedDB ---
+  // --- Load a script (remote: version-aware, local: IndexedDB) ---
+  const handleLoadScript = useCallback(async (scriptId: string) => {
+    // Remote 模式：走后端版本管理
+    //   1. GET /api/scripts/:id/versions → 拿到版本列表
+    //   2. 选"最新 draft 优先，否则最新 published"
+    //   3. GET /api/script-versions/:versionId → 拿 manifest
+    //   4. flush 到 editor
+    if (getEngineMode() === 'remote') {
+      try {
+        const authHeader = useAuthStore.getState().getAuthHeader();
+        const vres = await fetch(
+          `${getBackendUrl()}/api/scripts/${scriptId}/versions`,
+          { headers: authHeader },
+        );
+        if (vres.ok) {
+          const { versions } = (await vres.json()) as { versions: VersionSummary[] };
+          // 选最新 draft；没有 draft 就选当前 published；再没有就最新 archived
+          const pick =
+            versions.find((v) => v.status === 'draft') ??
+            versions.find((v) => v.status === 'published') ??
+            versions[0];
+          if (pick) {
+            const dres = await fetch(
+              `${getBackendUrl()}/api/script-versions/${pick.id}`,
+              { headers: authHeader },
+            );
+            if (dres.ok) {
+              const version = (await dres.json()) as {
+                id: string;
+                scriptId: string;
+                status: string;
+                manifest: ScriptManifest;
+                label: string | null;
+              };
+              // 拉 script 元数据取 label/description
+              const sres = await fetch(
+                `${getBackendUrl()}/api/scripts/${scriptId}/full`,
+                { headers: authHeader },
+              );
+              const scriptMeta = sres.ok
+                ? ((await sres.json()) as {
+                    id: string;
+                    label: string;
+                    description: string;
+                    published: boolean;
+                  })
+                : { id: scriptId, label: version.manifest.label, description: '', published: false };
+
+              applyRecordToEditor({
+                id: scriptMeta.id,
+                label: scriptMeta.label,
+                description: scriptMeta.description,
+                published: scriptMeta.published,
+                manifest: version.manifest,
+              });
+              setLoadedVersionId(version.id);
+              await refreshVersionList(scriptId);
+              return;
+            }
+          }
+        }
+      } catch {
+        // fall through to local
+      }
+    }
+
+    // Local 模式：走 IndexedDB
+    const record = await scriptStorage.get(scriptId);
+    if (!record) return;
+    applyRecordToEditor(record);
+    setLoadedVersionId(null);
+    setVersionList([]);
+  }, [applyRecordToEditor, refreshVersionList]);
+
+  // --- Save current editor state ---
+  //
+  // Remote 模式（6.3 新 flow）:
+  //   1. 如果还没 scriptId → POST /api/scripts 建空 script 行
+  //   2. POST /api/scripts/:id/versions 创建 draft 版本（后端按 content hash
+  //      去重；相同内容不产生新版本）
+  //   3. 更新 loadedScriptId / loadedVersionId 并刷新版本列表
+  //   4. 同步一份到 IndexedDB 作离线缓存
+  //
+  // Local 模式：直接走 IndexedDB（和 6.2 之前的行为一致）
   const handleSaveScript = useCallback(async () => {
     setSaving(true);
     try {
-      const id = loadedScriptId ?? uuid();
-      // 旧的 patch+1 自增版本号逻辑已废弃，6.3 会引入真正的 script_versions 表管理
-
       const flowGraph: FlowGraph = { id: 'draft-flow', label: '草稿', nodes: [], edges: [] };
+
+      // 先确定 scriptId：remote 新建场景需要 POST 后拿
+      let scriptId = loadedScriptId;
+      const isRemote = getEngineMode() === 'remote';
+
+      if (isRemote && !scriptId) {
+        // Step 1: 后端建空 script 行
+        const authHeader = useAuthStore.getState().getAuthHeader();
+        const createRes = await fetch(`${getBackendUrl()}/api/scripts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader },
+          body: JSON.stringify({
+            label: scriptLabel,
+            description: scriptDescription,
+          }),
+        });
+        if (!createRes.ok) {
+          alert(`创建剧本失败: ${createRes.status}`);
+          return;
+        }
+        const { id: newId } = (await createRes.json()) as { id: string };
+        scriptId = newId;
+        setLoadedScriptId(newId);
+      }
+
+      // local 模式或 remote 已有 id 时，生成新的 id
+      const id = scriptId ?? uuid();
+
       const manifest: ScriptManifest = {
         id,
         label: scriptLabel,
@@ -314,6 +450,40 @@ export function EditorPage() {
         }],
       };
 
+      // Remote 模式：POST version（后端 hash 去重）
+      if (isRemote) {
+        const authHeader = useAuthStore.getState().getAuthHeader();
+        // 同步元数据（label/description 可能在 editor 里改了）
+        await fetch(`${getBackendUrl()}/api/scripts/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...authHeader },
+          body: JSON.stringify({
+            label: scriptLabel,
+            description: scriptDescription,
+          }),
+        });
+
+        const vres = await fetch(`${getBackendUrl()}/api/scripts/${id}/versions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader },
+          body: JSON.stringify({ manifest }),
+        });
+        if (vres.ok) {
+          const { versionId, created } = (await vres.json()) as {
+            versionId: string;
+            created: boolean;
+          };
+          setLoadedVersionId(versionId);
+          await refreshVersionList(id);
+          if (!created) {
+            console.log('[save] 内容未变化，复用现有版本', versionId);
+          }
+        } else {
+          alert(`保存版本失败: ${vres.status}`);
+        }
+      }
+
+      // Always: 同步一份到 IndexedDB（离线缓存 / local 模式主存储）
       const now = Date.now();
       const existing = await scriptStorage.get(id);
       const record: ScriptRecord = {
@@ -324,20 +494,35 @@ export function EditorPage() {
         updatedAt: now,
         manifest,
       };
-
       await scriptStorage.save(record);
       setLoadedScriptId(id);
       await refreshScriptList();
     } finally {
       setSaving(false);
     }
-  }, [loadedScriptId, scriptLabel, scriptDescription, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, disabledAssemblySections, refreshScriptList]);
+  }, [loadedScriptId, scriptLabel, scriptDescription, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, disabledAssemblySections, refreshScriptList, refreshVersionList]);
 
-  // --- Delete a script from IndexedDB ---
+  // --- Delete a script ---
+  // Remote: DELETE /api/scripts/:id（级联删 versions + playthroughs）
+  // Local: scriptStorage.delete
   const handleDeleteScript = useCallback(async (id: string) => {
+    if (getEngineMode() === 'remote') {
+      try {
+        const authHeader = useAuthStore.getState().getAuthHeader();
+        await fetch(`${getBackendUrl()}/api/scripts/${id}`, {
+          method: 'DELETE',
+          headers: authHeader,
+        });
+      } catch (err) {
+        console.error('[delete] 后端删除失败:', err);
+      }
+    }
+    // 总是清掉本地缓存
     await scriptStorage.delete(id);
     if (loadedScriptId === id) {
       setLoadedScriptId(null);
+      setLoadedVersionId(null);
+      setVersionList([]);
       setDocuments([]);
       setSelectedDocId(null);
       setScriptLabel('未命名剧本');
@@ -347,7 +532,21 @@ export function EditorPage() {
   }, [loadedScriptId, refreshScriptList]);
 
   // --- Rename a saved script ---
+  // Remote: PATCH /api/scripts/:id
+  // Local: scriptStorage.rename
   const handleRenameScript = useCallback(async (id: string, newLabel: string) => {
+    if (getEngineMode() === 'remote') {
+      try {
+        const authHeader = useAuthStore.getState().getAuthHeader();
+        await fetch(`${getBackendUrl()}/api/scripts/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...authHeader },
+          body: JSON.stringify({ label: newLabel }),
+        });
+      } catch (err) {
+        console.error('[rename] 后端更新失败:', err);
+      }
+    }
     await scriptStorage.rename(id, newLabel);
     if (loadedScriptId === id) {
       setScriptLabel(newLabel);
@@ -426,10 +625,15 @@ export function EditorPage() {
   }, [refreshScriptList]);
 
   // --- Create new empty script ---
+  //
+  // 不立即调后端——只 reset 本地 state。第一次点"保存"时才会 POST
+  // /api/scripts 在后端建 script 行（走 handleSaveScript 里的新建分支）。
   const handleNewScript = useCallback(() => {
     setDocuments([]);
     setSelectedDocId(null);
     setLoadedScriptId(null);
+    setLoadedVersionId(null);
+    setVersionList([]);
     setScriptLabel('未命名剧本');
     setScriptDescription('');
     setScriptTags([]);
@@ -443,40 +647,51 @@ export function EditorPage() {
     setShowScriptLibrary(false);
   }, []);
 
-  // --- Publish / unpublish script ---
+  // --- Publish an arbitrary draft version（供版本历史列用）---
+  //
+  // Remote 模式：POST /api/script-versions/:id/publish
+  //   - 该 draft 变 published
+  //   - 原 published 自动变 archived
+  const handlePublishVersion = useCallback(async (versionId: string) => {
+    if (getEngineMode() !== 'remote') return;
+    setPublishingVersionId(versionId);
+    try {
+      const authHeader = useAuthStore.getState().getAuthHeader();
+      const res = await fetch(
+        `${getBackendUrl()}/api/script-versions/${versionId}/publish`,
+        { method: 'POST', headers: authHeader },
+      );
+      if (!res.ok) {
+        const err = await res.text();
+        alert(`发布失败: ${err}`);
+        return;
+      }
+      if (loadedScriptId) {
+        await refreshVersionList(loadedScriptId);
+      }
+      setIsPublished(true);
+      await refreshScriptList();
+    } finally {
+      setPublishingVersionId(null);
+    }
+  }, [loadedScriptId, refreshVersionList, refreshScriptList]);
+
+  // --- Publish / unpublish button in header ---
+  //
+  // Remote 模式：点发布 = 发布当前 loadedVersionId（如果是 draft）。
+  //   - 已经发布时 按钮显示"已发布"，没有 unpublish 操作（过渡期；6.3b
+  //     可以加 "创建新 draft 取代" 的语义）
+  // Local 模式：沿用旧的 IndexedDB publish/unpublish 标志
   const handlePublishScript = useCallback(async () => {
     if (!loadedScriptId) return;  // must save first
     setPublishing(true);
     try {
       if (getEngineMode() === 'remote') {
-        const authHeader = useAuthStore.getState().getAuthHeader();
-        // Remote mode: POST full record to backend
-        if (isPublished) {
-          // Unpublish: delete from backend
-          await fetch(`${getBackendUrl()}/api/scripts/${loadedScriptId}`, {
-            method: 'DELETE',
-            headers: authHeader,
-          });
-          setIsPublished(false);
-        } else {
-          // Publish: send record to backend
-          const record = await scriptStorage.get(loadedScriptId);
-          if (!record) return;
-          await fetch(`${getBackendUrl()}/api/scripts`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeader },
-            body: JSON.stringify({
-              id: record.id,
-              label: record.label,
-              description: record.description,
-              createdAt: record.createdAt,
-              updatedAt: Date.now(),
-              published: true,
-              manifest: record.manifest,
-            }),
-          });
-          setIsPublished(true);
+        if (!loadedVersionId) {
+          alert('请先保存剧本（创建一个 draft 版本）再发布');
+          return;
         }
+        await handlePublishVersion(loadedVersionId);
       } else {
         // Local mode: toggle in IndexedDB
         if (isPublished) {
@@ -486,12 +701,41 @@ export function EditorPage() {
           await scriptStorage.publish(loadedScriptId);
           setIsPublished(true);
         }
+        await refreshScriptList();
       }
-      await refreshScriptList();
     } finally {
       setPublishing(false);
     }
-  }, [loadedScriptId, isPublished, refreshScriptList]);
+  }, [loadedScriptId, loadedVersionId, isPublished, handlePublishVersion, refreshScriptList]);
+
+  // --- 版本列表点击：切换到那个 version ---
+  const handleSelectVersion = useCallback(async (versionId: string) => {
+    if (getEngineMode() !== 'remote' || !loadedScriptId) return;
+    try {
+      const authHeader = useAuthStore.getState().getAuthHeader();
+      const res = await fetch(
+        `${getBackendUrl()}/api/script-versions/${versionId}`,
+        { headers: authHeader },
+      );
+      if (res.ok) {
+        const version = (await res.json()) as {
+          id: string;
+          manifest: ScriptManifest;
+          status: string;
+        };
+        applyRecordToEditor({
+          id: loadedScriptId,
+          label: scriptLabel,
+          description: scriptDescription,
+          published: version.status === 'published',
+          manifest: version.manifest,
+        });
+        setLoadedVersionId(version.id);
+      }
+    } catch (err) {
+      console.error('[selectVersion] 失败:', err);
+    }
+  }, [loadedScriptId, scriptLabel, scriptDescription, applyRecordToEditor]);
 
   // --- Create new empty .md file ---
   const handleNewFile = useCallback(() => {
@@ -905,6 +1149,17 @@ ${doc.content}
               />
             </div>
           </div>
+
+          {/* Version history column (v2.6 / 6.3) */}
+          <VersionHistoryList
+            currentVersionId={loadedVersionId}
+            hasScript={!!loadedScriptId}
+            versions={versionList}
+            loading={versionListLoading}
+            onSelect={handleSelectVersion}
+            onPublish={handlePublishVersion}
+            publishingVersionId={publishingVersionId}
+          />
 
           {/* Editor area */}
           <div className="flex-1 min-w-0 flex flex-col">
