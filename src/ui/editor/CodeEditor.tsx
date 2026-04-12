@@ -17,7 +17,7 @@ import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { autocompletion } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { scriptTagDecorations } from '../../core/editor/decorations';
-import { toolCompletionSource, createStateCompletionSource } from '../../core/editor/completion-sources';
+import { createStateCompletionSource } from '../../core/editor/completion-sources';
 import type { StateVarInfo } from '../../core/editor/completion-sources';
 
 export interface CodeEditorProps {
@@ -65,7 +65,6 @@ export function CodeEditor({ value, onChange, className, stateVars = [] }: CodeE
         updateListener,
         autocompletion({
           override: [
-            toolCompletionSource,
             createStateCompletionSource(() => stateVarsRef.current),
           ],
           activateOnTyping: true,

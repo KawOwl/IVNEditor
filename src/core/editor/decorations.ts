@@ -1,8 +1,12 @@
 /**
- * Script Decorations — {{tool:xxx}} / {{state:xxx}} / {{segment:xxx}} 内联标签
+ * Script Decorations — {{state:xxx}} / {{segment:xxx}} 内联标签
  *
  * 使用 CodeMirror 6 的 MatchDecorator + ViewPlugin，
  * 将 {{type:name}} 标记渲染为彩色内联标签。
+ *
+ * 历史：v2.7 之前还支持 {{tool:xxx}} 标签，但运行时 context-assembler
+ * 并不会做 substitution，字面传给 LLM 后会造成小模型误解 / 输出泄漏。
+ * 统一改为"编剧在改写/书写时直接写工具的裸名（例如 read_state）"。
  *
  * 纯逻辑模块，不依赖 React。
  */
@@ -21,16 +25,14 @@ import {
 // Tag Widget — 内联标签 DOM 元素
 // ============================================================================
 
-type TagType = 'tool' | 'state' | 'segment';
+type TagType = 'state' | 'segment';
 
 const TAG_COLORS: Record<TagType, { bg: string; text: string; border: string }> = {
-  tool:    { bg: '#1e3a5f', text: '#60a5fa', border: '#2563eb40' },
   state:   { bg: '#14532d', text: '#4ade80', border: '#16a34a40' },
   segment: { bg: '#422006', text: '#fbbf24', border: '#d9770640' },
 };
 
 const TAG_ICONS: Record<TagType, string> = {
-  tool:    '⚙',
   state:   '◆',
   segment: '◧',
 };
@@ -85,7 +87,7 @@ class TagWidget extends WidgetType {
 // Match Decorator — 匹配 {{type:name}} 模式
 // ============================================================================
 
-const TAG_REGEX = /\{\{(tool|state|segment):(\w+)\}\}/g;
+const TAG_REGEX = /\{\{(state|segment):(\w+)\}\}/g;
 
 const tagMatcher = new MatchDecorator({
   regexp: TAG_REGEX,
@@ -140,8 +142,9 @@ const tagMarkTheme = EditorView.baseTheme({
 // ============================================================================
 
 /**
- * CodeMirror extension that renders {{tool:xxx}}, {{state:xxx}}, {{segment:xxx}}
- * as colored inline tag widgets.
+ * CodeMirror extension that renders {{state:xxx}} and {{segment:xxx}}
+ * as colored inline tag widgets. 工具引用不再走标签化：编剧直接写
+ * 工具的裸名（例如 `read_state`），运行时 LLM 从 tool schema 识别。
  */
 export function scriptTagDecorations() {
   return [tagDecoPlugin, tagMarkTheme];

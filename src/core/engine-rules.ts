@@ -9,8 +9,8 @@
  *
  * 2. 编剧侧 AI 改写：EditorPage 的 handleAIRewrite 在改写 system segment
  *    时，把它嵌入作为"改写目标规范"——让改写助手知道它改写出来的剧本
- *    将被运行时 GM 按什么规则使用，从而在剧本里标注出正确的 {{tool:xxx}}
- *    提示。
+ *    将被运行时 GM 按什么规则使用，从而在剧本里直接写正确的工具名
+ *    （例如 signal_input_needed、update_state）。
  *
  * 修改规则：
  * - 只在本文件一处修改，两个场景自动同步

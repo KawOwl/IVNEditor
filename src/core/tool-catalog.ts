@@ -10,7 +10,10 @@
  * - context-assembler / rewritePrompt: 给不走 tool-use 接口的 LLM 任务
  *   动态生成工具清单 markdown
  * - ScriptInfoPanel: "启用工具" UI 清单
- * - completion-sources: 编辑器 {{tool:xxx}} 代码补全候选
+ *
+ * 历史：v2.7 之前还喂给 completion-sources.ts 做 `{{tool:xxx}}` DSL 补全，
+ * 但那个 DSL 本身下线了（运行时不 substitute，LLM 只看到字面标记，小模型
+ * 会泄漏）。现在编剧直接写工具的裸名。
  *
  * 修改规则：
  * - 新增工具：先在本文件加 entry，再去 tool-executor 加 execute/parameters
@@ -19,7 +22,7 @@
  */
 
 export interface ToolMetadata {
-  /** 工具名（AI SDK tool-use 和 {{tool:xxx}} DSL 都用这个字面量） */
+  /** 工具名（LLM tool-use 直接用这个字面量识别） */
   name: string;
   /** 英文描述，给 LLM 看（作为 tool schema description 或 prompt 内工具清单） */
   description: string;

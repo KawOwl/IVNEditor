@@ -922,7 +922,8 @@ export function EditorPage() {
    - 在描述需要玩家做选择的情节时，提示使用 signal_input_needed
    - 在描述会影响数值/状态的情节时，提示使用 update_state
    - 在描述重要信息揭示时，提示使用 pin_memory
-3. **用 {{tool:工具名}} 格式标注工具引用**
+3. **直接写工具的裸名**（例如 read_state、update_state、signal_input_needed），
+   不要加任何特殊符号或占位符。GM 会从 tool schema 识别这些名称。
 4. **保持原文结构和段落划分**
 5. **输出完整改写后的 prompt，不要输出解释或说明**
 
