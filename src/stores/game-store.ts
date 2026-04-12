@@ -28,7 +28,7 @@ import type {
 
 export interface GameState {
   // --- Session Status ---
-  status: 'idle' | 'loading' | 'generating' | 'waiting-input' | 'compressing' | 'error';
+  status: 'idle' | 'loading' | 'generating' | 'waiting-input' | 'compressing' | 'error' | 'finished';
   error: string | null;
 
   // --- Narrative ---

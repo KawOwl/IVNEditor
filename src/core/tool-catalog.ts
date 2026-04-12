@@ -54,6 +54,13 @@ export const TOOL_CATALOG: readonly ToolMetadata[] = [
     uiDescription: '叙事到达分支点时，提供 2-4 个选项按钮（玩家仍可自由输入）',
     required: true,
   },
+  {
+    name: 'end_scenario',
+    description: 'End the current scenario. Call this only when the story has definitively concluded — either reaching an ending explicitly defined in the script prompt, or the natural terminal point of all planned plotlines. After calling, the session transitions to a "finished" state and no further player input will be accepted. DO NOT call this for temporary pauses, cliffhangers, or minor scene breaks — use signal_input_needed for those. Optionally provide a `reason` string summarizing why the scenario is ending.',
+    uiLabel: '结束剧情',
+    uiDescription: '剧情走完（prompt 里明确的结局或所有剧情线自然收束）时调用，之后不再接受玩家输入',
+    required: true,
+  },
 
   // --- 可选工具 ---
   {

@@ -45,6 +45,12 @@ export interface ToolExecutorContext {
   waitForPlayerInput?: (options: SignalInputOptions) => Promise<string>;
   onSetMood?: (mood: string) => void;
   onShowImage?: (assetId: string) => void;
+  /**
+   * `end_scenario` 工具调用时通知 game-session。
+   * 调用后 game-session 会在本轮 generate 结束后不再进入下一轮 receive。
+   * reason 是 LLM 可选传入的结束原因，用于持久化到 DB。
+   */
+  onScenarioEnd?: (reason?: string) => void;
 }
 
 // ============================================================================
@@ -109,6 +115,26 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
       }
       const playerChoice = await ctx.waitForPlayerInput({ hint: prompt_hint, choices });
       return { success: true, playerChoice };
+    },
+  );
+
+  // end_scenario 是"通知型"工具：execute 是同步的，仅记下 LLM 意图，
+  // 把"结束整个 session"的实际动作交给 game-session 在本轮 generate()
+  // 结束后统一处理。LLM 会拿到 success=true 的 tool result，可以继续
+  // 在同一个 step 里写一些收尾文字再 stop。
+  tools['end_scenario'] = handler(
+    'end_scenario',
+    z.object({
+      reason: z.string().optional()
+        .describe('Optional short explanation of why the scenario is ending (e.g. "reached the published ending" or "all plotlines resolved").'),
+    }),
+    (args) => {
+      const { reason } = args as { reason?: string };
+      if (!ctx.onScenarioEnd) {
+        return { success: false, error: 'No scenario-end handler registered' };
+      }
+      ctx.onScenarioEnd(reason);
+      return { success: true, reason: reason ?? null };
     },
   );
 

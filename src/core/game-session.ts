@@ -151,6 +151,14 @@ export interface SessionPersistence {
     memoryEntries: unknown[];
     memorySummaries: string[];
   }): Promise<void>;
+
+  /**
+   * 剧情结束（LLM 调用了 end_scenario）。持久化层应把 status 标记为
+   * 'finished'，并可以记录 reason。此后该 playthrough 不再接受玩家输入。
+   */
+  onScenarioFinished?(data: {
+    reason?: string;
+  }): Promise<void>;
 }
 
 // ============================================================================
@@ -308,6 +316,15 @@ export class GameSession {
   // Session lifecycle
   private active = false;
 
+  /**
+   * LLM 本轮 generate 里调用了 end_scenario？
+   * coreLoop 在 Generate 阶段结束后检查此 flag：true → 持久化结束 +
+   * 退出循环，不再进入下一个 Receive 阶段（即不再接受玩家输入）。
+   * 每轮 generate 开始时不清零——一旦置 true 就锁死到 session 结束。
+   */
+  private scenarioEnded = false;
+  private scenarioEndReason: string | undefined;
+
   // 外循环 Receive 阶段的挂起 Promise（LLM 自然停止后等玩家输入）
   private inputResolve: ((text: string) => void) | null = null;
 
@@ -415,6 +432,14 @@ export class GameSession {
       });
 
       this.active = true;
+
+      // 如果这个 playthrough 已经结束了，直接进入 finished 状态不再启动循环。
+      // 前端会看到只读的叙事历史。
+      if (config.status === 'finished') {
+        this.active = false;
+        this.emitter.setStatus('finished');
+        return;
+      }
 
       // 根据恢复时的状态决定进入点
       if (config.status === 'waiting-input') {
@@ -561,6 +586,12 @@ export class GameSession {
           },
           onShowImage: (_assetId) => {
             // TODO: connect to UI image display
+          },
+          onScenarioEnd: (reason) => {
+            // 只记下 flag；实际的"退出循环 + 持久化"在本轮 generate 返回后做。
+            // 这样 LLM 在 end_scenario 之后还能继续输出一小段收尾文字再 stop。
+            this.scenarioEnded = true;
+            this.scenarioEndReason = reason;
           },
         });
         const enabledToolSet = getEnabledTools(allTools, this.enabledTools);
@@ -762,6 +793,18 @@ export class GameSession {
         // Fall through to Receive Phase — player can re-send to retry
       } finally {
         this.currentTraceHandle = undefined;
+      }
+
+      // --- 本轮 generate 结束检查：剧情是否已结束？ ---
+      // LLM 在本轮内调用了 end_scenario → onScenarioEnd 回调设了 scenarioEnded=true。
+      // 这里统一处理：持久化 finished 状态 + 退出外循环，不再进入 Receive 阶段。
+      if (this.scenarioEnded && this.active) {
+        this.active = false;
+        this.emitter.setStatus('finished');
+        await this.persistence?.onScenarioFinished?.({
+          reason: this.scenarioEndReason,
+        }).catch((e) => console.error('[Persistence] onScenarioFinished failed:', e));
+        break;
       }
 
       // --- Receive Phase (fallback) ---

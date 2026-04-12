@@ -60,6 +60,18 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
 
   const displayHint = inputHint ?? DEFAULT_HINT;
 
+  // 剧情已结束时，面板变成只读占位，不渲染输入区域
+  if (status === 'finished') {
+    return (
+      <div className="border-t border-zinc-800 px-4 py-5 text-center">
+        <div className="text-sm text-zinc-400 mb-1">剧情已结束</div>
+        <p className="text-[11px] text-zinc-600">
+          GM 调用了 end_scenario。此 playthrough 不再接受输入，点上方"重置"开新存档。
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="border-t border-zinc-800 px-4 py-3 space-y-2">
       {/* Hint — 打字机播放完毕后才显示 */}

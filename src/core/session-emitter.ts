@@ -14,7 +14,7 @@ import type { PromptSnapshot, TokenBreakdownInfo, ToolCallEntry } from './types'
 // Types
 // ============================================================================
 
-export type SessionStatus = 'idle' | 'loading' | 'generating' | 'waiting-input' | 'compressing' | 'error';
+export type SessionStatus = 'idle' | 'loading' | 'generating' | 'waiting-input' | 'compressing' | 'error' | 'finished';
 
 export interface DebugSnapshot {
   stateVars?: Record<string, unknown>;

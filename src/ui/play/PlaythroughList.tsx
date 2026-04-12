@@ -169,6 +169,7 @@ function PlaythroughCard({
   onDelete: (e: React.MouseEvent) => void;
 }) {
   const isActive = item.status === 'waiting-input' || item.status === 'idle';
+  const isFinished = item.status === 'finished';
   const updatedAt = new Date(item.updatedAt);
   const dateStr = formatDate(updatedAt);
 
@@ -190,11 +191,14 @@ function PlaythroughCard({
             'text-[10px] px-1.5 py-0.5 rounded',
             isActive
               ? 'bg-emerald-950/50 text-emerald-400'
-              : 'bg-zinc-800 text-zinc-500',
+              : isFinished
+                ? 'bg-violet-950/50 text-violet-400'
+                : 'bg-zinc-800 text-zinc-500',
           )}>
             {item.status === 'waiting-input' ? '进行中' :
              item.status === 'idle' ? '就绪' :
              item.status === 'generating' ? '生成中' :
+             item.status === 'finished' ? '已完结' :
              item.status}
           </span>
         </div>
