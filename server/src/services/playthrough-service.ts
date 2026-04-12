@@ -5,7 +5,7 @@
  * Route 层只负责 HTTP/参数处理，不直接访问 db/schema。
  */
 
-import { eq, and, desc, asc, sql } from 'drizzle-orm';
+import { eq, and, desc, asc, sql, inArray } from 'drizzle-orm';
 import { db, schema } from '../db';
 
 // ============================================================================
@@ -16,7 +16,13 @@ import { db, schema } from '../db';
 export interface ListFilter {
   /** 必填：只返回该用户的记录（ownership 隔离） */
   userId: string;
+  /** 按单个版本 id 过滤（编辑器试玩用） */
   scriptVersionId?: string;
+  /**
+   * 按多个版本 id 过滤（玩家流用：把 script 的所有历史版本展开成数组）。
+   * 传了 scriptVersionIds 时 scriptVersionId 被忽略。
+   */
+  scriptVersionIds?: string[];
   includeArchived?: boolean;
   /** 'production' | 'playtest'，不传返回全部 */
   kind?: 'production' | 'playtest';
@@ -106,7 +112,10 @@ export class PlaythroughService {
     if (!filter.includeArchived) {
       conditions.push(eq(schema.playthroughs.archived, false));
     }
-    if (filter.scriptVersionId) {
+    // scriptVersionIds（数组）优先于 scriptVersionId（单个）
+    if (filter.scriptVersionIds && filter.scriptVersionIds.length > 0) {
+      conditions.push(inArray(schema.playthroughs.scriptVersionId, filter.scriptVersionIds));
+    } else if (filter.scriptVersionId) {
       conditions.push(eq(schema.playthroughs.scriptVersionId, filter.scriptVersionId));
     }
     if (filter.kind) {

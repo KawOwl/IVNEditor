@@ -27,29 +27,40 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
   // GET / — 列出当前用户的游玩记录
   //
   // 过滤参数：
-  //   - scriptId: 按原始 script id 过滤（先查 published 版本，拿到其 version id）
-  //   - scriptVersionId: 按具体版本 id 过滤
+  //   - scriptId: 按原始 script id 过滤（展开成该 script 的**所有历史版本**，
+  //     这样发布新版本后老 playthrough 仍然出现在列表里，玩家可以回顾/继续）
+  //   - scriptVersionId: 按具体版本 id 过滤（编辑器试玩用）
   //   - kind: 'production' | 'playtest'
   .get('/', async ({ query, request }) => {
     const id = await requireAnyIdentity(request);
     if (isResponse(id)) return id;
 
     const q = query as { scriptId?: string; scriptVersionId?: string; kind?: 'production' | 'playtest' };
-    // 如果传了 scriptId 而不是 scriptVersionId，尝试转成 version id（用当前 published）
-    let filterVersionId = q.scriptVersionId;
-    if (!filterVersionId && q.scriptId) {
-      const published = await scriptVersionService.getCurrentPublished(q.scriptId);
-      filterVersionId = published?.id;
-      // 如果剧本没 published 版本，filter 就留空——但前端在这种情况下
-      // 拿到空列表是合理的
-      if (!filterVersionId) {
+
+    // 解析过滤条件：
+    // - 传 scriptVersionId  → 只按该具体版本过滤（编辑器试玩 per-version 独立）
+    // - 传 scriptId         → 展开成该 script 的**所有版本** id 数组，
+    //                          这样玩家能看到所有历史版本上的游玩记录
+    //                          （关键修复：发布新版本后老 playthrough 不被隐藏）
+    // - 都不传              → 不按版本过滤，返回该用户的所有 playthroughs
+    let filterVersionId: string | undefined;
+    let filterVersionIds: string[] | undefined;
+
+    if (q.scriptVersionId) {
+      filterVersionId = q.scriptVersionId;
+    } else if (q.scriptId) {
+      const versions = await scriptVersionService.listByScript(q.scriptId);
+      if (versions.length === 0) {
+        // 剧本不存在或没有任何版本 → 空列表
         return { playthroughs: [] };
       }
+      filterVersionIds = versions.map((v) => v.id);
     }
 
     const playthroughs = await playthroughService.list({
       userId: id.userId,
       scriptVersionId: filterVersionId,
+      scriptVersionIds: filterVersionIds,
       kind: q.kind,
     });
 
