@@ -159,24 +159,28 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
     sectionTokens.set(seg.id, tokens);
   }
 
-  // State YAML
-  const stateSection = buildStateSection(stateStore.getAll());
-  const stateTokenCount = estimateTokens(stateSection);
-  sectionContent.set(VIRTUAL_IDS.STATE, stateSection);
-  sectionTokens.set(VIRTUAL_IDS.STATE, stateTokenCount);
+  // State YAML (can be disabled)
+  if (!disabledSet.has(VIRTUAL_IDS.STATE)) {
+    const stateSection = buildStateSection(stateStore.getAll());
+    const stateTokenCount = estimateTokens(stateSection);
+    sectionContent.set(VIRTUAL_IDS.STATE, stateSection);
+    sectionTokens.set(VIRTUAL_IDS.STATE, stateTokenCount);
+  }
 
-  // Memory summaries
-  const summaryParts: string[] = [];
-  const inherited = memory.getInheritedSummary();
-  if (inherited) summaryParts.push(`[Previous Chapter Summary]\n${inherited}`);
-  for (const summary of memory.getSummaries()) summaryParts.push(summary);
-  const summaryContent = summaryParts.length > 0
-    ? `---\n[Memory Summary]\n${summaryParts.join('\n\n')}\n---`
-    : '';
-  const summaryTokenCount = summaryContent ? estimateTokens(summaryContent) : 0;
-  if (summaryContent) {
-    sectionContent.set(VIRTUAL_IDS.MEMORY, summaryContent);
-    sectionTokens.set(VIRTUAL_IDS.MEMORY, summaryTokenCount);
+  // Memory summaries (can be disabled)
+  if (!disabledSet.has(VIRTUAL_IDS.MEMORY)) {
+    const summaryParts: string[] = [];
+    const inherited = memory.getInheritedSummary();
+    if (inherited) summaryParts.push(`[Previous Chapter Summary]\n${inherited}`);
+    for (const summary of memory.getSummaries()) summaryParts.push(summary);
+    const summaryContent = summaryParts.length > 0
+      ? `---\n[Memory Summary]\n${summaryParts.join('\n\n')}\n---`
+      : '';
+    const summaryTokenCount = summaryContent ? estimateTokens(summaryContent) : 0;
+    if (summaryContent) {
+      sectionContent.set(VIRTUAL_IDS.MEMORY, summaryContent);
+      sectionTokens.set(VIRTUAL_IDS.MEMORY, summaryTokenCount);
+    }
   }
 
   // Engine rules (can be disabled)
@@ -203,12 +207,14 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
     const contextSegs = activeSegments
       .filter((s) => s.role === 'context')
       .sort((a, b) => a.priority - b.priority);
+    // 只把实际存在于 sectionContent 里的虚拟 section 加入默认顺序
+    // （被 disabled 的不会被 set，所以 has 为 false，不进 orderedIds）
     orderedIds = [
       ...systemSegs.map((s) => s.id),
-      VIRTUAL_IDS.STATE,
-      ...(summaryContent ? [VIRTUAL_IDS.MEMORY] : []),
+      ...(sectionContent.has(VIRTUAL_IDS.STATE) ? [VIRTUAL_IDS.STATE] : []),
+      ...(sectionContent.has(VIRTUAL_IDS.MEMORY) ? [VIRTUAL_IDS.MEMORY] : []),
       ...contextSegs.map((s) => s.id),
-      VIRTUAL_IDS.RULES,
+      ...(sectionContent.has(VIRTUAL_IDS.RULES) ? [VIRTUAL_IDS.RULES] : []),
     ];
   }
 

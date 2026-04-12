@@ -148,6 +148,7 @@ export class GameSessionWrapper {
       tokenBudget: manifest.memoryConfig.contextBudget,
       initialPrompt: manifest.initialPrompt,
       assemblyOrder: manifest.promptAssemblyOrder,
+      disabledSections: manifest.disabledAssemblySections,
       persistence: createPlaythroughPersistence(this.playthroughId),
       tracing: createBoundTracing({
         playthroughId: this.playthroughId,
