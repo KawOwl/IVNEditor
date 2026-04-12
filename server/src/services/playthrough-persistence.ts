@@ -54,12 +54,16 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
     },
 
     async onWaitingInput(data): Promise<void> {
-      await playthroughService.updateState(playthroughId, {
+      const patch: Record<string, unknown> = {
         status: 'waiting-input',
         inputHint: data.hint,
         inputType: data.inputType,
         choices: data.choices,
-      });
+      };
+      // signal 路径会带 memoryEntries —— 断线重连后 memory 不空
+      if (data.memoryEntries) patch.memoryEntries = data.memoryEntries;
+      if (data.memorySummaries) patch.memorySummaries = data.memorySummaries;
+      await playthroughService.updateState(playthroughId, patch);
     },
 
     async onReceiveComplete(data): Promise<void> {

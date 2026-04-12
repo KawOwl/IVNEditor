@@ -141,6 +141,9 @@ export interface SessionPersistence {
     hint: string | null;
     inputType: string;
     choices: string[] | null;
+    /** signal 路径会传最新 memory 快照，让断线重连后 history 不丢 */
+    memoryEntries?: unknown[];
+    memorySummaries?: string[];
   }): Promise<void>;
 
   /** 玩家输入完成 */
@@ -736,13 +739,19 @@ export class GameSession {
         // Finalize streaming → append to narrative entries (with attached debug info)
         this.emitter.finalizeStreamingEntry();
 
-        // Store LLM response in memory
-        if (result.text) {
+        // Store LLM response in memory.
+        //
+        // 注意：如果本轮 generate 内有 signal_input_needed，createWaitForPlayerInput
+        // 已经把 signal 前的叙事段 append 进 memory 了。这里用 currentNarrativeBuffer
+        // （只含 signal 后的增量文本）而不是 result.text（全量文本），避免重复。
+        //
+        // 没有 signal 的场景：currentNarrativeBuffer 就是全量文本，和 result.text 一样。
+        if (this.currentNarrativeBuffer) {
           this.memory.appendTurn({
             turn,
             role: 'generate',
-            content: result.text,
-            tokenCount: estimateTokens(result.text),
+            content: this.currentNarrativeBuffer,
+            tokenCount: estimateTokens(this.currentNarrativeBuffer),
           });
         }
 
@@ -815,10 +824,13 @@ export class GameSession {
         this.emitter.setStatus('waiting-input');
 
         // ③ 持久化：进入等待输入（外循环 receive phase）
+        // 同样保存 memoryEntries，断线重连时不丢失
         await this.persistence?.onWaitingInput({
           hint: null,
           inputType: 'freetext',
           choices: null,
+          memoryEntries: this.memory.getAllEntries(),
+          memorySummaries: this.memory.getSummaries(),
         }).catch((e) => console.error('[Persistence] onWaitingInput failed:', e));
 
         const inputText = await this.waitForInput();
@@ -864,10 +876,21 @@ export class GameSession {
       // 先 flush ReasoningFilter 缓冲区，确保所有文本都写进 streaming entry
       this.flushTextFilter?.();
 
-      // ★ 关键修复：挂起前先把当前累积的叙事段持久化到 DB
-      //   否则 generate() 会挂起在这里一直不返回，
-      //   onGenerateComplete 永远不会被调用，这段叙事就永远写不进 DB
+      // ★ 挂起前把当前叙事段同时写入两个地方：
+      //   1. narrative_entries 表（DB 叙事记录，供 UI 恢复显示）
+      //   2. MemoryManager entries（供下一次 assembleContext 拿 recent history）
+      //
+      // 为什么两个都要：
+      //   - onNarrativeSegmentFinalized 只写 narrative_entries，不写 memory_entries
+      //   - memory.appendTurn 只改内存，不写 DB
+      //   - generate() 返回后的 memory.appendTurn(result.text) 会包含 ALL text，
+      //     但在 signal 挂起期间 generate() 还没返回，memory 里看不到本段叙事。
+      //     如果此时断线重连，memory 就是空的 → LLM 没有 recent history。
+      //
+      // 为了避免 generate() 返回后重复 append 整段 text，这里 append 后设
+      // 标记，post-generate 只 append 剩余的新增部分。
       if (this.currentNarrativeBuffer) {
+        // 写 narrative_entries（UI 显示用）
         await this.persistence?.onNarrativeSegmentFinalized({
           entry: {
             role: 'generate',
@@ -876,6 +899,13 @@ export class GameSession {
         }).catch((e) =>
           console.error('[Persistence] onNarrativeSegmentFinalized (signal) failed:', e),
         );
+        // 写 memory（LLM context 用）
+        this.memory.appendTurn({
+          turn: this.stateStore.getTurn(),
+          role: 'generate',
+          content: this.currentNarrativeBuffer,
+          tokenCount: estimateTokens(this.currentNarrativeBuffer),
+        });
         this.currentNarrativeBuffer = '';
       }
 
@@ -890,10 +920,13 @@ export class GameSession {
       this.emitter.setStatus('waiting-input');
 
       // ③ 持久化：signal_input_needed 触发的等待输入
+      // 同时保存最新的 memoryEntries 快照 → 断线重连后 memory 不空
       await this.persistence?.onWaitingInput({
         hint: options.hint ?? null,
         inputType: options.choices?.length ? 'choice' : 'freetext',
         choices: options.choices ?? null,
+        memoryEntries: this.memory.getAllEntries(),
+        memorySummaries: this.memory.getSummaries(),
       }).catch((e) => console.error('[Persistence] onWaitingInput (signal) failed:', e));
 
       // 返回挂起 Promise，等 submitInput() 调用时 resolve
