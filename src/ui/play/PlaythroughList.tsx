@@ -22,6 +22,10 @@ interface PlaythroughItem {
   preview: string | null;
   createdAt: string;
   updatedAt: string;
+  /** 该 playthrough 创建时所在的剧本版本号（如 3 → 显示 "v3"） */
+  versionNumber: number | null;
+  /** 该版本在当前的状态：'draft' | 'published' | 'archived' */
+  versionStatus: string | null;
 }
 
 interface PlaythroughListProps {
@@ -201,6 +205,25 @@ function PlaythroughCard({
              item.status === 'finished' ? '已完结' :
              item.status}
           </span>
+          {/* 版本号：永远显示；archived 的版本（已经被新版本取代）额外加"旧版"提示 */}
+          {item.versionNumber !== null && (
+            <span
+              className={cn(
+                'text-[10px] px-1.5 py-0.5 rounded font-mono',
+                item.versionStatus === 'archived'
+                  ? 'bg-amber-950/50 text-amber-500/80'
+                  : 'bg-zinc-800/60 text-zinc-500',
+              )}
+              title={
+                item.versionStatus === 'archived'
+                  ? '此游玩记录创建时所用的剧本版本已被更新后的版本取代'
+                  : undefined
+              }
+            >
+              v{item.versionNumber}
+              {item.versionStatus === 'archived' ? ' · 旧版' : ''}
+            </span>
+          )}
         </div>
         <span className="text-[10px] text-zinc-600">
           {dateStr} · 第{item.turn}轮

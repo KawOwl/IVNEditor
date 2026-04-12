@@ -64,27 +64,49 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
       kind: q.kind,
     });
 
-    // 附加 scriptTitle（batch join scripts 表拿）
+    // 附加 scriptTitle + 版本信息（batch join scripts + script_versions 拿）
+    //
+    // 返回的字段：
+    //   - scriptTitle     用于列表显示"剧本名"
+    //   - versionNumber   用于列表显示 "v3" 类版本号
+    //   - versionStatus   'draft' | 'published' | 'archived'，前端据此
+    //                      对"旧版本"的 playthrough 做视觉降级
     const versionIds = Array.from(new Set(playthroughs.map((pt) => pt.scriptVersionId)));
-    const titleMap = new Map<string, string>();  // versionId → scriptLabel
+    interface VersionMeta {
+      scriptLabel: string;
+      versionNumber: number;
+      versionStatus: string;
+    }
+    const versionMap = new Map<string, VersionMeta>();
     if (versionIds.length > 0) {
       const joined = await db
         .select({
           versionId: schema.scriptVersions.id,
           scriptLabel: schema.scripts.label,
+          versionNumber: schema.scriptVersions.versionNumber,
+          versionStatus: schema.scriptVersions.status,
         })
         .from(schema.scriptVersions)
         .innerJoin(schema.scripts, eq(schema.scriptVersions.scriptId, schema.scripts.id))
         .where(inArray(schema.scriptVersions.id, versionIds));
       for (const row of joined) {
-        titleMap.set(row.versionId, row.scriptLabel);
+        versionMap.set(row.versionId, {
+          scriptLabel: row.scriptLabel,
+          versionNumber: row.versionNumber,
+          versionStatus: row.versionStatus,
+        });
       }
     }
 
-    const withTitles = playthroughs.map((pt) => ({
-      ...pt,
-      scriptTitle: titleMap.get(pt.scriptVersionId) ?? pt.scriptVersionId,
-    }));
+    const withTitles = playthroughs.map((pt) => {
+      const meta = versionMap.get(pt.scriptVersionId);
+      return {
+        ...pt,
+        scriptTitle: meta?.scriptLabel ?? pt.scriptVersionId,
+        versionNumber: meta?.versionNumber ?? null,
+        versionStatus: meta?.versionStatus ?? null,
+      };
+    });
 
     return { playthroughs: withTitles };
   })
