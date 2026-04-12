@@ -132,7 +132,10 @@ const defaultStateSchema: StateSchema = {
 const defaultMemoryConfig: MemoryConfig = {
   contextBudget: 200000,
   compressionThreshold: 160000,
-  recencyWindow: 10,
+  // 临时从 10 调到 100 以适配短剧本：保证整段历史都进 LLM context，
+  // 而不是只保留最后 5 个来回。配合 compressionThreshold=160000 使用，
+  // 超过 100 条记忆才开始考虑压缩（等真 compressFn 接上后再调整）。
+  recencyWindow: 100,
 };
 
 // ============================================================================
