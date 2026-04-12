@@ -17,8 +17,10 @@ import {
   createRemoteSession,
   reconnectRemoteSession,
   getStoredPlaythroughId,
+  clearStoredPlaythroughId,
   type RemoteSession,
 } from '../../stores/ws-client-emitter';
+import { fetchWithAuth } from '../../stores/player-session-store';
 import type { ScriptManifest } from '../../core/types';
 import { getBackendUrl } from '../../core/engine-mode';
 import { cn } from '../../lib/utils';
@@ -109,50 +111,28 @@ export function PlayPanel({
     }
   }, [manifest, playthroughId]);
 
-  const handleStart = useCallback(async () => {
-    if (remoteRef.current) return;
-
+  /**
+   * 建立一个"全新的 playthrough"远程会话。不尝试重连。
+   *
+   * 独立拎出来是因为 handleStart 和 handleReset 都要用这段逻辑：
+   * - handleStart 在首次挂载 / 选"新游戏"时调
+   * - handleReset 在玩家点"重置"时调（此时先归档老的再新建）
+   *
+   * 返回 false 表示校验失败（缺参数等），调用方不应该继续。
+   */
+  const startNewRemoteSession = useCallback(async (): Promise<boolean> => {
     // 编辑器模式必须有 scriptVersionId（否则没有可试玩的版本）
     if (editorMode && !scriptVersionId) {
       useGameStore.getState().setError('请先保存剧本（创建一个版本）后再试玩');
-      return;
+      return false;
     }
-
-    // 玩家模式用 scriptId 创建 playthrough（指向当前 published 版本）
     const playerScriptId = scriptId ?? manifest.id;
     if (!editorMode && !playerScriptId) {
       useGameStore.getState().setError('缺少剧本 ID');
-      return;
+      return false;
     }
-
     try {
       useGameStore.getState().setStatus('loading');
-
-      // 决定目标 playthroughId（仅玩家模式从 localStorage 恢复；
-      // 编辑器模式每次都新建，不复用上次的试玩）
-      const storageKey = editorMode
-        ? `version:${scriptVersionId}`
-        : playerScriptId!;
-      const targetPtId =
-        editorMode
-          ? null  // 编辑器试玩永远新建（lossless 试玩快照）
-          : playthroughId === 'new'
-            ? null
-            : playthroughId ?? getStoredPlaythroughId(storageKey);
-
-      if (targetPtId) {
-        // 恢复指定的游玩 —— 直接 WS 连接，服务端会自动发 'restored' 快照
-        try {
-          useGameStore.getState().reset();
-          const remote = await reconnectRemoteSession(getBackendUrl(), targetPtId);
-          remoteRef.current = remote;
-          return;
-        } catch (err) {
-          console.warn('[PlayPanel] Reconnect failed, falling back to new session:', err);
-        }
-      }
-
-      // 新建游玩
       const remote = editorMode
         ? await createRemoteSession(
             getBackendUrl(),
@@ -166,10 +146,55 @@ export function PlayPanel({
           );
       remoteRef.current = remote;
       remote.start();
+      return true;
     } catch (err) {
       useGameStore.getState().setError(String(err));
+      return false;
     }
-  }, [manifest, scriptId, playthroughId, editorMode, scriptVersionId, llmConfigId]);
+  }, [editorMode, scriptVersionId, scriptId, manifest, llmConfigId]);
+
+  const handleStart = useCallback(async () => {
+    if (remoteRef.current) return;
+
+    // 先看 playthroughId prop / localStorage 能否走重连
+    if (editorMode && !scriptVersionId) {
+      useGameStore.getState().setError('请先保存剧本（创建一个版本）后再试玩');
+      return;
+    }
+    const playerScriptId = scriptId ?? manifest.id;
+    if (!editorMode && !playerScriptId) {
+      useGameStore.getState().setError('缺少剧本 ID');
+      return;
+    }
+
+    // 决定目标 playthroughId（仅玩家模式从 localStorage 恢复；
+    // 编辑器模式每次都新建，不复用上次的试玩）
+    const storageKey = editorMode
+      ? `version:${scriptVersionId}`
+      : playerScriptId!;
+    const targetPtId =
+      editorMode
+        ? null  // 编辑器试玩永远新建（lossless 试玩快照）
+        : playthroughId === 'new'
+          ? null
+          : playthroughId ?? getStoredPlaythroughId(storageKey);
+
+    if (targetPtId) {
+      // 恢复指定的游玩 —— 直接 WS 连接，服务端会自动发 'restored' 快照
+      try {
+        useGameStore.getState().setStatus('loading');
+        useGameStore.getState().reset();
+        const remote = await reconnectRemoteSession(getBackendUrl(), targetPtId);
+        remoteRef.current = remote;
+        return;
+      } catch (err) {
+        console.warn('[PlayPanel] Reconnect failed, falling back to new session:', err);
+      }
+    }
+
+    // 新建游玩
+    await startNewRemoteSession();
+  }, [manifest, scriptId, playthroughId, editorMode, scriptVersionId, startNewRemoteSession]);
 
   // autoStart：挂载后自动触发开始（列表选择模式下使用）
   const didAutoStart = useRef(false);
@@ -190,7 +215,22 @@ export function PlayPanel({
     remoteRef.current = null;
   }, []);
 
-  const handleReset = useCallback(() => {
+  /**
+   * 重置 = 归档当前 playthrough + 启动一个全新的 playthrough。
+   *
+   * 之前的实现只清 UI 不归档老的，导致老的 playthrough 仍然是 active
+   * 状态、localStorage 也还指向它，下次打开会 reconnect 到老进度——
+   * 和用户心目中的"重新来过"不符。
+   *
+   * 现在：
+   *   1. 抓当前 remoteRef 上的 playthroughId
+   *   2. 断开 WS，清前端状态
+   *   3. PATCH /api/playthroughs/:id {archived: true} 归档老的
+   *   4. 清掉 localStorage 里存的"上次游玩 id"
+   *   5. 立刻调 startNewRemoteSession 创建一条全新 playthrough
+   */
+  const handleReset = useCallback(async () => {
+    const oldPtId = remoteRef.current?.playthroughId ?? null;
     handleStop();
     useGameStore.getState().reset();
     // Re-show opening messages
@@ -201,7 +241,38 @@ export function PlayPanel({
         appendEntry({ role: 'system', content: msg });
       }
     }
-  }, [handleStop, manifest]);
+
+    // 1. 归档老的 playthrough（fire-and-forget；即便 DB 没更新成功，
+    //    下一步仍会开新会话，老的只是留个痕迹）
+    if (oldPtId) {
+      try {
+        await fetchWithAuth(`${getBackendUrl()}/api/playthroughs/${oldPtId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ archived: true }),
+        });
+      } catch (err) {
+        console.warn('[PlayPanel] archive old playthrough failed:', err);
+      }
+    }
+
+    // 2. 清掉 localStorage 里"上次游玩 id"
+    //    玩家流用 scriptId 做 key；编辑器试玩用 scriptVersionId
+    const storageKey = editorMode
+      ? (scriptVersionId ? `version:${scriptVersionId}` : null)
+      : (scriptId ?? manifest.id ?? null);
+    if (storageKey) clearStoredPlaythroughId(storageKey);
+
+    // 3. 立刻启动新 playthrough
+    await startNewRemoteSession();
+  }, [
+    handleStop,
+    manifest,
+    editorMode,
+    scriptVersionId,
+    scriptId,
+    startNewRemoteSession,
+  ]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -220,6 +291,7 @@ export function PlayPanel({
             'text-xs font-medium',
             status === 'generating' ? 'text-amber-400' :
             status === 'waiting-input' ? 'text-emerald-400' :
+            status === 'finished' ? 'text-violet-400' :
             status === 'error' ? 'text-red-400' :
             'text-zinc-500',
           )}>
@@ -228,6 +300,7 @@ export function PlayPanel({
              status === 'waiting-input' ? '等待输入' :
              status === 'compressing' ? '压缩中...' :
              status === 'loading' ? '加载中...' :
+             status === 'finished' ? '剧情已结束' :
              status === 'error' ? '错误' : status}
           </span>
         </div>
