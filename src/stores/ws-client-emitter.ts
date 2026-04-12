@@ -71,6 +71,16 @@ export function clearStoredPlaythroughId(scriptId: string): void {
 export interface CreateRemoteSessionOptions {
   /** 玩家正式游玩走 production；编辑器试玩走 playtest */
   kind?: 'production' | 'playtest';
+  /**
+   * v2.7：指定本次 playthrough 使用的 LLM 配置 id（可选）。
+   *
+   * 编辑器试玩时前端从 localStorage 读 admin 的偏好 dropdown 值传过来，
+   * 玩家侧从 PublicScriptInfo.productionLlmConfigId 读然后透传。
+   *
+   * 为空时后端会按 fallback 链选（见 server routes/playthroughs.ts POST）：
+   *   script.production_llm_config_id → first llm_config by created_at。
+   */
+  llmConfigId?: string | null;
 }
 
 export async function createRemoteSession(
@@ -84,9 +94,12 @@ export async function createRemoteSession(
   options: CreateRemoteSessionOptions = {},
 ): Promise<RemoteSession> {
   const isVersionTarget = typeof target === 'object';
-  const body = isVersionTarget
+  const base = isVersionTarget
     ? { scriptVersionId: target.scriptVersionId, kind: options.kind ?? 'playtest' }
     : { scriptId: target, kind: options.kind ?? 'production' };
+  const body = options.llmConfigId
+    ? { ...base, llmConfigId: options.llmConfigId }
+    : base;
 
   // 1. 创建 playthrough
   const res = await fetchWithAuth(`${baseUrl}/api/playthroughs`, {

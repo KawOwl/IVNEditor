@@ -57,6 +57,17 @@ export interface PlayPanelProps {
   editorMode?: boolean;
   /** 编辑器模式下要试玩的 script_version_id（loadedVersionId） */
   scriptVersionId?: string;
+  /**
+   * v2.7：显式指定本次 playthrough 使用的 LLM 配置 id。
+   *
+   * 使用场景：
+   *   - 玩家流：由 PublicScriptInfo.productionLlmConfigId 透传（App.tsx PlayPageLoader）
+   *   - 编辑器试玩流：由编辑器"试玩使用 LLM"dropdown 传入（admin 个人偏好）
+   *
+   * 为空时后端按 fallback 链选一套（script.productionLlmConfigId → 最早的 llm_config），
+   * 所以非必填。
+   */
+  llmConfigId?: string | null;
   /** 挂载后自动开始（列表选择模式下使用） */
   autoStart?: boolean;
 }
@@ -73,6 +84,7 @@ export function PlayPanel({
   showReasoning = false,
   editorMode = false,
   scriptVersionId,
+  llmConfigId,
   autoStart = false,
 }: PlayPanelProps) {
   const status = useGameStore((s) => s.status);
@@ -145,15 +157,19 @@ export function PlayPanel({
         ? await createRemoteSession(
             getBackendUrl(),
             { scriptVersionId: scriptVersionId! },
-            { kind: 'playtest' },
+            { kind: 'playtest', llmConfigId },
           )
-        : await createRemoteSession(getBackendUrl(), playerScriptId!, { kind: 'production' });
+        : await createRemoteSession(
+            getBackendUrl(),
+            playerScriptId!,
+            { kind: 'production', llmConfigId },
+          );
       remoteRef.current = remote;
       remote.start();
     } catch (err) {
       useGameStore.getState().setError(String(err));
     }
-  }, [manifest, scriptId, playthroughId, editorMode, scriptVersionId]);
+  }, [manifest, scriptId, playthroughId, editorMode, scriptVersionId, llmConfigId]);
 
   // autoStart：挂载后自动触发开始（列表选择模式下使用）
   const didAutoStart = useRef(false);

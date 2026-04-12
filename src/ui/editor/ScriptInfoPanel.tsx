@@ -7,6 +7,7 @@
 import { useCallback, useState } from 'react';
 import type { StateSchema, StateVariable, StateVariableType, MemoryConfig } from '../../core/types';
 import { listTools } from '../../core/tool-catalog';
+import { useLLMConfigsStore } from '../../stores/llm-configs-store';
 import { cn } from '../../lib/utils';
 
 // ============================================================================
@@ -21,6 +22,8 @@ export interface ScriptInfoPanelProps {
   memoryConfig: MemoryConfig;
   enabledTools: string[];
   initialPrompt: string;
+  /** v2.7：剧本 production 使用的 LLM 配置 id。null = 未设置，走 fallback 链 */
+  productionLlmConfigId: string | null;
   onLabelChange: (label: string) => void;
   onDescriptionChange: (desc: string) => void;
   onTagsChange: (tags: string[]) => void;
@@ -28,6 +31,7 @@ export interface ScriptInfoPanelProps {
   onMemoryConfigChange: (config: MemoryConfig) => void;
   onEnabledToolsChange: (tools: string[]) => void;
   onInitialPromptChange: (prompt: string) => void;
+  onProductionLlmConfigIdChange: (id: string | null) => void;
 }
 
 // ============================================================================
@@ -50,6 +54,7 @@ export function ScriptInfoPanel({
   memoryConfig,
   enabledTools,
   initialPrompt,
+  productionLlmConfigId,
   onLabelChange,
   onDescriptionChange,
   onTagsChange,
@@ -57,7 +62,10 @@ export function ScriptInfoPanel({
   onMemoryConfigChange,
   onEnabledToolsChange,
   onInitialPromptChange,
+  onProductionLlmConfigIdChange,
 }: ScriptInfoPanelProps) {
+  const llmConfigs = useLLMConfigsStore((s) => s.configs);
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="p-3 space-y-5">
@@ -89,6 +97,22 @@ export function ScriptInfoPanel({
               placeholder="首轮 user message"
               className={inputClass}
             />
+          </Field>
+          <Field label="生产 LLM">
+            <select
+              value={productionLlmConfigId ?? ''}
+              onChange={(e) =>
+                onProductionLlmConfigIdChange(e.target.value || null)
+              }
+              className={inputClass}
+            >
+              <option value="">（未设置，走默认）</option>
+              {llmConfigs.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </Field>
         </Section>
 

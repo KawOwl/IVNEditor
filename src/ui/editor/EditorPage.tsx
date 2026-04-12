@@ -26,7 +26,11 @@ import { exportScript, parseImportedScript } from '../../core/script-archive';
 import type { ScriptRecord } from '../../core/script-archive';
 import { getBackendUrl } from '../../core/engine-mode';
 import { useAuthStore } from '../../stores/auth-store';
+import { useLLMConfigsStore } from '../../stores/llm-configs-store';
 import { LocalBackupGate } from './LocalBackupGate';
+
+/** 编辑器端"试玩使用 LLM" dropdown 的 localStorage key */
+const LS_PLAYTEST_LLM_KEY = 'ivn-editor-playtest-llm-config-id';
 import { cn } from '../../lib/utils';
 import { getTextLLMConfig } from '../../stores/llm-settings-store';
 import { LLMClient } from '../../core/llm-client';
@@ -194,6 +198,40 @@ export function EditorPage() {
   /** 正在发布的 versionId（用于禁用按钮） */
   const [publishingVersionId, setPublishingVersionId] = useState<string | null>(null);
 
+  // --- v2.7 LLM config state ---
+  /** 剧本绑定的 production LLM config id（null = 未设置，走 fallback 链） */
+  const [productionLlmConfigId, setProductionLlmConfigId] = useState<string | null>(null);
+  /**
+   * 编辑器"试玩使用 LLM" dropdown 选择，localStorage 持久化。
+   * 也被 AI 改写功能复用（v2.7e）。
+   */
+  const [playtestLlmConfigId, setPlaytestLlmConfigIdState] = useState<string | null>(
+    () => {
+      try {
+        return localStorage.getItem(LS_PLAYTEST_LLM_KEY);
+      } catch {
+        return null;
+      }
+    },
+  );
+  const setPlaytestLlmConfigId = useCallback((id: string | null) => {
+    try {
+      if (id) localStorage.setItem(LS_PLAYTEST_LLM_KEY, id);
+      else localStorage.removeItem(LS_PLAYTEST_LLM_KEY);
+    } catch {
+      // ignore
+    }
+    setPlaytestLlmConfigIdState(id);
+  }, []);
+
+  // 拉取 llm_configs 列表（admin 登录后才能用）
+  const llmConfigs = useLLMConfigsStore((s) => s.configs);
+  const llmConfigsLoaded = useLLMConfigsStore((s) => s.loaded);
+  const refreshLlmConfigs = useLLMConfigsStore((s) => s.refresh);
+  useEffect(() => {
+    if (!llmConfigsLoaded) refreshLlmConfigs().catch(() => {});
+  }, [llmConfigsLoaded, refreshLlmConfigs]);
+
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;
 
   // --- Load script list from GET /api/scripts/mine ---
@@ -274,6 +312,7 @@ export function EditorPage() {
     description: string;
     published?: boolean;
     manifest: ScriptManifest;
+    productionLlmConfigId?: string | null;
   }) => {
     const manifest = record.manifest;
     const docs = manifestToDocuments(manifest);
@@ -290,6 +329,7 @@ export function EditorPage() {
     setIsPublished(!!record.published);
     setPromptAssemblyOrder(manifest.promptAssemblyOrder);
     setDisabledAssemblySections(manifest.disabledAssemblySections ?? []);
+    setProductionLlmConfigId(record.productionLlmConfigId ?? null);
     setShowScriptLibrary(false);
   }, []);
 
@@ -346,8 +386,15 @@ export function EditorPage() {
             label: string;
             description: string;
             published: boolean;
+            productionLlmConfigId?: string | null;
           })
-        : { id: scriptId, label: version.manifest.label, description: '', published: false };
+        : {
+            id: scriptId,
+            label: version.manifest.label,
+            description: '',
+            published: false,
+            productionLlmConfigId: null,
+          };
 
       applyRecordToEditor({
         id: scriptMeta.id,
@@ -355,6 +402,7 @@ export function EditorPage() {
         description: scriptMeta.description,
         published: scriptMeta.published,
         manifest: version.manifest,
+        productionLlmConfigId: scriptMeta.productionLlmConfigId ?? null,
       });
       setLoadedVersionId(version.id);
       await refreshVersionList(scriptId);
@@ -386,6 +434,7 @@ export function EditorPage() {
           body: JSON.stringify({
             label: scriptLabel,
             description: scriptDescription,
+            productionLlmConfigId,
           }),
         });
         if (!patchRes.ok) {
@@ -399,6 +448,7 @@ export function EditorPage() {
           body: JSON.stringify({
             label: scriptLabel,
             description: scriptDescription,
+            productionLlmConfigId,
           }),
         });
         if (!createRes.ok) {
@@ -455,7 +505,7 @@ export function EditorPage() {
     } finally {
       setSaving(false);
     }
-  }, [loadedScriptId, scriptLabel, scriptDescription, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, disabledAssemblySections, refreshScriptList, refreshVersionList]);
+  }, [loadedScriptId, scriptLabel, scriptDescription, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, disabledAssemblySections, productionLlmConfigId, refreshScriptList, refreshVersionList]);
 
   // --- Delete a script ---
   // DELETE /api/scripts/:id（级联删 versions + playthroughs）
@@ -622,6 +672,7 @@ export function EditorPage() {
     setIsPublished(false);
     setPromptAssemblyOrder(undefined);
     setDisabledAssemblySections([]);
+    setProductionLlmConfigId(null);
     setShowScriptLibrary(false);
   }, []);
 
@@ -1221,15 +1272,34 @@ ${doc.content}
                 onDisabledChange={setDisabledAssemblySections}
               />
             </div>
-            <div className={cn('absolute inset-0', rightTab !== 'play' && 'hidden')}>
-              <PlayPanel
-                manifest={playManifest}
-                compact
-                showDebug={false}
-                showReasoning
-                editorMode
-                scriptVersionId={loadedVersionId ?? undefined}
-              />
+            <div className={cn('absolute inset-0 flex flex-col', rightTab !== 'play' && 'hidden')}>
+              {/* v2.7 试玩使用 LLM 下拉（admin 个人偏好，localStorage 持久化） */}
+              <div className="flex-none flex items-center gap-2 px-3 py-1.5 border-b border-zinc-800 bg-zinc-950/60">
+                <span className="text-[10px] text-zinc-500">试玩使用：</span>
+                <select
+                  value={playtestLlmConfigId ?? ''}
+                  onChange={(e) => setPlaytestLlmConfigId(e.target.value || null)}
+                  className="flex-1 text-[11px] px-2 py-0.5 bg-zinc-900 border border-zinc-700 rounded text-zinc-300 focus:outline-none focus:border-zinc-500"
+                >
+                  <option value="">（剧本默认 / fallback）</option>
+                  {llmConfigs.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex-1 min-h-0">
+                <PlayPanel
+                  manifest={playManifest}
+                  compact
+                  showDebug={false}
+                  showReasoning
+                  editorMode
+                  scriptVersionId={loadedVersionId ?? undefined}
+                  llmConfigId={playtestLlmConfigId}
+                />
+              </div>
             </div>
             <div className={cn('absolute inset-0', rightTab !== 'debug' && 'hidden')}>
               <EditorDebugPanel />
@@ -1243,6 +1313,7 @@ ${doc.content}
                 memoryConfig={memoryConfig}
                 enabledTools={enabledTools}
                 initialPrompt={initialPrompt}
+                productionLlmConfigId={productionLlmConfigId}
                 onLabelChange={setScriptLabel}
                 onDescriptionChange={setScriptDescription}
                 onTagsChange={setScriptTags}
@@ -1250,6 +1321,7 @@ ${doc.content}
                 onMemoryConfigChange={setMemoryConfig}
                 onEnabledToolsChange={setEnabledTools}
                 onInitialPromptChange={setInitialPrompt}
+                onProductionLlmConfigIdChange={setProductionLlmConfigId}
               />
             </div>
             <div className={cn('absolute inset-0 overflow-y-auto p-3', rightTab !== 'settings' && 'hidden')}>
