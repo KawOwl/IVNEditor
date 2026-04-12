@@ -355,5 +355,23 @@
     "type": "logic",
     "ref": "PROGRESS.md#v2.6 剧本版本管理",
     "verify": "tsc 通过；编辑器完整流程不触 IndexedDB；Gate 能在有本地数据时强制导出+清理；无本地数据 clean-pass"
+  },
+  {
+    "id": "7.1",
+    "title": "多套 LLM 配置 + 剧本级 production 选择",
+    "description": "llm_configs 表；scripts.production_llm_config_id；playthroughs.llm_config_id 固化；/api/llm-configs CRUD；前端 LLMConfigsPanel + ScriptInfoPanel 生产 LLM 选择；编辑器试玩 localStorage 级覆盖；fallback 链 body.llmConfigId → script.productionLlmConfigId → 第一个 config",
+    "status": "done",
+    "type": "logic",
+    "ref": "PROGRESS.md#v2.7 LLM 配置 + 改写续写",
+    "verify": "管理员能创建/编辑/删除多套 config；剧本能选 production LLM；编辑器能临时切 playtest LLM；玩家玩时走剧本 production；单配置部署不用显式选；删除被引用的 config 返回 409"
+  },
+  {
+    "id": "7.2",
+    "title": "AI 改写分段续写",
+    "description": "handleAIRewrite 检测 finishReason=length 自动携带 assistant 历史续写，UI 显示续写进度，derivedContent 实时 append。上限 8 段",
+    "status": "done",
+    "type": "logic",
+    "ref": "PROGRESS.md#v2.7 LLM 配置 + 改写续写",
+    "verify": "短 prompt 单段返回；长 prompt 自动续写 N 段直到 stop；UI 显示 \"续写 N / 8\" 进度；达到上限 alert 提示"
   }
 ]
