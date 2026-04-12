@@ -20,7 +20,6 @@ import {
   clearStoredPlaythroughId,
   type RemoteSession,
 } from '../../stores/ws-client-emitter';
-import { fetchWithAuth } from '../../stores/player-session-store';
 import type { ScriptManifest } from '../../core/types';
 import { getBackendUrl } from '../../core/engine-mode';
 import { cn } from '../../lib/utils';
@@ -216,21 +215,25 @@ export function PlayPanel({
   }, []);
 
   /**
-   * 重置 = 归档当前 playthrough + 启动一个全新的 playthrough。
+   * 重置 = 和当前 playthrough 分手 + 启动一个全新的 playthrough。
    *
-   * 之前的实现只清 UI 不归档老的，导致老的 playthrough 仍然是 active
-   * 状态、localStorage 也还指向它，下次打开会 reconnect 到老进度——
-   * 和用户心目中的"重新来过"不符。
+   * **不归档**老的——玩家之后可以在"游玩记录"列表里点进去回顾。
+   * 老的 playthrough 仍然以它当前的状态（waiting-input / finished /
+   * generating 随便哪个）留在 DB 里，列表会照常展示。用户如果想继续
+   * 那次游玩，直接点列表里的它即可 reconnect。
    *
-   * 现在：
-   *   1. 抓当前 remoteRef 上的 playthroughId
-   *   2. 断开 WS，清前端状态
-   *   3. PATCH /api/playthroughs/:id {archived: true} 归档老的
-   *   4. 清掉 localStorage 里存的"上次游玩 id"
-   *   5. 立刻调 startNewRemoteSession 创建一条全新 playthrough
+   * 具体步骤：
+   *   1. 断开当前 WS，清前端 store
+   *   2. 重放 opening messages
+   *   3. 清掉 localStorage 里"上次游玩 id"（防止下次 fallback 到老的）
+   *      —— 即便不清，startNewRemoteSession 创建新会话后也会覆盖它，
+   *      但显式清掉能兜底"新会话创建失败"的路径。
+   *   4. 立刻调 startNewRemoteSession 创建一条全新 playthrough
+   *
+   * 历史：v2.7 早期版本曾经 PATCH archived:true 归档老的，但这样
+   * 老记录就从列表里消失、玩家没法回顾。按用户反馈改成保留。
    */
   const handleReset = useCallback(async () => {
-    const oldPtId = remoteRef.current?.playthroughId ?? null;
     handleStop();
     useGameStore.getState().reset();
     // Re-show opening messages
@@ -242,28 +245,14 @@ export function PlayPanel({
       }
     }
 
-    // 1. 归档老的 playthrough（fire-and-forget；即便 DB 没更新成功，
-    //    下一步仍会开新会话，老的只是留个痕迹）
-    if (oldPtId) {
-      try {
-        await fetchWithAuth(`${getBackendUrl()}/api/playthroughs/${oldPtId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ archived: true }),
-        });
-      } catch (err) {
-        console.warn('[PlayPanel] archive old playthrough failed:', err);
-      }
-    }
-
-    // 2. 清掉 localStorage 里"上次游玩 id"
-    //    玩家流用 scriptId 做 key；编辑器试玩用 scriptVersionId
+    // 清 localStorage 的"上次游玩 id"
+    // 玩家流用 scriptId 做 key；编辑器试玩用 scriptVersionId
     const storageKey = editorMode
       ? (scriptVersionId ? `version:${scriptVersionId}` : null)
       : (scriptId ?? manifest.id ?? null);
     if (storageKey) clearStoredPlaythroughId(storageKey);
 
-    // 3. 立刻启动新 playthrough
+    // 立刻启动新 playthrough
     await startNewRemoteSession();
   }, [
     handleStop,
