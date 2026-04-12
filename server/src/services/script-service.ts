@@ -25,12 +25,15 @@ export interface CreateScriptInput {
   authorUserId: string;
   label: string;
   description?: string;
+  /** v2.7：可选的 production 时使用的 LLM 配置 id */
+  productionLlmConfigId?: string | null;
 }
 
 /** 更新参数 */
 export interface UpdateScriptInput {
   label?: string;
   description?: string | null;
+  productionLlmConfigId?: string | null;
 }
 
 /** 行记录 */
@@ -39,6 +42,7 @@ export interface ScriptRow {
   authorUserId: string;
   label: string;
   description: string | null;
+  productionLlmConfigId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -64,6 +68,7 @@ export class ScriptService {
         authorUserId: input.authorUserId,
         label: input.label,
         description: input.description ?? null,
+        productionLlmConfigId: input.productionLlmConfigId ?? null,
         // createdAt/updatedAt 由 DB default 填充
       })
       .onConflictDoUpdate({
@@ -71,6 +76,9 @@ export class ScriptService {
         set: {
           label: input.label,
           description: input.description ?? null,
+          ...(input.productionLlmConfigId !== undefined
+            ? { productionLlmConfigId: input.productionLlmConfigId }
+            : {}),
           updatedAt: now,
         },
       });
@@ -133,6 +141,9 @@ export class ScriptService {
     const patch: Record<string, unknown> = { updatedAt: sql`NOW()` };
     if (input.label !== undefined) patch.label = input.label;
     if (input.description !== undefined) patch.description = input.description;
+    if (input.productionLlmConfigId !== undefined) {
+      patch.productionLlmConfigId = input.productionLlmConfigId;
+    }
 
     const result = await db
       .update(schema.scripts)

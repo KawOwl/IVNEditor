@@ -103,6 +103,37 @@ export const userSessions = pgTable('user_sessions', {
 ]);
 
 // ============================================================================
+// LLM Configs — LLM 连接信息（多套命名配置）
+// ============================================================================
+
+/**
+ * v2.7 引入：把 LLM 连接配置从"前端 localStorage + 后端单文件 JSON"迁到
+ * postgres，支持多套命名配置。每个 script 可以指定 production 用哪套，
+ * 每个 playthrough 创建时固化当时用的那套（不可变历史）。
+ *
+ * API key 明文存 text 列 —— 与现有 /api/config/llm 的处理一致，只对
+ * admin 开放读取。
+ */
+export const llmConfigs = pgTable('llm_configs', {
+  id: text('id').primaryKey(),
+  /** 用户可见名字，例如 "DeepSeek Chat"、"Claude Sonnet 4.5 (thinking)" */
+  name: text('name').notNull(),
+  /** 'openai-compatible' | 'anthropic' */
+  provider: text('provider').notNull(),
+  baseUrl: text('base_url').notNull(),
+  apiKey: text('api_key').notNull(),
+  model: text('model').notNull(),
+  /** 启用模型内置思考模式（DeepSeek enable_thinking 等） */
+  thinkingEnabled: boolean('thinking_enabled').notNull().default(false),
+  /** 启用启发式推理过滤器（无原生思考时分离推理/叙事） */
+  reasoningFilterEnabled: boolean('reasoning_filter_enabled').notNull().default(true),
+  /** 本配置默认 max output tokens（AI 改写、generate 都用） */
+  maxOutputTokens: integer('max_output_tokens').notNull().default(8192),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================================================
 // Scripts — 剧本身份（跨版本稳定的元数据）
 // ============================================================================
 
@@ -118,6 +149,9 @@ export const scripts = pgTable('scripts', {
     .references(() => users.id, { onDelete: 'cascade' }),
   label: text('label').notNull(),
   description: text('description'),
+  /** 玩家玩这个剧本时用哪套 LLM。null → 由 playthrough 创建逻辑按 fallback 链兜底 */
+  productionLlmConfigId: text('production_llm_config_id')
+    .references(() => llmConfigs.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -188,6 +222,17 @@ export const playthroughs = pgTable('playthroughs', {
   scriptVersionId: text('script_version_id')
     .notNull()
     .references(() => scriptVersions.id),
+  /**
+   * 创建 playthrough 时固化的 LLM config id。即便后来 script 的
+   * production_llm_config_id 变了、或者这个 llm_config 被 admin 编辑，
+   * 这条 playthrough 继续指向"创建时那一份"。
+   *
+   * 注意 onDelete: 'restrict' —— 被引用的 config 不能直接 DELETE，
+   * 服务端删除接口会先查 playthroughs 反向引用。
+   */
+  llmConfigId: text('llm_config_id')
+    .notNull()
+    .references(() => llmConfigs.id, { onDelete: 'restrict' }),
   // 'production' | 'playtest'
   // production = 玩家正式游玩；playtest = 编剧在编辑器里试玩
   kind: text('kind').notNull(),
@@ -210,6 +255,7 @@ export const playthroughs = pgTable('playthroughs', {
   index('idx_playthroughs_script_version_id').on(table.scriptVersionId),
   index('idx_playthroughs_kind_user').on(table.kind, table.userId),
   index('idx_playthroughs_updated_at').on(table.updatedAt),
+  index('idx_playthroughs_llm_config_id').on(table.llmConfigId),
 ]);
 
 // ============================================================================

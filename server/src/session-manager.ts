@@ -13,7 +13,6 @@ import type { GameSessionConfig, RestoreConfig } from '../../src/core/game-sessi
 import type { ScriptManifest, PromptSegment } from '../../src/core/types';
 import type { LLMConfig } from '../../src/core/llm-client';
 import { createWebSocketEmitter } from './ws-session-emitter';
-import { getLLMConfig } from './storage/llm-config-store';
 import { createPlaythroughPersistence } from './services/playthrough-persistence';
 import { createBoundTracing } from './tracing';
 
@@ -23,21 +22,6 @@ import { createBoundTracing } from './tracing';
 
 /** 断线后 wrapper 在内存中保留的时间 */
 const SESSION_TTL_MS = 10 * 60 * 1000; // 10 分钟
-
-// ============================================================================
-// LLM Config
-// ============================================================================
-
-function getServerLLMConfig(): LLMConfig {
-  const cfg = getLLMConfig();
-  return {
-    provider: cfg.provider,
-    baseURL: cfg.baseUrl,
-    apiKey: cfg.apiKey,
-    model: cfg.model,
-    name: cfg.name,
-  };
-}
 
 // ============================================================================
 // GameSessionWrapper
@@ -52,6 +36,8 @@ export class GameSessionWrapper {
   private userId: string;
   /** 'production' | 'playtest'，用于 Langfuse trace environment 区分 */
   private kind: string;
+  /** v2.7：从 playthrough.llm_config_id 查出来的完整配置，每个 wrapper 固定一份 */
+  private llmConfig: LLMConfig;
   private ws: WS | null = null;
   /** 断线后的 TTL 定时器 */
   private ttlTimer: ReturnType<typeof setTimeout> | null = null;
@@ -60,12 +46,14 @@ export class GameSessionWrapper {
     manifest: ScriptManifest,
     playthroughId: string,
     userId: string,
-    kind: string = 'production',
+    kind: string,
+    llmConfig: LLMConfig,
   ) {
     this.manifest = manifest;
     this.playthroughId = playthroughId;
     this.userId = userId;
     this.kind = kind;
+    this.llmConfig = llmConfig;
   }
 
   attachWebSocket(ws: WS): void {
@@ -155,7 +143,7 @@ export class GameSessionWrapper {
       segments: allSegments,
       stateSchema: manifest.stateSchema,
       memoryConfig: manifest.memoryConfig,
-      llmConfig: getServerLLMConfig(),
+      llmConfig: this.llmConfig,
       enabledTools: manifest.enabledTools,
       tokenBudget: manifest.memoryConfig.contextBudget,
       initialPrompt: manifest.initialPrompt,
@@ -189,11 +177,12 @@ export class SessionManager {
     playthroughId: string,
     manifest: ScriptManifest,
     userId: string,
-    kind: string = 'production',
+    kind: string,
+    llmConfig: LLMConfig,
   ): GameSessionWrapper {
     let wrapper = this.sessions.get(playthroughId);
     if (!wrapper) {
-      wrapper = new GameSessionWrapper(manifest, playthroughId, userId, kind);
+      wrapper = new GameSessionWrapper(manifest, playthroughId, userId, kind, llmConfig);
       this.sessions.set(playthroughId, wrapper);
     }
     return wrapper;

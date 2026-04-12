@@ -44,6 +44,8 @@ interface PublicScriptInfo {
   chapterCount: number;
   firstChapterId: string | null;
   openingMessages?: string[];
+  /** v2.7：剧本 production 用的 LLM config id（可能为 null，则走 fallback 链） */
+  productionLlmConfigId?: string | null;
 }
 
 /** legacy ScriptRecord 形状（编辑器加载用，6.3 后废弃） */
@@ -55,9 +57,14 @@ interface LegacyScriptRecord {
   updatedAt: number;
   published: boolean;
   manifest: ScriptManifest;
+  productionLlmConfigId?: string | null;
 }
 
-function manifestToPublicInfo(scriptId: string, manifest: ScriptManifest): PublicScriptInfo {
+function manifestToPublicInfo(
+  scriptId: string,
+  manifest: ScriptManifest,
+  productionLlmConfigId: string | null,
+): PublicScriptInfo {
   return {
     id: scriptId,
     label: manifest.label,
@@ -68,6 +75,7 @@ function manifestToPublicInfo(scriptId: string, manifest: ScriptManifest): Publi
     chapterCount: manifest.chapters.length,
     firstChapterId: manifest.chapters[0]?.id ?? null,
     openingMessages: manifest.openingMessages,
+    productionLlmConfigId,
   };
 }
 
@@ -107,6 +115,7 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
       authorUserId: id.userId,
       label: record.label,
       description: record.description ?? record.manifest?.description,
+      productionLlmConfigId: record.productionLlmConfigId ?? undefined,
     });
 
     // 2. 如果 body 带了 manifest，走 legacy 路径：创建 published 版本
@@ -132,7 +141,11 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
     const auth = await requireAdmin(request);
     if (isResponse(auth)) return auth;
 
-    const patch = body as { label?: string; description?: string | null };
+    const patch = body as {
+      label?: string;
+      description?: string | null;
+      productionLlmConfigId?: string | null;
+    };
     const ok = await scriptService.update(params.id, patch);
     if (!ok) {
       return new Response(
@@ -171,7 +184,13 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
     if (!version) {
       return new Response(JSON.stringify({ error: 'Script not found or not published' }), { status: 404 });
     }
-    return manifestToPublicInfo(params.id, version.manifest);
+    // 拉 script 行取 productionLlmConfigId
+    const script = await scriptService.getById(params.id);
+    return manifestToPublicInfo(
+      params.id,
+      version.manifest,
+      script?.productionLlmConfigId ?? null,
+    );
   })
 
   // ============================================================================
@@ -213,6 +232,7 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
       updatedAt: script.updatedAt.getTime(),
       published: version.status === 'published',
       manifest: version.manifest,
+      productionLlmConfigId: script.productionLlmConfigId,
     };
     return legacyRecord;
   })
@@ -264,6 +284,7 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
           hasPublished: !!published,
           publishedVersionId: published?.id ?? null,
           latestDraftVersionId: latestDraft?.id ?? null,
+          productionLlmConfigId: s.productionLlmConfigId,
         };
       }),
     );

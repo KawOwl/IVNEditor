@@ -31,6 +31,20 @@ async function cleanTables() {
   await db.delete(schema.scripts);
   await db.delete(schema.userSessions);
   await db.delete(schema.users);
+  await db.delete(schema.llmConfigs);
+}
+
+async function createTestLlmConfig(): Promise<string> {
+  const id = crypto.randomUUID();
+  await db.insert(schema.llmConfigs).values({
+    id,
+    name: `test-${id.slice(0, 6)}`,
+    provider: 'openai-compatible',
+    baseUrl: 'https://example.test/v1',
+    apiKey: 'test-key',
+    model: 'test-model',
+  });
+  return id;
 }
 
 function makeManifest(label: string, extraField?: string): ScriptManifest {
@@ -263,10 +277,12 @@ describe('ScriptVersionService', () => {
       const v = await service.create({ scriptId: s.id, manifest: makeManifest('draft') });
 
       // 在此 version 上建一个 playthrough
+      const llmConfigId = await createTestLlmConfig();
       await playthroughService.create({
         userId: u,
         scriptVersionId: v.version.id,
         chapterId: 'ch1',
+        llmConfigId,
       });
 
       const r = await service.deleteDraft(v.version.id);

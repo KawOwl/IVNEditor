@@ -32,6 +32,7 @@ async function cleanTables() {
   await db.delete(schema.scripts);
   await db.delete(schema.userSessions);
   await db.delete(schema.users);
+  await db.delete(schema.llmConfigs);
 }
 
 /** 确保 roles 表有 'admin' 和 'user' 行（migration 0003 建的，cleanTables 不动） */

@@ -27,6 +27,21 @@ async function cleanTables() {
   await db.delete(schema.scripts);
   await db.delete(schema.userSessions);
   await db.delete(schema.users);
+  await db.delete(schema.llmConfigs);
+}
+
+/** 创建一个测试用的 llm_config 行，返回 id */
+async function createTestLlmConfig(): Promise<string> {
+  const id = crypto.randomUUID();
+  await db.insert(schema.llmConfigs).values({
+    id,
+    name: `test-${id.slice(0, 6)}`,
+    provider: 'openai-compatible',
+    baseUrl: 'https://example.test/v1',
+    apiKey: 'test-key',
+    model: 'test-model',
+  });
+  return id;
 }
 
 const TEST_CHAPTER_ID = 'ch1';
@@ -87,6 +102,7 @@ async function createTestPlaythrough(overrides: Partial<{
   chapterId: string;
   userId: string;
   title: string;
+  llmConfigId: string;
 }> = {}) {
   // 自动创建 user 如果没指定
   const userId = overrides.userId ?? await createTestUser();
@@ -94,11 +110,14 @@ async function createTestPlaythrough(overrides: Partial<{
   const scriptVersionId =
     overrides.scriptVersionId ??
     (await createTestScriptVersion(userId, overrides.scriptKey ?? 'default'));
+  // 自动创建 llm_config 如果没指定
+  const llmConfigId = overrides.llmConfigId ?? (await createTestLlmConfig());
   return service.create({
     scriptVersionId,
     chapterId: overrides.chapterId ?? TEST_CHAPTER_ID,
     userId,
     title: overrides.title,
+    llmConfigId,
   }).then((r) => ({ ...r, userId, scriptVersionId }));
 }
 

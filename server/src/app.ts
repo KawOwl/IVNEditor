@@ -17,7 +17,7 @@ import { cors } from '@elysiajs/cors';
 import { scriptRoutes } from './routes/scripts';
 import { scriptVersionsForScriptRoutes, scriptVersionRoutes } from './routes/script-versions';
 import { sessionRoutes } from './routes/sessions';
-import { configRoutes } from './routes/config';
+import { llmConfigRoutes } from './routes/llm-configs';
 import { authRoutes } from './routes/auth';
 import { playthroughRoutes } from './routes/playthroughs';
 
@@ -28,7 +28,7 @@ export function buildApp() {
     .use(scriptVersionsForScriptRoutes)
     .use(scriptVersionRoutes)
     .use(sessionRoutes)
-    .use(configRoutes)
+    .use(llmConfigRoutes)
     .use(authRoutes)
     .use(playthroughRoutes)
     .get('/health', () => ({ ok: true, timestamp: Date.now() }));

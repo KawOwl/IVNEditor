@@ -11,11 +11,12 @@
  * Vite 产物冲突。改用 Bun.file() 直接 serve 静态文件。
  */
 
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join, extname } from 'path';
 import { buildApp } from './app';
 import { testConnection, runMigrations, closePool } from './db';
 import { shutdownTracing } from './tracing';
+import { llmConfigService } from './services/llm-config-service';
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -76,11 +77,70 @@ if (HAS_DIST) {
   console.log(`⚠️  No dist/ found — run 'pnpm build' in project root to enable frontend hosting`);
 }
 
+/**
+ * v2.7 bootstrap：如果 llm_configs 表空的，从旧 JSON 文件 / 环境变量
+ * 自动 seed 一条默认配置。让全新部署零手动步骤；已有部署也能从老的
+ * llm-config.json 平滑过渡。
+ */
+async function bootstrapDefaultLlmConfig() {
+  const existing = await llmConfigService.listAll();
+  if (existing.length > 0) return;
+
+  // 1. 试读旧的 server/data/llm-config.json（6.2 时代的单 config 文件）
+  const legacyPath = join(import.meta.dir, '../data/llm-config.json');
+  let seed: {
+    provider: string;
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    name: string;
+  } | null = null;
+
+  if (existsSync(legacyPath)) {
+    try {
+      const raw = readFileSync(legacyPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed.apiKey) {
+        seed = {
+          provider: parsed.provider ?? 'openai-compatible',
+          baseUrl: parsed.baseUrl ?? 'https://api.deepseek.com/v1',
+          apiKey: parsed.apiKey,
+          model: parsed.model ?? 'deepseek-chat',
+          name: parsed.name ?? 'default',
+        };
+      }
+    } catch (err) {
+      console.warn('[bootstrap] failed to read legacy llm-config.json:', err);
+    }
+  }
+
+  // 2. fallback 到环境变量
+  if (!seed && process.env.LLM_API_KEY) {
+    seed = {
+      provider: process.env.LLM_PROVIDER ?? 'openai-compatible',
+      baseUrl: process.env.LLM_BASE_URL ?? 'https://api.deepseek.com/v1',
+      apiKey: process.env.LLM_API_KEY,
+      model: process.env.LLM_MODEL ?? 'deepseek-chat',
+      name: process.env.LLM_NAME ?? 'default',
+    };
+  }
+
+  if (!seed) {
+    console.warn('[bootstrap] llm_configs 表空，但未找到 env/json 种子。' +
+      '首次使用前请通过 /api/llm-configs 创建至少一条配置。');
+    return;
+  }
+
+  await llmConfigService.create(seed);
+  console.log(`[bootstrap] seeded initial llm_config: name="${seed.name}" model="${seed.model}"`);
+}
+
 // 启动时：测试 DB 连接 + 应用待执行的迁移 + 启动 HTTP 服务
 async function startup() {
   try {
     await testConnection();
     await runMigrations();
+    await bootstrapDefaultLlmConfig();
   } catch (err) {
     console.error('[startup] DB initialization failed:', err);
     console.error('[startup] 如果线上首次部署，请先运行:');

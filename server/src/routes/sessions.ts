@@ -18,7 +18,9 @@ import { Elysia } from 'elysia';
 import { SessionManager } from '../session-manager';
 import { playthroughService } from '../services/playthrough-service';
 import { scriptVersionService } from '../services/script-version-service';
+import { llmConfigService } from '../services/llm-config-service';
 import { resolvePlayerSession } from '../auth-identity';
+import type { LLMConfig } from '../../../src/core/llm-client';
 
 const sessionManager = new SessionManager();
 
@@ -77,7 +79,24 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
         return;
       }
 
-      // 4. getOrCreate wrapper（按 playthroughId 索引）
+      // 4. 按 playthrough 固化的 llmConfigId 拉 LLM 配置（v2.7）
+      const llmConfigRow = await llmConfigService.getById(detail.llmConfigId);
+      if (!llmConfigRow) {
+        ws.send(JSON.stringify({ type: 'error', error: 'LLM config not found for this playthrough' }));
+        ws.close();
+        return;
+      }
+      const llmConfig: LLMConfig = {
+        provider: llmConfigRow.provider,
+        baseURL: llmConfigRow.baseUrl,
+        apiKey: llmConfigRow.apiKey,
+        model: llmConfigRow.model,
+        name: llmConfigRow.name,
+        thinkingEnabled: llmConfigRow.thinkingEnabled,
+        reasoningFilterEnabled: llmConfigRow.reasoningFilterEnabled,
+      };
+
+      // 5. getOrCreate wrapper（按 playthroughId 索引）
       // 把 playthrough 的 kind 透传给 wrapper，让 Langfuse trace 能据此区分
       // production / playtest（编辑器试玩）
       const wrapper = sessionManager.getOrCreate(
@@ -85,6 +104,7 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
         version.manifest,
         identity.userId,
         detail.kind,
+        llmConfig,
       );
       wrapper.attachWebSocket(ws);
 

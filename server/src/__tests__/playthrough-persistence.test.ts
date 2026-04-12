@@ -24,6 +24,20 @@ async function cleanTables() {
   await db.delete(schema.scripts);
   await db.delete(schema.userSessions);
   await db.delete(schema.users);
+  await db.delete(schema.llmConfigs);
+}
+
+async function createTestLlmConfig(): Promise<string> {
+  const id = crypto.randomUUID();
+  await db.insert(schema.llmConfigs).values({
+    id,
+    name: `test-${id.slice(0, 6)}`,
+    provider: 'openai-compatible',
+    baseUrl: 'https://example.test/v1',
+    apiKey: 'test-key',
+    model: 'test-model',
+  });
+  return id;
 }
 
 const TEST_CHAPTER_ID = 'ch1';
@@ -73,10 +87,12 @@ async function createTestScriptVersion(authorUserId: string): Promise<string> {
 async function createTestPlaythrough() {
   const userId = await createTestUser();
   const scriptVersionId = await createTestScriptVersion(userId);
+  const llmConfigId = await createTestLlmConfig();
   const r = await service.create({
     scriptVersionId,
     chapterId: TEST_CHAPTER_ID,
     userId,
+    llmConfigId,
   });
   return { ...r, userId, scriptVersionId };
 }

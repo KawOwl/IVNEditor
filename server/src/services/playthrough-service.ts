@@ -44,6 +44,8 @@ export interface CreateInput {
   title?: string | null;
   /** 'production' | 'playtest'，默认 'production' */
   kind?: 'production' | 'playtest';
+  /** v2.7：必填，创建时固化的 llm config id */
+  llmConfigId: string;
 }
 
 /** 更新参数 */
@@ -56,6 +58,8 @@ export interface UpdateInput {
 export interface PlaythroughDetail {
   id: string;
   scriptVersionId: string;
+  /** v2.7：创建时固化的 llm config id */
+  llmConfigId: string;
   kind: string;
   title: string | null;
   chapterId: string;
@@ -155,6 +159,7 @@ export class PlaythroughService {
       id,
       userId: input.userId,
       scriptVersionId: input.scriptVersionId,
+      llmConfigId: input.llmConfigId,
       kind: input.kind ?? 'production',
       title,
       chapterId: input.chapterId,
@@ -205,6 +210,7 @@ export class PlaythroughService {
     return {
       id: pt.id,
       scriptVersionId: pt.scriptVersionId,
+      llmConfigId: pt.llmConfigId,
       kind: pt.kind,
       title: pt.title,
       chapterId: pt.chapterId,

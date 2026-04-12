@@ -18,6 +18,8 @@ import { eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../db';
 import { playthroughService } from '../services/playthrough-service';
 import { scriptVersionService } from '../services/script-version-service';
+import { scriptService } from '../services/script-service';
+import { llmConfigService } from '../services/llm-config-service';
 import { requireAnyIdentity, isResponse } from '../auth-identity';
 
 export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
@@ -86,11 +88,15 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
       scriptVersionId?: string;    // 新：直接指定版本 id（试玩用）
       kind?: 'production' | 'playtest';
       title?: string;
+      /** v2.7：显式指定 LLM config id（编辑器试玩 override）。缺省走 fallback 链 */
+      llmConfigId?: string;
     };
 
     // 解析出实际要用的 script_version_id
     let versionId: string | undefined;
     let chapterId: string | undefined;
+    /** 同时记录对应的 scriptId，用于 llmConfigId 的 fallback 链 */
+    let resolvedScriptId: string | undefined;
 
     if (input.scriptVersionId) {
       const version = await scriptVersionService.getById(input.scriptVersionId);
@@ -99,6 +105,7 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
       }
       versionId = version.id;
       chapterId = version.manifest.chapters[0]?.id ?? 'ch1';
+      resolvedScriptId = version.scriptId;
     } else if (input.scriptId) {
       const published = await scriptVersionService.getCurrentPublished(input.scriptId);
       if (!published) {
@@ -109,9 +116,51 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
       }
       versionId = published.id;
       chapterId = published.manifest.chapters[0]?.id ?? 'ch1';
+      resolvedScriptId = input.scriptId;
     } else {
       return new Response(
         JSON.stringify({ error: 'Missing scriptId or scriptVersionId' }),
+        { status: 400 },
+      );
+    }
+
+    // ========================================================================
+    // v2.7 LLM config fallback 链：
+    //   1. body.llmConfigId（编辑器 playtest override / 未来的玩家端选择器）
+    //   2. script.production_llm_config_id
+    //   3. 第一个 llm_config by created_at
+    //   4. 找不到 → 400
+    // ========================================================================
+    let llmConfigId: string | null = null;
+
+    if (input.llmConfigId) {
+      const cfg = await llmConfigService.getById(input.llmConfigId);
+      if (!cfg) {
+        return new Response(
+          JSON.stringify({ error: 'llmConfigId not found' }),
+          { status: 400 },
+        );
+      }
+      llmConfigId = cfg.id;
+    }
+
+    if (!llmConfigId && resolvedScriptId) {
+      const script = await scriptService.getById(resolvedScriptId);
+      if (script?.productionLlmConfigId) {
+        llmConfigId = script.productionLlmConfigId;
+      }
+    }
+
+    if (!llmConfigId) {
+      const first = await llmConfigService.getFirstConfig();
+      if (first) llmConfigId = first.id;
+    }
+
+    if (!llmConfigId) {
+      return new Response(
+        JSON.stringify({
+          error: 'No LLM config available. Create one under /api/llm-configs first.',
+        }),
         { status: 400 },
       );
     }
@@ -122,6 +171,7 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
       chapterId: chapterId,
       title: input.title,
       kind: input.kind ?? 'production',
+      llmConfigId,
     });
     return result;
   })
