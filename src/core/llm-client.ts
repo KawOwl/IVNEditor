@@ -48,6 +48,20 @@ export interface StepInfo {
    * 这是模型协议层面的结构信号，比字数判断更可靠。
    */
   partKinds: string[];
+  /**
+   * AI SDK 汇报的 `step.response.timestamp` —— 表示 LLM 响应**开始**
+   * 的时间点，在 provider 开始 stream 时就被赋值，不受该 step 内的
+   * tool 执行/挂起影响。
+   *
+   * 用处：tracing 层用这个作为 generation span 的时间戳，避免出现
+   * "step 带 signal_input_needed 时，onStep 被 tool 挂起延后触发，导致
+   * 记录到的时间是玩家回复之后"的错位问题（见 Langfuse trace 调查）。
+   *
+   * 某些 provider 不发 response-metadata chunk 时，AI SDK 会 fallback 到
+   * streamStep 入口处的 `new Date()`，仍然是"step 开始"而非"step 结束"，
+   * 所以这个字段始终可用。
+   */
+  responseTimestamp?: Date;
 }
 
 export interface GenerateOptions {
@@ -204,6 +218,9 @@ export class LLMClient {
             })),
             model: step.model?.modelId,
             partKinds,
+            // AI SDK 把 LLM response 开始的时间记在 step.response.timestamp，
+            // 不受 tool 挂起污染。传给 tracing 层作为时间戳正源。
+            responseTimestamp: step.response?.timestamp,
           });
         } catch (err) {
           console.error('[llm-client] onStep handler threw:', err);

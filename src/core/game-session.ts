@@ -195,6 +195,12 @@ export interface GenerateTraceHandle {
      * tracing 实现可据此对 span 命名、打 metadata，不用字数判断。
      */
     partKinds: string[];
+    /**
+     * AI SDK 汇报的 step.response.timestamp（LLM 响应开始的时间点）。
+     * tracing 层用它作为 generation span 的时间戳，避免被同 step 内的
+     * signal_input_needed 挂起污染（见 StepInfo 字段注释）。
+     */
+    responseTimestamp?: Date;
   }): void;
 
   /** 开始一次工具调用，返回 handle 用于结束 */
@@ -683,6 +689,7 @@ export class GameSession {
               outputTokens: step.outputTokens,
               model: step.model,
               partKinds: step.partKinds,
+              responseTimestamp: step.responseTimestamp,
             });
           },
         });
