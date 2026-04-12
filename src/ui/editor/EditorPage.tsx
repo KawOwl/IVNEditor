@@ -26,13 +26,12 @@ import { exportScript, parseImportedScript } from '../../core/script-archive';
 import type { ScriptRecord } from '../../core/script-archive';
 import { getBackendUrl } from '../../core/engine-mode';
 import { useAuthStore } from '../../stores/auth-store';
-import { useLLMConfigsStore } from '../../stores/llm-configs-store';
+import { useLLMConfigsStore, entryToLLMConfig } from '../../stores/llm-configs-store';
 import { LocalBackupGate } from './LocalBackupGate';
 
 /** 编辑器端"试玩使用 LLM" dropdown 的 localStorage key */
 const LS_PLAYTEST_LLM_KEY = 'ivn-editor-playtest-llm-config-id';
 import { cn } from '../../lib/utils';
-import { getTextLLMConfig } from '../../stores/llm-settings-store';
 import { LLMClient } from '../../core/llm-client';
 import type {
   ScriptManifest,
@@ -881,17 +880,31 @@ export function EditorPage() {
 
   // --- AI Rewrite for system segments ---
   const [rewritingDocId, setRewritingDocId] = useState<string | null>(null);
+  /**
+   * v2.7：续写进度显示。null = 不在续写中。
+   * 每次进循环更新 segment，UI 显示"续写中 N / maxSegments"。
+   */
+  const [rewriteProgress, setRewriteProgress] = useState<
+    { segment: number; maxSegments: number } | null
+  >(null);
 
   const handleAIRewrite = useCallback(async (docId: string) => {
     const doc = documents.find((d) => d.id === docId);
     if (!doc || doc.role !== 'system') return;
 
-    setRewritingDocId(docId);
-    try {
-      const llmConfig = getTextLLMConfig();
-      const client = new LLMClient(llmConfig);
+    // v2.7e：从 LLM configs store 取配置。优先用"试玩使用 LLM" dropdown 的
+    // 选择，没选就 fallback 到列表里第一个。
+    const configsState = useLLMConfigsStore.getState();
+    const preferredId = playtestLlmConfigId ?? configsState.configs[0]?.id ?? null;
+    const configEntry = configsState.getById(preferredId);
+    if (!configEntry) {
+      alert('请先在"设置"里创建至少一套 LLM 配置，或在"试玩使用 LLM"里选一套');
+      return;
+    }
+    const llmConfig = entryToLLMConfig(configEntry);
+    const client = new LLMClient(llmConfig);
 
-      const rewritePrompt = `你是一位互动叙事引擎的 prompt 优化专家。你的任务是改写下面的 system prompt，使其更好地利用引擎提供的工具系统。
+    const rewritePrompt = `你是一位互动叙事引擎的 prompt 优化专家。你的任务是改写下面的 system prompt，使其更好地利用引擎提供的工具系统。
 
 ## 引擎提供的工具
 
@@ -905,7 +918,7 @@ export function EditorPage() {
 ## 改写要求
 
 1. **不要改变原文的叙事风格、世界观设定和角色描述**
-2. **在适当位置添加工具调用指引**，例如��
+2. **在适当位置添加工具调用指引**，例如：
    - 在描述需要玩家做选择的情节时，提示使用 signal_input_needed
    - 在描述会影响数值/状态的情节时，提示使用 update_state
    - 在描述重要信息揭示时，提示使用 pin_memory
@@ -919,37 +932,79 @@ ${doc.content}
 
 ## 改写后的 Prompt（直接输出，不要加任何前缀说明）`;
 
-      const result = await client.generate({
-        systemPrompt: '你是 prompt 改写助手。只输出改写后的 prompt 全文，不要输出任何额外说明。',
-        messages: [{ role: 'user', content: rewritePrompt }],
-        tools: {},
-        // 设到 8192，DeepSeek / 大部分 OpenAI-compatible 模型的硬上限就是
-        // 8192（超过会直接报 "Invalid max_tokens value"）。比 provider 默认
-        // 的 4096 宽一倍，对长剧本改写已经够用。
-        maxOutputTokens: 8192,
-      });
+    // v2.7：分段续写循环。
+    //
+    // 如果模型单次 maxOutputTokens 能容纳完整改写，就只转一圈正常返回；
+    // 否则 finishReason='length' 时带上"已输出内容"作为 assistant
+    // message，让 LLM 从截断处接着往下写。UI 同步显示"续写中 N/M"。
+    //
+    // 每段 append 到 derivedContent，用户在改写过程中能实时看到进度。
+    const MAX_REWRITE_SEGMENTS = 8;
 
-      if (result.text) {
+    setRewritingDocId(docId);
+    setRewriteProgress({ segment: 0, maxSegments: MAX_REWRITE_SEGMENTS });
+
+    let accumulated = '';
+    let reachedLimit = false;
+
+    try {
+      for (let seg = 1; seg <= MAX_REWRITE_SEGMENTS; seg++) {
+        setRewriteProgress({ segment: seg, maxSegments: MAX_REWRITE_SEGMENTS });
+
+        const messages =
+          seg === 1
+            ? [{ role: 'user' as const, content: rewritePrompt }]
+            : [
+                { role: 'user' as const, content: rewritePrompt },
+                { role: 'assistant' as const, content: accumulated },
+                {
+                  role: 'user' as const,
+                  content:
+                    '继续输出改写后 prompt 的剩余部分。直接从你上次停下的地方续写，不要重复已经输出过的内容，不要加任何前缀说明。',
+                },
+              ];
+
+        const result = await client.generate({
+          systemPrompt:
+            '你是 prompt 改写助手。只输出改写后的 prompt 全文，不要输出任何额外说明。',
+          messages,
+          tools: {},
+          maxOutputTokens: 8192,
+        });
+
+        if (!result.text) {
+          // 模型没返回任何新内容 —— 可能是 provider 抽风，中断避免死循环
+          break;
+        }
+
+        accumulated += result.text;
+
+        // 实时 append 到 UI：用户可以在续写过程中读到已有内容
         setDocuments((prev) =>
-          prev.map((d) => d.id === docId
-            ? { ...d, derivedContent: result.text, useDerived: false }
-            : d,
+          prev.map((d) =>
+            d.id === docId
+              ? { ...d, derivedContent: accumulated, useDerived: false }
+              : d,
           ),
         );
+
+        if (result.finishReason !== 'length') break;
+        if (seg === MAX_REWRITE_SEGMENTS) reachedLimit = true;
       }
 
-      if (result.finishReason === 'length') {
+      if (reachedLimit) {
         alert(
-          'AI 改写输出被模型 max_tokens 限制截断（finishReason=length）。\n' +
-          '已保存截断后的部分结果，请检查是否需要手动补齐或重试。',
+          `AI 改写续写达到上限 ${MAX_REWRITE_SEGMENTS} 段仍未完成。\n` +
+          '已保存累积结果，但内容可能仍被截断。建议手动补齐或拆分原文后重试。',
         );
       }
     } catch (err) {
       alert('AI 改写失败: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setRewritingDocId(null);
+      setRewriteProgress(null);
     }
-  }, [documents]);
+  }, [documents, playtestLlmConfigId]);
 
   // --- Build manifest for play panel ---
   const playManifest = useMemo<ScriptManifest>(() => {
@@ -1188,6 +1243,9 @@ ${doc.content}
                   onMetaChange={(field, value) => handleDocMetaChange(selectedDoc.id, field, value)}
                   onRewrite={() => handleAIRewrite(selectedDoc.id)}
                   rewriting={rewritingDocId === selectedDoc.id}
+                  rewriteProgress={
+                    rewritingDocId === selectedDoc.id ? rewriteProgress : null
+                  }
                 />
                 {/* Code editor + derived diff */}
                 <div className="flex-1 min-h-0 flex">
@@ -1448,6 +1506,7 @@ function DocMetaBar({
   onMetaChange,
   onRewrite,
   rewriting,
+  rewriteProgress,
 }: {
   doc: EditorDocument;
   onMetaChange: (
@@ -1456,6 +1515,8 @@ function DocMetaBar({
   ) => void;
   onRewrite?: () => void;
   rewriting?: boolean;
+  /** v2.7：续写进度 */
+  rewriteProgress?: { segment: number; maxSegments: number } | null;
 }) {
   const tokenCount = estimateTokens(doc.content);
 
@@ -1509,6 +1570,11 @@ function DocMetaBar({
           >
             {rewriting ? 'AI 改写中...' : doc.derivedContent ? 'AI 重新改写' : 'AI 改写'}
           </button>
+          {rewriting && rewriteProgress && rewriteProgress.segment > 0 && (
+            <span className="text-[10px] text-zinc-500">
+              续写 {rewriteProgress.segment} / {rewriteProgress.maxSegments}
+            </span>
+          )}
           {doc.derivedContent && (
             <label className="flex items-center gap-1 text-zinc-500 cursor-pointer">
               <input
