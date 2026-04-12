@@ -1,121 +1,411 @@
 /**
- * LLMSettingsPanel — LLM 配置面板
+ * LLMSettingsPanel — LLM 配置 + 通用设置面板
  *
- * 编剧用来配置文本生成和向量嵌入模型的连接信息。
- * 数据存储在 localStorage，不跟剧本走。
+ * v2.7 改为多套命名配置管理：
+ *   - 顶部列出 llm_configs 表里的所有配置
+ *   - 新增 / 编辑 / 删除通过对话框完成
+ *   - 所有操作都走后端 /api/llm-configs（见 llm-configs-store.ts）
  *
- * 顶部的「从服务器拉取」和「同步到服务器」按钮让编剧可以把本地配置
- * 推送到后端，或从后端拉取当前配置。
+ * 同时保留"打字机速度"等通用 UI 设置（只影响当前浏览器）。
  */
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  useLLMSettingsStore,
-  PROVIDER_OPTIONS,
-} from '../../stores/llm-settings-store';
-import { useAuthStore } from '../../stores/auth-store';
-import type { LLMProviderType } from '../../core/types';
-import { getBackendUrl } from '../../core/engine-mode';
+  useLLMConfigsStore,
+  type LLMConfigEntry,
+  type LLMConfigPayload,
+} from '../../stores/llm-configs-store';
 import { getTypewriterSpeed, setTypewriterSpeed } from '../NarrativeView';
 import { cn } from '../../lib/utils';
 
 // ============================================================================
-// Component
+// Constants
+// ============================================================================
+
+const PROVIDER_OPTIONS: { value: string; label: string }[] = [
+  { value: 'openai-compatible', label: 'OpenAI Compatible' },
+  { value: 'anthropic', label: 'Anthropic' },
+];
+
+const DEFAULT_NEW_CONFIG: LLMConfigPayload = {
+  name: '',
+  provider: 'openai-compatible',
+  baseUrl: 'https://api.deepseek.com/v1',
+  apiKey: '',
+  model: 'deepseek-chat',
+  thinkingEnabled: false,
+  reasoningFilterEnabled: true,
+  maxOutputTokens: 8192,
+};
+
+// ============================================================================
+// Main Panel
 // ============================================================================
 
 export function LLMSettingsPanel() {
-  const text = useLLMSettingsStore((s) => s.text);
-  const embedding = useLLMSettingsStore((s) => s.embedding);
-  const embeddingEnabled = useLLMSettingsStore((s) => s.embeddingEnabled);
-  const thinkingEnabled = useLLMSettingsStore((s) => s.thinkingEnabled);
-  const reasoningFilterEnabled = useLLMSettingsStore((s) => s.reasoningFilterEnabled);
-  const updateText = useLLMSettingsStore((s) => s.updateText);
-  const updateEmbedding = useLLMSettingsStore((s) => s.updateEmbedding);
-  const setEmbeddingEnabled = useLLMSettingsStore((s) => s.setEmbeddingEnabled);
-  const setThinkingEnabled = useLLMSettingsStore((s) => s.setThinkingEnabled);
-  const setReasoningFilterEnabled = useLLMSettingsStore((s) => s.setReasoningFilterEnabled);
+  const configs = useLLMConfigsStore((s) => s.configs);
+  const loaded = useLLMConfigsStore((s) => s.loaded);
+  const loading = useLLMConfigsStore((s) => s.loading);
+  const refresh = useLLMConfigsStore((s) => s.refresh);
 
-  const [showTextKey, setShowTextKey] = useState(false);
-  const [showEmbeddingKey, setShowEmbeddingKey] = useState(false);
+  // 首次加载
+  useEffect(() => {
+    if (!loaded && !loading) refresh().catch(() => {});
+  }, [loaded, loading, refresh]);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const editingEntry = useMemo(
+    () => (editingId ? configs.find((c) => c.id === editingId) ?? null : null),
+    [editingId, configs],
+  );
 
   return (
     <div className="space-y-6">
-      {/* Server sync controls（拉取 / 推送到后端） */}
-      <ServerSyncSection />
+      {/* LLM Configs 列表 */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-medium text-zinc-300">LLM 配置</h3>
+          <button
+            onClick={() => setCreating(true)}
+            className="text-[11px] px-2 py-1 rounded bg-emerald-900/50 border border-emerald-800/50 text-emerald-300 hover:bg-emerald-800/50 transition-colors"
+          >
+            + 新建
+          </button>
+        </div>
 
-      {/* Text model */}
-      <EndpointSection
-        title="文本生成模型"
-        endpoint={text}
-        onChange={updateText}
-        showKey={showTextKey}
-        onToggleKey={() => setShowTextKey(!showTextKey)}
-      />
-
-      {/* Embedding model */}
-      <div className="space-y-3">
-        <label className="flex items-center gap-2 text-xs text-zinc-400">
-          <input
-            type="checkbox"
-            checked={embeddingEnabled}
-            onChange={(e) => setEmbeddingEnabled(e.target.checked)}
-            className="rounded border-zinc-600 bg-zinc-900"
-          />
-          启用向量嵌入模型（记忆模块）
-        </label>
-
-        {embeddingEnabled && (
-          <EndpointSection
-            title="向量嵌入模型"
-            endpoint={embedding}
-            onChange={updateEmbedding}
-            showKey={showEmbeddingKey}
-            onToggleKey={() => setShowEmbeddingKey(!showEmbeddingKey)}
-          />
+        {!loaded && <p className="text-[10px] text-zinc-600">加载中...</p>}
+        {loaded && configs.length === 0 && (
+          <div className="rounded border border-zinc-800 bg-zinc-900/50 px-3 py-4 text-center">
+            <p className="text-[11px] text-zinc-500">
+              还没有配置。点右上角"+ 新建"添加一套 LLM 配置。
+            </p>
+          </div>
         )}
-      </div>
 
-      {/* Thinking mode */}
-      <label className="flex items-center gap-2 text-xs text-zinc-400">
-        <input
-          type="checkbox"
-          checked={thinkingEnabled}
-          onChange={(e) => setThinkingEnabled(e.target.checked)}
-          className="rounded border-zinc-600 bg-zinc-900"
-        />
-        启用思考模式（DeepSeek enable_thinking）
-      </label>
+        <div className="space-y-1">
+          {configs.map((c) => (
+            <ConfigListRow key={c.id} entry={c} onEdit={() => setEditingId(c.id)} />
+          ))}
+        </div>
+      </section>
 
-      {/* Reasoning filter */}
-      <div className="space-y-1">
-        <label className={cn(
-          'flex items-center gap-2 text-xs',
-          thinkingEnabled ? 'text-zinc-600' : 'text-zinc-400',
-        )}>
-          <input
-            type="checkbox"
-            checked={reasoningFilterEnabled}
-            onChange={(e) => setReasoningFilterEnabled(e.target.checked)}
-            disabled={thinkingEnabled}
-            className="rounded border-zinc-600 bg-zinc-900 disabled:opacity-40"
-          />
-          启发式推理过滤器
-        </label>
-        <p className="text-[10px] text-zinc-600 ml-5">
-          {thinkingEnabled
-            ? '思考模式已启用，推理由 API 原生分离，过滤器自动跳过'
-            : '从 text 流中启发式分离推理文本（检测 --- / ## / ** 标记）。关闭后全部内容作为叙事输出。即时生效，下次生成时应用。'}
-        </p>
-      </div>
-
-      {/* Typewriter speed */}
+      {/* 通用 UI 设置 */}
       <TypewriterSpeedSection />
+
+      {/* 编辑对话框 */}
+      {editingEntry && (
+        <ConfigEditDialog
+          mode="edit"
+          initial={entryToPayload(editingEntry)}
+          entryId={editingEntry.id}
+          onClose={() => setEditingId(null)}
+        />
+      )}
+      {creating && (
+        <ConfigEditDialog
+          mode="create"
+          initial={DEFAULT_NEW_CONFIG}
+          onClose={() => setCreating(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function entryToPayload(entry: LLMConfigEntry): LLMConfigPayload {
+  return {
+    name: entry.name,
+    provider: entry.provider,
+    baseUrl: entry.baseUrl,
+    apiKey: entry.apiKey,
+    model: entry.model,
+    thinkingEnabled: entry.thinkingEnabled,
+    reasoningFilterEnabled: entry.reasoningFilterEnabled,
+    maxOutputTokens: entry.maxOutputTokens,
+  };
+}
+
+// ============================================================================
+// ConfigListRow
+// ============================================================================
+
+function ConfigListRow({
+  entry,
+  onEdit,
+}: {
+  entry: LLMConfigEntry;
+  onEdit: () => void;
+}) {
+  const deleteConfig = useLLMConfigsStore((s) => s.delete);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    if (!confirm(`确定删除 "${entry.name}"？`)) return;
+    setDeleting(true);
+    try {
+      const result = await deleteConfig(entry.id);
+      if (result.ok === false) {
+        if (result.reason === 'referenced') {
+          alert(
+            `无法删除："${entry.name}" 被 ${result.count} 条游玩记录引用。` +
+            `\n请先归档或删除相关游玩记录。`,
+          );
+        } else if (result.reason === 'not-found') {
+          alert('配置已不存在');
+        }
+      }
+    } catch (err) {
+      alert(`删除失败: ${err}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div
+      className={cn(
+        'flex items-center gap-2 px-3 py-2 rounded border border-zinc-800 bg-zinc-900/50',
+        'hover:border-zinc-600 transition-colors',
+        deleting && 'opacity-50',
+      )}
+    >
+      <div className="flex-1 min-w-0">
+        <div className="text-xs text-zinc-200 truncate">{entry.name}</div>
+        <div className="text-[10px] text-zinc-600 flex items-center gap-1.5 mt-0.5">
+          <span>{entry.provider}</span>
+          <span>·</span>
+          <span className="truncate">{entry.model}</span>
+          {entry.thinkingEnabled && (
+            <>
+              <span>·</span>
+              <span className="text-amber-500">thinking</span>
+            </>
+          )}
+        </div>
+      </div>
+      <button
+        onClick={onEdit}
+        className="flex-none text-[10px] px-2 py-1 text-zinc-500 hover:text-zinc-200 transition-colors"
+      >
+        编辑
+      </button>
+      <button
+        onClick={handleDelete}
+        disabled={deleting}
+        className="flex-none text-[10px] px-2 py-1 text-zinc-600 hover:text-red-400 transition-colors disabled:opacity-50"
+      >
+        删除
+      </button>
     </div>
   );
 }
 
 // ============================================================================
-// ServerSyncSection — 服务器配置同步（仅 remote 模式）
+// ConfigEditDialog
+// ============================================================================
+
+function ConfigEditDialog({
+  mode,
+  initial,
+  entryId,
+  onClose,
+}: {
+  mode: 'create' | 'edit';
+  initial: LLMConfigPayload;
+  entryId?: string;
+  onClose: () => void;
+}) {
+  const create = useLLMConfigsStore((s) => s.create);
+  const update = useLLMConfigsStore((s) => s.update);
+
+  const [payload, setPayload] = useState<LLMConfigPayload>(initial);
+  const [showKey, setShowKey] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    setErr(null);
+    if (!payload.name.trim()) {
+      setErr('请填写名称');
+      return;
+    }
+    if (!payload.apiKey) {
+      setErr('请填写 API Key');
+      return;
+    }
+    setSaving(true);
+    try {
+      if (mode === 'create') {
+        await create(payload);
+      } else if (entryId) {
+        await update(entryId, payload);
+      }
+      onClose();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-lg bg-zinc-900 border border-zinc-700 rounded-lg p-5 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-zinc-100">
+            {mode === 'create' ? '新建 LLM 配置' : '编辑 LLM 配置'}
+          </h3>
+          <button
+            onClick={onClose}
+            className="text-zinc-500 hover:text-zinc-200 text-lg leading-none"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <Field label="名称">
+            <input
+              type="text"
+              value={payload.name}
+              onChange={(e) => setPayload({ ...payload, name: e.target.value })}
+              placeholder="DeepSeek Chat / Claude Sonnet 4.5"
+              className={fieldClass}
+            />
+          </Field>
+
+          <Field label="Provider">
+            <select
+              value={payload.provider}
+              onChange={(e) => setPayload({ ...payload, provider: e.target.value })}
+              className={fieldClass}
+            >
+              {PROVIDER_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="Base URL">
+            <input
+              type="text"
+              value={payload.baseUrl}
+              onChange={(e) => setPayload({ ...payload, baseUrl: e.target.value })}
+              placeholder="https://api.example.com/v1"
+              className={fieldClass}
+            />
+          </Field>
+
+          <Field label="API Key">
+            <div className="flex gap-1.5">
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={payload.apiKey}
+                onChange={(e) => setPayload({ ...payload, apiKey: e.target.value })}
+                placeholder="sk-..."
+                className={cn(fieldClass, 'flex-1')}
+              />
+              <button
+                onClick={() => setShowKey(!showKey)}
+                className="flex-none text-[10px] px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+              >
+                {showKey ? '隐藏' : '显示'}
+              </button>
+            </div>
+          </Field>
+
+          <Field label="Model">
+            <input
+              type="text"
+              value={payload.model}
+              onChange={(e) => setPayload({ ...payload, model: e.target.value })}
+              placeholder="deepseek-chat / claude-sonnet-4-5-20250929"
+              className={fieldClass}
+            />
+          </Field>
+
+          <Field label="Max tokens">
+            <input
+              type="number"
+              min={1}
+              max={32768}
+              value={payload.maxOutputTokens}
+              onChange={(e) =>
+                setPayload({ ...payload, maxOutputTokens: Number(e.target.value) || 8192 })
+              }
+              className={fieldClass}
+            />
+          </Field>
+
+          <label className="flex items-center gap-2 text-xs text-zinc-400">
+            <input
+              type="checkbox"
+              checked={payload.thinkingEnabled}
+              onChange={(e) => setPayload({ ...payload, thinkingEnabled: e.target.checked })}
+              className="rounded border-zinc-600 bg-zinc-900"
+            />
+            启用思考模式（DeepSeek enable_thinking）
+          </label>
+
+          <div className="space-y-1">
+            <label
+              className={cn(
+                'flex items-center gap-2 text-xs',
+                payload.thinkingEnabled ? 'text-zinc-600' : 'text-zinc-400',
+              )}
+            >
+              <input
+                type="checkbox"
+                checked={payload.reasoningFilterEnabled}
+                onChange={(e) =>
+                  setPayload({ ...payload, reasoningFilterEnabled: e.target.checked })
+                }
+                disabled={payload.thinkingEnabled}
+                className="rounded border-zinc-600 bg-zinc-900 disabled:opacity-40"
+              />
+              启发式推理过滤器
+            </label>
+            <p className="text-[10px] text-zinc-600 ml-5 leading-snug">
+              {payload.thinkingEnabled
+                ? '思考模式已启用，推理由 API 原生分离，过滤器自动跳过'
+                : '从 text 流中启发式分离推理文本（检测 --- / ## / ** 标记）'}
+            </p>
+          </div>
+        </div>
+
+        {err && <p className="text-[11px] text-red-400">{err}</p>}
+
+        <div className="flex gap-2 justify-end pt-2 border-t border-zinc-800">
+          <button
+            onClick={onClose}
+            className="text-xs px-3 py-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors"
+          >
+            取消
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="text-xs px-3 py-1.5 rounded bg-emerald-700 text-white hover:bg-emerald-600 transition-colors disabled:opacity-50"
+          >
+            {saving ? '保存中...' : '保存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// TypewriterSpeedSection
 // ============================================================================
 
 function TypewriterSpeedSection() {
@@ -173,180 +463,6 @@ function TypewriterSpeedSection() {
         <br />
         修改后在下一段生成时生效。
       </p>
-    </fieldset>
-  );
-}
-
-function ServerSyncSection() {
-  const [syncing, setSyncing] = useState(false);
-  const [message, setMessage] = useState<{ text: string; type: 'ok' | 'error' } | null>(null);
-
-  const backendUrl = getBackendUrl();
-
-  const handlePull = async () => {
-    setSyncing(true);
-    setMessage(null);
-    try {
-      const authHeader = useAuthStore.getState().getAuthHeader();
-      const res = await fetch(`${backendUrl}/api/config/llm`, {
-        headers: authHeader,
-      });
-      if (!res.ok) throw new Error(res.status === 403 ? '需要管理员权限' : `HTTP ${res.status}`);
-      const cfg = await res.json();
-
-      // 管理员返回完整 API key，直接覆盖本地
-      const patch: Record<string, string> = {};
-      if (cfg.provider) patch.provider = cfg.provider;
-      if (cfg.baseUrl) patch.baseUrl = cfg.baseUrl;
-      if (cfg.model) patch.model = cfg.model;
-      if (cfg.name) patch.name = cfg.name;
-      if (cfg.apiKey) patch.apiKey = cfg.apiKey;
-
-      useLLMSettingsStore.getState().updateText(patch);
-      setMessage({ text: '已从服务器拉取配置（含 API Key）', type: 'ok' });
-    } catch (err) {
-      setMessage({ text: `拉取失败: ${err}`, type: 'error' });
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const handlePush = async () => {
-    setSyncing(true);
-    setMessage(null);
-    try {
-      const authHeader = useAuthStore.getState().getAuthHeader();
-      const { text } = useLLMSettingsStore.getState();
-      const res = await fetch(`${backendUrl}/api/config/llm`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...authHeader },
-        body: JSON.stringify({
-          provider: text.provider,
-          baseUrl: text.baseUrl,
-          apiKey: text.apiKey,
-          model: text.model,
-          name: text.name,
-        }),
-      });
-      if (!res.ok) throw new Error(res.status === 403 ? '需要管理员权限' : `HTTP ${res.status}`);
-      setMessage({ text: '已同步到服务器，新会话将使用此配置', type: 'ok' });
-    } catch (err) {
-      setMessage({ text: `同步失败: ${err}`, type: 'error' });
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  return (
-    <div className="rounded border border-zinc-700 bg-zinc-900/50 p-3 space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-zinc-300">服务器配置同步</span>
-        <span className="text-[10px] text-zinc-600">{backendUrl}</span>
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={handlePull}
-          disabled={syncing}
-          className="flex-1 text-[11px] px-2 py-1.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 transition-colors disabled:opacity-50"
-        >
-          {syncing ? '...' : '从服务器拉取'}
-        </button>
-        <button
-          onClick={handlePush}
-          disabled={syncing}
-          className="flex-1 text-[11px] px-2 py-1.5 rounded bg-blue-900/50 border border-blue-800/50 text-blue-300 hover:border-blue-600 hover:text-blue-100 transition-colors disabled:opacity-50"
-        >
-          {syncing ? '...' : '同步到服务器'}
-        </button>
-      </div>
-      {message && (
-        <p className={cn(
-          'text-[10px]',
-          message.type === 'ok' ? 'text-emerald-400' : 'text-red-400',
-        )}>
-          {message.text}
-        </p>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
-// EndpointSection — 单个模型端点配置区
-// ============================================================================
-
-function EndpointSection({
-  title,
-  endpoint,
-  onChange,
-  showKey,
-  onToggleKey,
-}: {
-  title: string;
-  endpoint: { provider: LLMProviderType; baseUrl: string; apiKey: string; model: string };
-  onChange: (patch: Partial<typeof endpoint>) => void;
-  showKey: boolean;
-  onToggleKey: () => void;
-}) {
-  return (
-    <fieldset className="space-y-2.5">
-      <legend className="text-xs font-medium text-zinc-300">{title}</legend>
-
-      {/* Provider */}
-      <Field label="Provider">
-        <select
-          value={endpoint.provider}
-          onChange={(e) => onChange({ provider: e.target.value as LLMProviderType })}
-          className={fieldClass}
-        >
-          {PROVIDER_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-      </Field>
-
-      {/* Base URL */}
-      <Field label="Base URL">
-        <input
-          type="text"
-          value={endpoint.baseUrl}
-          onChange={(e) => onChange({ baseUrl: e.target.value })}
-          placeholder="https://api.example.com/v1"
-          className={fieldClass}
-        />
-      </Field>
-
-      {/* API Key */}
-      <Field label="API Key">
-        <div className="flex gap-1.5">
-          <input
-            type={showKey ? 'text' : 'password'}
-            value={endpoint.apiKey}
-            onChange={(e) => onChange({ apiKey: e.target.value })}
-            placeholder="sk-..."
-            className={cn(fieldClass, 'flex-1')}
-          />
-          <button
-            onClick={onToggleKey}
-            className="flex-none text-[10px] px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
-          >
-            {showKey ? '隐藏' : '显示'}
-          </button>
-        </div>
-      </Field>
-
-      {/* Model */}
-      <Field label="Model">
-        <input
-          type="text"
-          value={endpoint.model}
-          onChange={(e) => onChange({ model: e.target.value })}
-          placeholder="gpt-4o / deepseek-chat / ..."
-          className={fieldClass}
-        />
-      </Field>
     </fieldset>
   );
 }
