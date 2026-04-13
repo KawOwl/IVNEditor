@@ -162,27 +162,20 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
     model?: string;
     partKinds: string[];
     responseTimestamp?: Date;
+    stepInputMessages?: Array<{ role: string; content: string }>;
   }): void {
     try {
       // 创建一个已完成的 generation span（创建时即 end）
       // 每个 step 一条独立 span，Langfuse UI 里可以看到完整的 agentic loop 时间线
       //
-      // 时间戳策略：优先用 AI SDK 汇报的 step.response.timestamp（LLM 响应
-      // 开始的时间点），这个时间在 tool 执行前就被赋值，不会被 signal_input_needed
-      // 之类的长尾 tool 挂起污染。fallback 到 new Date()（当前时间，可能偏晚）。
-      //
-      // 过去的实现用 new Date() 作为 start 和 end，导致包含 signal_input_needed
-      // 的 step 会被记录成"玩家回复之后 1ms"发生——实际上那段叙事是玩家 *看到*
-      // 之前就生成完的。详见 trace 2f291086 的调查。
+      // 时间戳策略：优先用 AI SDK 汇报的 step.response.timestamp
       const stepTime = step.responseTimestamp ?? new Date();
       const startTime = stepTime;
       const endTime = stepTime;
 
       // 确定性地判断该 step 是否包含叙事文本：
-      // 看 AI SDK content parts 里是否存在 'text' 类型的 part，而不是看 text.length
       const hasNarrative = step.partKinds.includes('text');
       const hasToolCall = step.partKinds.includes('tool-call');
-      // span name 后缀：一眼看出是纯工具步还是含叙事
       const kindSuffix = hasNarrative
         ? hasToolCall
           ? 'narrative+tool'
@@ -191,14 +184,26 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
           ? 'tool'
           : 'empty';
 
+      // --- Input 策略 ---
+      // 优先用 stepInputMessages（来自 experimental_onStepStart，是该 step
+      // 发给 LLM 的完整 messages，包含前序 steps 的 tool call + result）。
+      // 这样 Langfuse UI 里每个 step 都能看到 LLM **实际看到的**完整上下文，
+      // 而不只是初始的 "开始游戏" 一条。
+      // fallback 到 initialInput（只有初始 systemPrompt + messages）。
+      const stepInput = step.stepInputMessages
+        ? {
+            system: this.initialInput?.systemPrompt ?? '(system prompt omitted)',
+            messages: step.stepInputMessages,
+            _messageCount: step.stepInputMessages.length,
+          }
+        : this.initialInput
+          ? { system: this.initialInput.systemPrompt, messages: this.initialInput.messages }
+          : undefined;
+
       const gen = this.trace.generation({
         name: `llm-step-${step.stepNumber}-${kindSuffix}`,
         model: step.model,
-        // 只在第一个 step 带完整上下文；后续 step 的 input 主要是上一轮工具结果
-        // 展示简洁起见，都挂初始 input 作为上下文参考
-        input: this.initialInput
-          ? { system: this.initialInput.systemPrompt, messages: this.initialInput.messages }
-          : undefined,
+        input: stepInput,
         startTime,
         metadata: {
           stepNumber: step.stepNumber,
@@ -206,6 +211,7 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
           partKinds: step.partKinds,
           hasNarrative,
           hasToolCall,
+          messageCount: step.stepInputMessages?.length ?? 0,
         },
       });
       gen.end({

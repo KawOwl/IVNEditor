@@ -62,6 +62,21 @@ export interface StepInfo {
    * 所以这个字段始终可用。
    */
   responseTimestamp?: Date;
+  /**
+   * 该 step 发给 LLM 的**完整 messages 数组**的简化版。
+   *
+   * 来源：`experimental_onStepStart` 回调里的 `event.messages`，
+   * 那是 AI SDK 为该 step 构造的完整对话历史（初始 messages +
+   * 所有前序 step 的 assistant output + tool results）。
+   *
+   * 用途：tracing 层写进 Langfuse 每个 step generation 的 `input`，
+   * 让你在 Langfuse UI 里点开每个 step 就能看到 LLM 实际看到的
+   * 完整上下文——不再只看到初始的 "开始游戏" 一条。
+   *
+   * 简化规则：每条 message 只保留 `role` + `content`（前 500 字）。
+   * 目的是降低传输和存储体积，同时保留足够的诊断信息。
+   */
+  stepInputMessages?: Array<{ role: string; content: string }>;
 }
 
 export interface GenerateOptions {
@@ -169,6 +184,11 @@ export class LLMClient {
     const aiTools = buildAISDKTools(toolHandlers);
     const toolCallLog: Array<{ name: string; args: unknown; result: unknown }> = [];
 
+    // Per-step input messages 捕获器。experimental_onStepStart 在每个 step
+    // 发给 provider 之前触发，提供该 step 实际看到的完整 messages 数组。
+    // 存进 Map，在 onStepFinish 时读出来传给 tracing。
+    const stepInputsMap = new Map<number, Array<{ role: string; content: string }>>();
+
     // Build AI SDK messages
     const aiMessages: Array<{ role: 'user' | 'assistant'; content: string }> = messages.map((m) => ({
       role: m.role === 'system' ? 'user' as const : m.role as 'user' | 'assistant',
@@ -183,6 +203,36 @@ export class LLMClient {
       stopWhen: [stepCountIs(maxSteps)],
       maxOutputTokens,
       abortSignal,
+      // 捕获每个 step 的完整 input messages（含前序 step 的 tool results）
+      experimental_onStepStart: (event) => {
+        try {
+          const simplified = (event.messages ?? []).map((m) => {
+            const role = String(m.role);
+            let content: string;
+            if (typeof m.content === 'string') {
+              content = m.content;
+            } else if (Array.isArray(m.content)) {
+              // 复合 content（tool calls、tool results、text parts 等）→ 简化
+              content = (m.content as Array<{ type: string; text?: string; toolName?: string; result?: unknown }>)
+                .map((part) => {
+                  if (part.type === 'text') return String(part.text ?? '');
+                  if (part.type === 'tool-call') return `[tool_call: ${part.toolName}]`;
+                  if (part.type === 'tool-result') return `[tool_result: ${part.toolName} → ${String(part.result ?? '').slice(0, 200)}]`;
+                  return `[${part.type}]`;
+                })
+                .join(' ');
+            } else {
+              content = JSON.stringify(m.content).slice(0, 300);
+            }
+            // 截断过长的 content，保持 trace 体积可控
+            if (content.length > 500) content = content.slice(0, 500) + '…';
+            return { role, content };
+          });
+          stepInputsMap.set(event.stepNumber, simplified);
+        } catch {
+          // 不影响主流程
+        }
+      },
       experimental_onToolCallStart: (event) => {
         const { toolName, input } = event.toolCall;
         onToolCallCb?.(toolName, input);
@@ -221,6 +271,8 @@ export class LLMClient {
             // AI SDK 把 LLM response 开始的时间记在 step.response.timestamp，
             // 不受 tool 挂起污染。传给 tracing 层作为时间戳正源。
             responseTimestamp: step.response?.timestamp,
+            // 该 step 实际看到的完整 messages（从 onStepStart 捕获）
+            stepInputMessages: stepInputsMap.get(step.stepNumber),
           });
         } catch (err) {
           console.error('[llm-client] onStep handler threw:', err);

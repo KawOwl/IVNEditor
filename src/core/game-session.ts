@@ -212,6 +212,11 @@ export interface GenerateTraceHandle {
      * signal_input_needed 挂起污染（见 StepInfo 字段注释）。
      */
     responseTimestamp?: Date;
+    /**
+     * 该 step 发给 LLM 的完整 messages 简化版。
+     * tracing 层写进 generation span 的 input，替代初始的 this.initialInput。
+     */
+    stepInputMessages?: Array<{ role: string; content: string }>;
   }): void;
 
   /** 开始一次工具调用，返回 handle 用于结束 */
@@ -724,6 +729,7 @@ export class GameSession {
               model: step.model,
               partKinds: step.partKinds,
               responseTimestamp: step.responseTimestamp,
+              stepInputMessages: step.stepInputMessages,
             });
           },
         });
