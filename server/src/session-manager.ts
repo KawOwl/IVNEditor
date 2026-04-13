@@ -59,7 +59,10 @@ export class GameSessionWrapper {
   attachWebSocket(ws: WS): void {
     this.clearTTL();
     this.ws = ws;
-    const emitter = createWebSocketEmitter(ws);
+    // 编剧试玩（playtest）启用 debug 数据推送，玩家正式游玩不推
+    const emitter = createWebSocketEmitter(ws, {
+      enableDebug: this.kind === 'playtest',
+    });
     this.gameSession = new GameSession(emitter);
   }
 

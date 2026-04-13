@@ -292,5 +292,17 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
         msg.choices as string[] | null,
       );
       break;
+
+    // --- Debug messages (only sent in playtest mode) ---
+    case 'stage-pending-debug':
+      store().stagePendingDebug({
+        promptSnapshot: msg.promptSnapshot as any,
+        finishReason: msg.finishReason as string | undefined,
+      });
+      break;
+
+    case 'update-debug':
+      store().updateDebug(msg as any);
+      break;
   }
 }
