@@ -112,6 +112,9 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
   })
 
   // POST / — 为当前用户创建新游玩
+  //
+  // 身份策略：admin 只能创建 playtest（编辑器试玩），不能创建 production
+  // （避免 admin userId 污染玩家游玩记录）。普通玩家都可以。
   .post('/', async ({ body, request }) => {
     const id = await requireAnyIdentity(request);
     if (isResponse(id)) return id;
@@ -124,6 +127,15 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
       /** v2.7：显式指定 LLM config id（编辑器试玩 override）。缺省走 fallback 链 */
       llmConfigId?: string;
     };
+
+    // admin 不能创建 production playthrough（P2b 修复）
+    const kind = input.kind ?? 'production';
+    if (id.kind === 'admin' && kind === 'production') {
+      return new Response(
+        JSON.stringify({ error: 'Admin cannot create production playthroughs. Use a player account.' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
 
     // 解析出实际要用的 script_version_id
     let versionId: string | undefined;

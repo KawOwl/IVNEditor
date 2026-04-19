@@ -24,8 +24,7 @@ export interface LLMConfig {
   apiKey: string;
   model: string;          // e.g. "gpt-4o", "claude-sonnet-4-20250514"
   name?: string;          // provider display name
-  thinkingEnabled?: boolean;  // 启用模型内置思考模式
-  reasoningFilterEnabled?: boolean;  // 启用启发式推理过滤器（无原生思考时）
+  maxOutputTokens?: number;  // 默认 max output tokens（DB llm_configs 表配置）
 }
 
 /**
@@ -152,16 +151,15 @@ export class LLMClient {
       return provider(this.config.model);
     }
 
-    // OpenAI compatible（DeepSeek 等）
+    // OpenAI compatible（DeepSeek / GPT 等）
+    // 注：模型是否产生原生 reasoning 由模型本身决定（如 deepseek-reasoner 走
+    // AI SDK reasoning-delta 流事件；deepseek-chat 不产生 reasoning）。引擎
+    // 统一通过 onReasoningChunk 回调处理，不再做 enable_thinking 之类的
+    // 请求参数注入。
     const provider = createOpenAICompatible({
       name: this.config.name ?? 'provider',
       baseURL: this.config.baseURL,
       apiKey: this.config.apiKey,
-      // 控制 DeepSeek 等模型的内置思考模式
-      transformRequestBody: (body) => ({
-        ...body,
-        enable_thinking: this.config.thinkingEnabled ?? false,
-      }),
     });
     return provider.chatModel(this.config.model);
   }
@@ -172,7 +170,7 @@ export class LLMClient {
       messages,
       tools: toolHandlers,
       maxSteps = 30,
-      maxOutputTokens,
+      maxOutputTokens = this.config.maxOutputTokens,
       abortSignal,
       onTextChunk,
       onReasoningChunk,
@@ -324,16 +322,6 @@ export class LLMClient {
   /** 当前模型名（用于 tracing/debug） */
   getModelName(): string {
     return this.config.model;
-  }
-
-  /** 当前配置是否启用了原生思考模式 */
-  isThinkingEnabled(): boolean {
-    return this.config.thinkingEnabled ?? false;
-  }
-
-  /** 当前配置是否启用了启发式推理过滤器 */
-  isReasoningFilterEnabled(): boolean {
-    return this.config.reasoningFilterEnabled ?? true;
   }
 
   updateConfig(config: Partial<LLMConfig>): void {

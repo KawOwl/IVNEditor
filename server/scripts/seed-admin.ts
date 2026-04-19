@@ -6,7 +6,7 @@
  * 哈希。
  *
  * 格式：分号分隔多个管理员，冒号分隔 username 和 password
- *   ADMIN_USERS="admin:ivn@2024;kawowl:kawowl@ivn;editor:editor@ivn"
+ *   ADMIN_USERS="admin:<your-password>;editor:<your-password>"
  *
  * 行为：
  *   - username 已存在 → 更新 password_hash + 保证 role_id='admin'
@@ -102,7 +102,7 @@ async function main() {
 
   if (admins.length === 0) {
     console.log('[seed-admin] ADMIN_USERS env 为空，跳过');
-    console.log('  示例: ADMIN_USERS="admin:ivn@2024;kawowl:kawowl@ivn"');
+    console.log('  示例: ADMIN_USERS="admin:<your-password>;editor:<your-password>"');
     process.exit(0);
   }
 

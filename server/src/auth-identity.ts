@@ -81,9 +81,11 @@ export async function resolvePlayerSession(token: string): Promise<Identity | nu
   if (rows.length === 0) return null;
   const row = rows[0]!;
 
-  // 滑动续期 last_used_at（fire-and-forget）
+  // 滑动续期：更新 last_used_at + 延长 expires_at（fire-and-forget）
+  const SESSION_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+  const newExpiresAt = new Date(now.getTime() + SESSION_TTL_MS);
   db.update(schema.userSessions)
-    .set({ lastUsedAt: now })
+    .set({ lastUsedAt: now, expiresAt: newExpiresAt })
     .where(eq(schema.userSessions.id, token))
     .catch(() => {});
 

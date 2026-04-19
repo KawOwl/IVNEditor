@@ -28,8 +28,6 @@ export interface LLMConfigEntry {
   baseUrl: string;
   apiKey: string;
   model: string;
-  thinkingEnabled: boolean;
-  reasoningFilterEnabled: boolean;
   maxOutputTokens: number;
   createdAt: string;
   updatedAt: string;
@@ -155,7 +153,6 @@ export function entryToLLMConfig(entry: LLMConfigEntry): LLMConfig {
     apiKey: entry.apiKey,
     model: entry.model,
     name: entry.name,
-    thinkingEnabled: entry.thinkingEnabled,
-    reasoningFilterEnabled: entry.reasoningFilterEnabled,
+    maxOutputTokens: entry.maxOutputTokens,
   };
 }

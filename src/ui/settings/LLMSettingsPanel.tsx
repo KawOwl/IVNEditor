@@ -33,8 +33,6 @@ const DEFAULT_NEW_CONFIG: LLMConfigPayload = {
   baseUrl: 'https://api.deepseek.com/v1',
   apiKey: '',
   model: 'deepseek-chat',
-  thinkingEnabled: false,
-  reasoningFilterEnabled: true,
   maxOutputTokens: 8192,
 };
 
@@ -121,8 +119,6 @@ function entryToPayload(entry: LLMConfigEntry): LLMConfigPayload {
     baseUrl: entry.baseUrl,
     apiKey: entry.apiKey,
     model: entry.model,
-    thinkingEnabled: entry.thinkingEnabled,
-    reasoningFilterEnabled: entry.reasoningFilterEnabled,
     maxOutputTokens: entry.maxOutputTokens,
   };
 }
@@ -177,12 +173,6 @@ function ConfigListRow({
           <span>{entry.provider}</span>
           <span>·</span>
           <span className="truncate">{entry.model}</span>
-          {entry.thinkingEnabled && (
-            <>
-              <span>·</span>
-              <span className="text-amber-500">thinking</span>
-            </>
-          )}
         </div>
       </div>
       <button
@@ -345,41 +335,6 @@ function ConfigEditDialog({
               className={fieldClass}
             />
           </Field>
-
-          <label className="flex items-center gap-2 text-xs text-zinc-400">
-            <input
-              type="checkbox"
-              checked={payload.thinkingEnabled}
-              onChange={(e) => setPayload({ ...payload, thinkingEnabled: e.target.checked })}
-              className="rounded border-zinc-600 bg-zinc-900"
-            />
-            启用思考模式（DeepSeek enable_thinking）
-          </label>
-
-          <div className="space-y-1">
-            <label
-              className={cn(
-                'flex items-center gap-2 text-xs',
-                payload.thinkingEnabled ? 'text-zinc-600' : 'text-zinc-400',
-              )}
-            >
-              <input
-                type="checkbox"
-                checked={payload.reasoningFilterEnabled}
-                onChange={(e) =>
-                  setPayload({ ...payload, reasoningFilterEnabled: e.target.checked })
-                }
-                disabled={payload.thinkingEnabled}
-                className="rounded border-zinc-600 bg-zinc-900 disabled:opacity-40"
-              />
-              启发式推理过滤器
-            </label>
-            <p className="text-[10px] text-zinc-600 ml-5 leading-snug">
-              {payload.thinkingEnabled
-                ? '思考模式已启用，推理由 API 原生分离，过滤器自动跳过'
-                : '从 text 流中启发式分离推理文本（检测 --- / ## / ** 标记）'}
-            </p>
-          </div>
         </div>
 
         {err && <p className="text-[11px] text-red-400">{err}</p>}

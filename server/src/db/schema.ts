@@ -116,17 +116,13 @@ export const userSessions = pgTable('user_sessions', {
  */
 export const llmConfigs = pgTable('llm_configs', {
   id: text('id').primaryKey(),
-  /** 用户可见名字，例如 "DeepSeek Chat"、"Claude Sonnet 4.5 (thinking)" */
+  /** 用户可见名字，例如 "DeepSeek Chat"、"Claude Sonnet 4.5" */
   name: text('name').notNull(),
   /** 'openai-compatible' | 'anthropic' */
   provider: text('provider').notNull(),
   baseUrl: text('base_url').notNull(),
   apiKey: text('api_key').notNull(),
   model: text('model').notNull(),
-  /** 启用模型内置思考模式（DeepSeek enable_thinking 等） */
-  thinkingEnabled: boolean('thinking_enabled').notNull().default(false),
-  /** 启用启发式推理过滤器（无原生思考时分离推理/叙事） */
-  reasoningFilterEnabled: boolean('reasoning_filter_enabled').notNull().default(true),
   /** 本配置默认 max output tokens（AI 改写、generate 都用） */
   maxOutputTokens: integer('max_output_tokens').notNull().default(8192),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -277,4 +273,6 @@ export const narrativeEntries = pgTable('narrative_entries', {
 }, (table) => [
   index('idx_narrative_entries_playthrough_id').on(table.playthroughId),
   index('idx_narrative_entries_order_idx').on(table.playthroughId, table.orderIdx),
+  // 防止并发写入导致 orderIdx 重复（P1 修复）
+  unique('uniq_narrative_entry_order').on(table.playthroughId, table.orderIdx),
 ]);

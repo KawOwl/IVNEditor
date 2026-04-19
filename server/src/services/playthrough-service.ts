@@ -342,23 +342,27 @@ export class PlaythroughService {
     toolCalls?: unknown[] | null;
     finishReason?: string | null;
   }): Promise<string> {
-    // 获取当前最大 orderIdx
-    const maxResult = await db
-      .select({ max: sql<number>`coalesce(max(${schema.narrativeEntries.orderIdx}), -1)` })
-      .from(schema.narrativeEntries)
-      .where(eq(schema.narrativeEntries.playthroughId, entry.playthroughId));
-    const nextIdx = Number(maxResult[0]?.max ?? -1) + 1;
-
     const id = crypto.randomUUID();
-    await db.insert(schema.narrativeEntries).values({
-      id,
-      playthroughId: entry.playthroughId,
-      role: entry.role,
-      content: entry.content,
-      reasoning: entry.reasoning ?? null,
-      toolCalls: entry.toolCalls ?? null,
-      finishReason: entry.finishReason ?? null,
-      orderIdx: nextIdx,
+
+    // 用事务保证 max(orderIdx) 查询和 insert 的原子性，
+    // 防止并发 GameSession 写入导致 orderIdx 重复（P1 修复）。
+    await db.transaction(async (tx) => {
+      const maxResult = await tx
+        .select({ max: sql<number>`coalesce(max(${schema.narrativeEntries.orderIdx}), -1)` })
+        .from(schema.narrativeEntries)
+        .where(eq(schema.narrativeEntries.playthroughId, entry.playthroughId));
+      const nextIdx = Number(maxResult[0]?.max ?? -1) + 1;
+
+      await tx.insert(schema.narrativeEntries).values({
+        id,
+        playthroughId: entry.playthroughId,
+        role: entry.role,
+        content: entry.content,
+        reasoning: entry.reasoning ?? null,
+        toolCalls: entry.toolCalls ?? null,
+        finishReason: entry.finishReason ?? null,
+        orderIdx: nextIdx,
+      });
     });
 
     return id;

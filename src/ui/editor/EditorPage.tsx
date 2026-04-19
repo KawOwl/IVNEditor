@@ -973,7 +973,7 @@ ${doc.content}
             '你是 prompt 改写助手。只输出改写后的 prompt 全文，不要输出任何额外说明。',
           messages,
           tools: {},
-          maxOutputTokens: 8192,
+          maxOutputTokens: configEntry.maxOutputTokens ?? 8192,
         });
 
         if (!result.text) {

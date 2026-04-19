@@ -58,6 +58,15 @@ export class GameSessionWrapper {
 
   attachWebSocket(ws: WS): void {
     this.clearTTL();
+
+    // 停掉旧 GameSession，防止 "双活" 竞态：
+    // 旧 session 可能还在 generate 途中写 DB，新 session 恢复后并发写
+    // 会导致 narrative_entries 的 orderIdx 重复/乱序。
+    if (this.gameSession) {
+      this.gameSession.stop();
+      this.gameSession = null;
+    }
+
     this.ws = ws;
     // 编剧试玩（playtest）启用 debug 数据推送，玩家正式游玩不推
     const emitter = createWebSocketEmitter(ws, {

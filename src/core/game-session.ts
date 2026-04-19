@@ -35,75 +35,6 @@ import type { LLMConfig } from './llm-client';
 import type { SessionEmitter } from './session-emitter';
 
 // ============================================================================
-// ReasoningFilter — 启发式分离 LLM 推理文本与叙事正文
-// ============================================================================
-
-/**
- * 某些模型（如 deepseek-chat）将推理过程直接输出到 content 中，
- * 而非通过 reasoning_content 字段。此过滤器在流式输出中检测并分离推理文本。
- *
- * 策略：缓冲初始文本，检测到叙事起始标记后，将缓冲内容分类为 reasoning，
- * 后续内容直接作为叙事正文传递。
- */
-class ReasoningFilter {
-  private buffer = '';
-  private resolved = false; // true = 已确定推理/正文边界
-  private onReasoning: (text: string) => void;
-  private onText: (text: string) => void;
-
-  /** 叙事正文的起始标记（出现任一即认为正文开始） */
-  private static NARRATIVE_MARKERS = /\n---[\s\n]|\n#{1,3}\s|\n\*\*/;
-
-  constructor(
-    onReasoning: (text: string) => void,
-    onText: (text: string) => void,
-  ) {
-    this.onReasoning = onReasoning;
-    this.onText = onText;
-  }
-
-  push(chunk: string): void {
-    if (this.resolved) {
-      // 边界已确定，直接传递正文
-      this.onText(chunk);
-      return;
-    }
-
-    this.buffer += chunk;
-
-    // 检测叙事标记
-    const match = ReasoningFilter.NARRATIVE_MARKERS.exec(this.buffer);
-    if (match) {
-      // 标记前的内容是推理，标记及之后是正文
-      const reasoningPart = this.buffer.slice(0, match.index).trim();
-      const narrativePart = this.buffer.slice(match.index);
-
-      if (reasoningPart) {
-        this.onReasoning(reasoningPart);
-      }
-      this.onText(narrativePart);
-      this.resolved = true;
-      return;
-    }
-
-    // 缓冲超过 500 字符仍无标记 → 认为全是正文（无推理前缀）
-    if (this.buffer.length > 500) {
-      this.onText(this.buffer);
-      this.resolved = true;
-    }
-  }
-
-  /** 流结束时 flush 剩余缓冲 */
-  flush(): void {
-    if (!this.resolved && this.buffer) {
-      // 从未检测到标记，全部视为正文
-      this.onText(this.buffer);
-      this.resolved = true;
-    }
-  }
-}
-
-// ============================================================================
 // Types
 // ============================================================================
 
@@ -341,9 +272,6 @@ export class GameSession {
 
   // 用于中断进行中的 generate()（停止/重置时防挂死）
   private abortController: AbortController | null = null;
-
-  // ReasoningFilter flush 回调：signal_input_needed 触发时需要先 flush 缓冲区
-  private flushTextFilter: (() => void) | null = null;
 
   // Compress function for memory
   private compressFn = async (entries: import('./types').MemoryEntry[]): Promise<string> => {
@@ -662,36 +590,20 @@ export class GameSession {
 
         // Call LLM (agentic tool loop — signal_input_needed 会挂起等玩家)
         //
-        // 推理过滤策略：
-        // 1. 有原生思考（thinkingEnabled）→ 跳过，text-delta 是纯叙事
-        // 2. 无原生思考 + reasoningFilterEnabled → 启发式分离推理/叙事
-        // 3. 无原生思考 + !reasoningFilterEnabled → 跳过，全部当叙事
-        const hasNativeReasoning = this.llmClient.isThinkingEnabled();
-        const useFilter = !hasNativeReasoning && this.llmClient.isReasoningFilterEnabled();
-
-        const textFilter = useFilter ? new ReasoningFilter(
-          (reasoning) => this.emitter.appendReasoningToStreamingEntry(reasoning),
-          (text) => {
-            this.currentNarrativeBuffer += text;
-            this.emitter.appendToStreamingEntry(text);
-          },
-        ) : null;
-        // 存 flush 引用，供 createWaitForPlayerInput() 在挂起前刷出缓冲文本
-        this.flushTextFilter = textFilter ? () => textFilter.flush() : null;
+        // 推理/叙事分离由 AI SDK 原生通道处理：
+        //   - text-delta 事件 → onTextChunk → 叙事正文
+        //   - reasoning-delta 事件 → onReasoningChunk → 思考过程（仅 reasoner 类模型产生）
+        // 不再做启发式过滤（见 scripts/verify-deepseek-reasoning.ts 的验证结论）
         const result = await this.llmClient.generate({
           systemPrompt: context.systemPrompt,
           messages: context.messages,
           tools: enabledToolSet,
           maxSteps: 30,
+          // maxOutputTokens 默认从 LLMClient 的 config.maxOutputTokens 取（P2a 修复）
           abortSignal: this.abortController.signal,
           onTextChunk: (chunk) => {
-            if (textFilter) {
-              textFilter.push(chunk);
-            } else {
-              // 原生思考模式：text-delta 直接作为叙事正文
-              this.currentNarrativeBuffer += chunk;
-              this.emitter.appendToStreamingEntry(chunk);
-            }
+            this.currentNarrativeBuffer += chunk;
+            this.emitter.appendToStreamingEntry(chunk);
           },
           onReasoningChunk: (chunk) => {
             this.emitter.appendReasoningToStreamingEntry(chunk);
@@ -735,9 +647,6 @@ export class GameSession {
         });
 
         this.abortController = null;
-
-        // Flush any buffered text in the reasoning filter
-        textFilter?.flush();
 
         // Stage finish reason
         this.emitter.stagePendingDebug({ finishReason: result.finishReason });
@@ -879,9 +788,6 @@ export class GameSession {
   /** 创建 waitForPlayerInput 回调，供 signal_input_needed 的 execute 使用 */
   private createWaitForPlayerInput(): (options: SignalInputOptions) => Promise<string> {
     return async (options: SignalInputOptions) => {
-      // 先 flush ReasoningFilter 缓冲区，确保所有文本都写进 streaming entry
-      this.flushTextFilter?.();
-
       // ★ 挂起前把当前叙事段同时写入两个地方：
       //   1. narrative_entries 表（DB 叙事记录，供 UI 恢复显示）
       //   2. MemoryManager entries（供下一次 assembleContext 拿 recent history）

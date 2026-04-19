@@ -22,8 +22,6 @@ export interface LlmConfigRow {
   baseUrl: string;
   apiKey: string;
   model: string;
-  thinkingEnabled: boolean;
-  reasoningFilterEnabled: boolean;
   maxOutputTokens: number;
   createdAt: Date;
   updatedAt: Date;
@@ -35,8 +33,6 @@ export interface CreateLlmConfigInput {
   baseUrl: string;
   apiKey: string;
   model: string;
-  thinkingEnabled?: boolean;
-  reasoningFilterEnabled?: boolean;
   maxOutputTokens?: number;
 }
 
@@ -46,8 +42,6 @@ export interface UpdateLlmConfigInput {
   baseUrl?: string;
   apiKey?: string;
   model?: string;
-  thinkingEnabled?: boolean;
-  reasoningFilterEnabled?: boolean;
   maxOutputTokens?: number;
 }
 
@@ -98,8 +92,6 @@ export class LlmConfigService {
       baseUrl: input.baseUrl,
       apiKey: input.apiKey,
       model: input.model,
-      thinkingEnabled: input.thinkingEnabled ?? false,
-      reasoningFilterEnabled: input.reasoningFilterEnabled ?? true,
       maxOutputTokens: input.maxOutputTokens ?? 8192,
     });
     const row = await this.getById(id);
@@ -114,8 +106,6 @@ export class LlmConfigService {
     if (input.baseUrl !== undefined) patch.baseUrl = input.baseUrl;
     if (input.apiKey !== undefined) patch.apiKey = input.apiKey;
     if (input.model !== undefined) patch.model = input.model;
-    if (input.thinkingEnabled !== undefined) patch.thinkingEnabled = input.thinkingEnabled;
-    if (input.reasoningFilterEnabled !== undefined) patch.reasoningFilterEnabled = input.reasoningFilterEnabled;
     if (input.maxOutputTokens !== undefined) patch.maxOutputTokens = input.maxOutputTokens;
 
     const result = await db

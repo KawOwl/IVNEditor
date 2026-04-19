@@ -35,8 +35,6 @@ export const llmConfigRoutes = new Elysia({ prefix: '/api/llm-configs' })
       baseUrl?: string;
       apiKey?: string;
       model?: string;
-      thinkingEnabled?: boolean;
-      reasoningFilterEnabled?: boolean;
       maxOutputTokens?: number;
     };
 
@@ -53,8 +51,6 @@ export const llmConfigRoutes = new Elysia({ prefix: '/api/llm-configs' })
       baseUrl: input.baseUrl,
       apiKey: input.apiKey,
       model: input.model,
-      thinkingEnabled: input.thinkingEnabled,
-      reasoningFilterEnabled: input.reasoningFilterEnabled,
       maxOutputTokens: input.maxOutputTokens,
     });
     return { config: row };
@@ -74,8 +70,6 @@ export const llmConfigRoutes = new Elysia({ prefix: '/api/llm-configs' })
       baseUrl: input.baseUrl as string | undefined,
       apiKey: input.apiKey as string | undefined,
       model: input.model as string | undefined,
-      thinkingEnabled: input.thinkingEnabled as boolean | undefined,
-      reasoningFilterEnabled: input.reasoningFilterEnabled as boolean | undefined,
       maxOutputTokens: input.maxOutputTokens as number | undefined,
     };
 

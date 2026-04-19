@@ -11,3 +11,6 @@ scenario
 server/data/
 server/node_modules/
 trace-*.json
+
+# k3s 压测环境 env（含密码/AK）
+ops/k3s-pressuretest/env
