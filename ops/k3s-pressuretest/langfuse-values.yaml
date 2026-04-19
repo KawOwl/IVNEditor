@@ -1,0 +1,52 @@
+# Langfuse Helm values —— k3s 压测场景
+# 所有 backend 连接通过 secret "langfuse-backend" 注入（setup.sh 已创建）
+
+# 关闭所有内置组件，全部用外部托管
+postgresql:
+  deploy: false
+clickhouse:
+  deploy: false
+redis:
+  deploy: false
+s3:
+  deploy: false
+
+langfuse:
+  # 直接从 secret 拉所有环境变量
+  extraEnvFrom:
+    - secretRef:
+        name: langfuse-backend
+
+  web:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+
+  worker:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+
+# Ingress：压测期不用域名，走 NodePort 30080 + Host header 区分
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+  hosts:
+    - host: langfuse.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+# 压测不用 TLS，生产再加

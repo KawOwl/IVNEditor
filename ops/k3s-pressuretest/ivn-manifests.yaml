@@ -1,0 +1,158 @@
+# IVN 引擎部署 —— k3s 压测
+# 镜像 __IVN_IMAGE__ 由 setup.sh 替换
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ivn-engine
+  namespace: ivn
+  labels:
+    app: ivn-engine
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ivn-engine
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: ivn-engine
+    spec:
+      # ACR 私有仓库拉取凭证（setup.sh 之后手动创建此 secret）
+      imagePullSecrets:
+        - name: acr-credentials
+      # 同类 Pod 分散到不同节点（单机 k3s 时无效，集群扩多节点自动生效）
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: ivn-engine
+      containers:
+        - name: server
+          image: __IVN_IMAGE__
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+          envFrom:
+            - secretRef:
+                name: ivn-backend
+          env:
+            - name: PORT
+              value: "3000"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          # 如果引擎还没实现 /health，注释掉下面两段，用 tcpSocket 代替
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ivn-engine
+  namespace: ivn
+spec:
+  selector:
+    app: ivn-engine
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ivn-engine
+  namespace: ivn
+  annotations:
+    # WebSocket 需要更长 timeout
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ivn.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ivn-engine
+                port:
+                  number: 80
+    # 直接 IP 访问也转 ivn-engine（压测方便）
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ivn-engine
+                port:
+                  number: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ivn-engine
+  namespace: ivn
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ivn-engine
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60

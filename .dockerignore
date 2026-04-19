@@ -1,0 +1,59 @@
+# Docker build context 过滤 —— 关键优化
+# 没有这个文件，docker build 会把整个目录（含 node_modules、dist、.git）打包上传
+# 有这个文件后 build context 从 GB 级降到 几十 MB
+
+# 依赖和构建产物（镜像里会自己装）
+node_modules/
+server/node_modules/
+dist/
+server/dist/
+
+# 开发本地文件
+.git/
+.gitignore
+.DS_Store
+*.log
+*.tsbuildinfo
+.claude/
+.vscode/
+.idea/
+
+# 编辑器备份
+*.swp
+*~
+
+# 敏感配置
+.env
+.env.*
+!.env.example
+server/.env
+server/.env.*
+!server/.env.example
+ops/k3s-pressuretest/env
+ops/langfuse/.env
+
+# 运维脚本和本地文档（不进镜像）
+deploy.sh
+ops/
+scenario/
+
+# 项目文档（不进镜像）
+*.md
+!server/src/**/*.md
+MODULE7_*.md
+SOP*.md
+PROGRESS.md
+USAGE_GUIDE.md
+CLAUDE.md
+2.0*.md
+
+# Claude / AI 产物
+*.json.trace
+trace-*.json
+
+# 测试产物
+coverage/
+server/coverage/
+
+# PNPM 本地缓存（镜像里用 --mount=type=cache 处理）
+.pnpm-store/
