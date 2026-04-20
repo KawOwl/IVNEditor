@@ -1,37 +1,42 @@
 # 项目进度
 
 ## 当前状态
-M3（XML-lite 叙事协议 + 场景状态 + 视觉工具）Parts A–G 全部实现并在 preview 上端到端验证通过，M3 + P2b 回退两次 commit 已落地（1538fb5 / d9cfde1）。下一步做 **M1（玩家侧 VN 渲染层）**，plan 已存到 `.claude/plans/m1-vn-renderer.md`。M2（编辑器侧资产管理）排在 M1 之后。
+M1 + M2 全部完成：
+- M1（玩家侧 VN 渲染层）: 3 commits（feat(m1) + refactor(m1)）；三层组件 + click-to-advance + 打字机 + 场景过渡 + backlog + opening narration 前置 + 删老 NarrativeView/DebugPanel
+- M2（编辑器侧 VN 资产管理）: 1 commit（feat(m2)）；ScriptInfoPanel 加角色/背景/默认场景三个 section，round-trip 验证过
+
+下一步待定。候选方向：
+- **M4**: OSS 资产 pipeline（characters/backgrounds 真实图片上传 + CDN + assetUrl 回填）—— 把 M1/M2 占位层变成真立绘
+- **backlog 点击回跳** / **auto 播放** / **章节切换动画** 等 VN 纵深功能
+- **openingMessages UI**（当前只能手写 manifest；M2 没包含这一块）
 
 ## 当前任务
-**M1：玩家侧 VN 渲染层**
-- 类型：UI 重构（大）
-- 来源：M3 完成后的自然下一步——让 `parsedSentences` + `currentScene` 真正被消费
-- 目标：删老 NarrativeView 气泡视图，换成 VN 三层（背景 + 立绘 + 对话框）；推进模型 click-to-advance
-- 详细 plan：`.claude/plans/m1-vn-renderer.md`
-
-### 锁定决策
-- 推进：click-to-advance，只做 manual（不做 auto/skip）
-- narration 渲染：和 dialogue 共用对话框，speaker 区域可空（不做全屏黑幕）
-- openingMessages：前置合成为 synthetic narration Sentence，index 负数
-- 老 NarrativeView：**直接下线**；EditorDebugPanel 加 "raw streaming" dev tab 补偿
-- 顺序：M1 先 → M2 后
-- 明确不做：BGM / 音效 / 语音 / 存读档 / 章节过渡动画 / 立绘拖拽编辑
-
-### 推进顺序
-
-1. ⏳ **1.1 VN 三层组件骨架**（静态渲染）
-2. ⏳ **1.2 click-to-advance + visibleSentenceIndex**
-3. ⏳ **1.3 openingMessages 前置为 synthetic narration**
-4. ⏳ **1.4 Sentence 级打字机**
-5. ⏳ **1.5 scene-change 过渡动效（fade/cut/dissolve）**
-6. ⏳ **1.6 Backlog 侧拉面板（只读）**
-7. ⏳ **1.7 删老 NarrativeView + entries 字段 + dev raw streaming tab**
-8. ⏳ **1.8 InputPanel / choices 叠加**
-9. ⏳ **1.9 资产 URL 空值兜底（占位）**
-10. ⏳ **1.10 验证 + 3 个 commit 拆分**
+（M1 + M2 刚完成，等用户指定下一步）
 
 ## 已完成的里程碑
+
+### M1 + M2：VN 播放与资产编辑（2026-04-21）
+- **M1** 玩家侧 VN 渲染层（commits 00edf2c / ed9c41f）
+  - 三层组件（SceneBackground / SpriteLayer / DialogBox）+ VNStage / VNStageContainer
+  - click-to-advance 推进模型；scene_change 自动跳过（对话框不占用）
+  - openingMessages 前置合成为 synthetic narration Sentence（index 负数）
+  - Sentence 级打字机（RAF 驱动，cps 可调，click 跳到末尾）
+  - scene-change 过渡动效（fade / cut / dissolve；背景 crossfade + 立绘 fade-in）
+  - Backlog 右侧 drawer 只读回看
+  - PublicScriptInfo 透传 characters / backgrounds / defaultScene，speaker 正确显示"咲夜"而非 sakuya
+  - WS 'reset' 消息保留 VN 字段（防止 game-session.start 清掉 seedOpeningSentences 的产物）
+  - 删老 NarrativeView (558 行) + DebugPanel；entries 相关 store 字段全部移除
+  - EditorDebugPanel 加 "Raw" tab 看原始 XML-lite 流（老视图下线补偿）
+  - raw-streaming-store 独立小仓库承接 text-chunk（不再污染 game-store）
+- **M2** 编辑器侧 VN 资产管理（commit 978420d）
+  - ScriptInfoPanel 新增三个 section：角色 / 背景 / 默认场景
+  - CharactersSection：行展开编辑 displayName + SpritesEditor（id + 可选 label）
+  - BackgroundsSection：id + label 行 + 新建 + 删除
+  - DefaultSceneSection：背景下拉 + 可选开场立绘（角色 / 表情 / 位置）
+  - snake_case id 校验（`^[a-z][a-z0-9_]*$`）+ 不重复 + inline error
+  - EditorPage manifest state 扩展 + load/save 链路接入
+  - 明确不做文件上传（等 M4 OSS pipeline）
+- Preview 端到端验证过，tsc clean，server tests 95/95
 
 ### M3：视觉层铺底 XML-lite 协议 + 场景状态（2026-04-20）
 - 新增 SceneState / ParticipationFrame / Sentence 类型
@@ -95,6 +100,11 @@ M3（XML-lite 叙事协议 + 场景状态 + 视觉工具）Parts A–G 全部实
 | 2026-04-12 | AI 改写遇 length 截断自动续写，最多 8 段 | 长剧本 prompt 超 8192 tokens 是常态，手动补齐低效 | 循环 generate() 带 assistant history；UI 显示 "续写 N/8" 进度；derivedContent 每段 append |
 | 2026-04-19 | M3 引入 XML-lite 叙事协议 + 场景状态持久化 | 原"整段文本"输出无法驱动立绘/背景/PF 分析；需要流式解析 + 细粒度事件 | 新增 NarrativeParser（27 单测）；game-session/emitter/store/DebugPanel 全链路适配；迁移 0007 加 current_scene/sentence_index；工具集替换 show_image → change_scene/change_sprite/clear_stage |
 | 2026-04-19 | 撤销 admin 不能创 production playthrough 的限制 | kind + role_id 两维已够分析时过滤；硬门挡住 admin 自己走玩家流测试 | `server/src/routes/playthroughs.ts` POST 删掉 403 分支，注释明确记录"曾短暂限制过，已撤销" |
+| 2026-04-21 | M1 推进模型 click-to-advance + 只做 manual | VN 体感；auto/skip 配合 save/load 才有意义，当前没有 | 暂不做 auto/skip，未来需要时再加 playMode state |
+| 2026-04-21 | M1 advance 自动跳 scene_change Sentence | scene_change 只驱动视觉切换，占 click 会让玩家看空白对话框 | `advanceSentence` / `appendSentence` 初始化都跳过 scene_change kind |
+| 2026-04-21 | WS 'reset' 消息不全量 reset 客户端 store | game-session.start() 会发 'reset'，但客户端 seedOpeningSentences 已经在 mount 时填了 parsedSentences，全量 reset 会清掉 | `'reset'` handler 改为只清 status / error / inputHint / inputType；VN 字段（parsedSentences / currentScene / visibleSentenceIndex）保留 |
+| 2026-04-21 | M1 choices 与对话并存时允许 advance | 玩家可能还没读完就触发了 signal_input_needed，应该能继续点看完再选 | click-to-advance 不因 isWaitingChoice 阻塞；advance 到末尾自然 no-op |
+| 2026-04-21 | M2 不处理文件上传 | M4 专门做 OSS pipeline；M2 只存 id + label，assetUrl 留空 | SceneBackground / SpriteLayer 对空 URL 已有占位渲染，M4 填 URL 后无需改 UI |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |

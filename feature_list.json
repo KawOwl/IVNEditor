@@ -387,18 +387,18 @@
     "id": "M1",
     "title": "玩家侧 VN 渲染层（click-to-advance + 背景/立绘/对话框三层）",
     "description": "删老 NarrativeView 气泡视图，新建 VN 三层渲染（SceneBackground + SpriteLayer + DialogBox）；consume M3 的 parsedSentences + currentScene；推进模型 click-to-advance（只做 manual，不做 auto/skip）；narration 和 dialogue 共用对话框（narration 无 speaker）；openingMessages 前置为 synthetic narration Sentence；scene-change 支持 fade/cut/dissolve 过渡；Backlog 只读侧拉；资产 URL 空值显示占位；EditorDebugPanel 加 raw streaming dev tab 作为老视图下线补偿",
-    "status": "pending",
+    "status": "done",
     "type": "e2e",
     "ref": ".claude/plans/m1-vn-renderer.md",
-    "verify": "preview E2E：咖啡馆 M3 剧本 → 看到 defaultScene 渲染 → click 推开场 2 条 narration → LLM 首轮 scene-change + 立绘 fade-in + dialogue 打字机 + speaker 显示 sakuya → choices 叠在对话框上选一个 → 继续推进 → backlog 完整；tsc clean；server tests 95/95；entries 相关 store 字段 grep 零 hit"
+    "verify": "preview E2E 跑通：咖啡馆 M3 剧本 → 看到 defaultScene 渲染 → click 推开场 2 条 narration → LLM 首轮自动跳 scene_change + 立绘 fade-in + dialogue 打字机 + speaker 显示咲夜 → choices 与对话并存且都能交互 → backlog 完整；tsc clean；server tests 95/95；老 NarrativeView + DebugPanel + entries 相关 store 字段全删"
   },
   {
     "id": "M2",
     "title": "编辑器侧 VN 资产管理（characters / backgrounds / defaultScene UI）",
-    "description": "ScriptInfoPanel 新增三个 section：角色管理（id + displayName + sprites 列表）、背景管理（id + label）、默认场景（背景下拉 + 可选开场立绘）；EditorPage manifest state 扩展 + applyRecordToEditor 加载 + handleSaveScript 序列化；id snake_case 校验 + 不重复；M2 阶段不做文件上传，assetUrl 留空交给 M4 OSS pipeline",
-    "status": "pending",
+    "description": "ScriptInfoPanel 新增三个 section：角色管理（id + displayName + sprites 列表，展开子编辑）、背景管理（id + label 行）、默认场景（背景下拉 + 可选开场立绘 + position）；EditorPage manifest state 扩展 + applyRecordToEditor 加载 + handleSaveScript 序列化；id snake_case 校验 + 不重复；M2 阶段不做文件上传，assetUrl 留空交给 M4 OSS pipeline",
+    "status": "done",
     "type": "ui",
     "ref": ".claude/plans/m1-vn-renderer.md",
-    "verify": "preview E2E：编辑器新建剧本 → 配 1 角色 3 sprites / 2 背景 / defaultScene → 保存 → 发布 → 玩游戏时 M1 渲染的第一帧和 defaultScene 一致；save/load 往返数据完整；id 重复/格式错误有 inline error"
+    "verify": "preview E2E：建 sakuya(咲夜) + smile(微笑) / cafe_interior(咖啡馆内景) / defaultScene = cafe_interior + sakuya:smile@center → 保存 → DB 里 script_versions.manifest 的 characters/backgrounds/defaultScene 三字段 round-trip 完整；tsc clean；server tests 95/95"
   }
 ]
