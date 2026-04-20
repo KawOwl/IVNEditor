@@ -1,29 +1,47 @@
 # 项目进度
 
 ## 当前状态
-M3（XML-lite 叙事协议 + 场景状态 + 视觉工具）Parts A–G 全部实现并在 preview 上端到端验证通过；migration 0007 已跑通，空 ivn_dev 库从零 bootstrap 成功。P2b 的 admin 创建限制已撤销——admin 可以自己走通完整玩家流了。整块 M3 + P2b 改动尚未提交，等用户决定是否拆分为一次/两次 commit。
+M3（XML-lite 叙事协议 + 场景状态 + 视觉工具）Parts A–G 全部实现并在 preview 上端到端验证通过，M3 + P2b 回退两次 commit 已落地（1538fb5 / d9cfde1）。下一步做 **M1（玩家侧 VN 渲染层）**，plan 已存到 `.claude/plans/m1-vn-renderer.md`。M2（编辑器侧资产管理）排在 M1 之后。
 
 ## 当前任务
-**M3 视觉层铺底（XML-lite 叙事协议 + 场景状态）已完成 + P2b 回退**
-- 类型：新功能 + 设计回退
-- 来源：m3 plan / preview 验证反馈
-- 目标：LLM 输出可结构化解析为 sentence 流，场景状态（背景+精灵）端到端持久化 + WS 推流；admin 能创建 production playthrough
+**M1：玩家侧 VN 渲染层**
+- 类型：UI 重构（大）
+- 来源：M3 完成后的自然下一步——让 `parsedSentences` + `currentScene` 真正被消费
+- 目标：删老 NarrativeView 气泡视图，换成 VN 三层（背景 + 立绘 + 对话框）；推进模型 click-to-advance
+- 详细 plan：`.claude/plans/m1-vn-renderer.md`
+
+### 锁定决策
+- 推进：click-to-advance，只做 manual（不做 auto/skip）
+- narration 渲染：和 dialogue 共用对话框，speaker 区域可空（不做全屏黑幕）
+- openingMessages：前置合成为 synthetic narration Sentence，index 负数
+- 老 NarrativeView：**直接下线**；EditorDebugPanel 加 "raw streaming" dev tab 补偿
+- 顺序：M1 先 → M2 后
+- 明确不做：BGM / 音效 / 语音 / 存读档 / 章节过渡动画 / 立绘拖拽编辑
 
 ### 推进顺序
 
-1. ✅ **A — types**：新增 SpriteState/SceneState/ParticipationFrame/Sentence 联合；ScriptManifest 扩 characters/backgrounds/defaultScene
-2. ✅ **B — tool-catalog/executor/engine-rules**：移除 show_image，加入 change_scene/change_sprite/clear_stage；engine-rules 追加 XML-lite 叙事格式说明 + few-shot
-3. ✅ **C — narrative-parser**：流式 XML-lite 状态机 + 27 单测（含末尾未闭合 `<d>` 自动 close 标 truncated）
-4. ✅ **D — game-session**：生成时挂 parser，onTextChunk → parser.push；currentScene 字段 + applyScenePatch；onGenerateComplete 持久化 currentScene
-5. ✅ **E — emitter + store + debug panel**：appendSentence / emitSceneChange；game-store 增 parsedSentences/currentScene；EditorDebugPanel 加 sentences tab
-6. ✅ **F — schema + migration 0007**：playthroughs 增 current_scene (jsonb) + sentence_index (integer)
-7. ✅ **G — preview 端到端验证**：空 ivn_dev 库 bootstrap → seed admin → 建测试剧本 → 试玩 → 观察 180 WS 消息中包含 2 scene-change + 5 sentence（narration + dialogue 含完整 PF）+ 2 tool-call，LLM 严格遵循 XML-lite 格式
+1. ⏳ **1.1 VN 三层组件骨架**（静态渲染）
+2. ⏳ **1.2 click-to-advance + visibleSentenceIndex**
+3. ⏳ **1.3 openingMessages 前置为 synthetic narration**
+4. ⏳ **1.4 Sentence 级打字机**
+5. ⏳ **1.5 scene-change 过渡动效（fade/cut/dissolve）**
+6. ⏳ **1.6 Backlog 侧拉面板（只读）**
+7. ⏳ **1.7 删老 NarrativeView + entries 字段 + dev raw streaming tab**
+8. ⏳ **1.8 InputPanel / choices 叠加**
+9. ⏳ **1.9 资产 URL 空值兜底（占位）**
+10. ⏳ **1.10 验证 + 3 个 commit 拆分**
 
-### P2b 回退（2026-04-19）
-- 之前短暂加过"admin 不能创建 production playthrough"的 403 限制，目的是防 admin userId 污染玩家游玩记录
-- 实测这让 admin 没法自己走完整玩家流（正当的编辑职责被拒）
-- 已撤销：`playthroughs.kind` + `users.role_id` 本身就是两维分类，分析时按需过滤即可；不在创建时加门
-- `server/src/routes/playthroughs.ts` POST 移除 kind/role 检查
+## 已完成的里程碑
+
+### M3：视觉层铺底 XML-lite 协议 + 场景状态（2026-04-20）
+- 新增 SceneState / ParticipationFrame / Sentence 类型
+- NarrativeParser 流式状态机 + 27 单测（含末尾未闭合 `<d>` 自动 close 标 truncated）
+- game-session 挂 parser，applyScenePatch 统一走 WS 推流
+- 工具集：移除 show_image，加入 change_scene / change_sprite / clear_stage
+- migration 0007：playthroughs.current_scene (jsonb) + sentence_index (integer)
+- 基础设施：DB SSL 弹性配置（PG_SSL env）、connectionTimeout 放宽到 15s、.claude/launch.json 加 server 配置
+- P2b 回退：撤销"admin 不能创 production playthrough"的 403 限制
+- 两次 commit：1538fb5 feat(m3) / d9cfde1 fix(playthroughs)
 
 ## 已完成的里程碑
 

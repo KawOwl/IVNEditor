@@ -9,6 +9,7 @@
  */
 
 import { useGameStore } from './game-store';
+import { useRawStreamingStore } from './raw-streaming-store';
 import { ensureSessionId, fetchWithAuth } from './player-session-store';
 
 // ============================================================================
@@ -184,7 +185,7 @@ async function connectWebSocket(
       clearTimeout(timeout);
       const { status } = store();
       if (status !== 'idle' && status !== 'error') {
-        store().finalizeStreamingEntry();
+        // M1 Step 1.7：finalizeStreamingEntry 已下线，这里只清输入和 status
         store().setInputHint(null);
         store().setInputType('freetext');
         store().setStatus('idle');
@@ -215,9 +216,23 @@ async function connectWebSocket(
 
 function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameStore.getState>) {
   switch (msg.type) {
-    case 'reset':
-      store().reset();
+    case 'reset': {
+      // M1 Step 1.3：不能做全量 reset——PlayPanel 在 WS 连接前已经
+      // seedOpeningSentences() 了，全量 reset 会把开场 narration 清掉。
+      //
+      // 全量 reset 的职责回到 PlayPage handleBack / handleSelect /
+      // PlayPanel handleReset，由"玩家主动切换上下文"触发。服务端启动时
+      // 发来的这条 'reset' 只清掉和服务端 narrative 流相关的 UI 态即可。
+      const s = store();
+      s.setStatus('idle');
+      s.setError(null);
+      s.setInputHint(null);
+      s.setInputType('freetext', null);
+      // 保留：parsedSentences / currentScene / visibleSentenceIndex
+      //      （客户端 seedOpeningSentences 的产物）
+      // 保留：entries / streamingEntryId（Step 1.7 会整批删）
       break;
+    }
 
     case 'status':
       store().setStatus(msg.status as any);
@@ -228,37 +243,31 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
       break;
 
     case 'begin-streaming':
-      store().beginStreamingEntry();
+      // M1 Step 1.7：不再写 game-store.entries；只给 raw-streaming tab 清场
+      useRawStreamingStore.getState().beginNew();
       break;
 
     case 'text-chunk':
-      store().appendToStreamingEntry(msg.text as string);
+      // 写到 raw-streaming 小仓库（给 EditorDebugPanel "Raw Streaming" tab 订阅）
+      useRawStreamingStore.getState().append(msg.text as string);
       break;
 
     case 'reasoning-chunk':
-      store().appendReasoningToStreamingEntry(msg.text as string);
+      useRawStreamingStore.getState().appendReasoning(msg.text as string);
       break;
 
     case 'finalize':
-      store().finalizeStreamingEntry();
+      // VN UI 下不需要任何动作；Sentence 流已经由 parser 在 server 端产出并通过 'sentence' 事件送来了
       break;
 
     case 'entry':
-      store().appendEntry(msg.entry as { role: 'generate' | 'receive' | 'system'; content: string });
+      // 老协议：服务端直接推"一整条"，VN UI 下无视
       break;
 
     case 'restored': {
-      // 恢复快照：清空当前 entries，加载 DB 中的历史
+      // 恢复快照：清空前端 VN 状态，由随后的 scene-change/sentence 事件重放
       store().reset();
-      const entries = msg.entries as Array<{ role: string; content: string }>;
-      if (entries) {
-        for (const entry of entries) {
-          store().appendEntry({
-            role: entry.role as 'generate' | 'receive' | 'system',
-            content: entry.content,
-          });
-        }
-      }
+      // M1 Step 1.7：不再重放老 entries（msg.entries 在 VN UI 下忽略）
       // 恢复输入状态
       if (msg.inputHint) store().setInputHint(msg.inputHint as string);
       if (msg.inputType === 'choice' && msg.choices) {
@@ -273,7 +282,8 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
       break;
 
     case 'pending-tool-call':
-      store().addPendingToolCall({ name: msg.name as string, args: msg.args as Record<string, unknown>, result: undefined });
+      // M1 Step 1.7：pending 机制是给老 entries 用的（附加在 finalize 的 entry 上），
+      // VN UI 不需要。服务端仍会发这个事件，只是这里不处理。
       break;
 
     case 'tool-result':
@@ -295,10 +305,7 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
 
     // --- Debug messages (only sent in playtest mode) ---
     case 'stage-pending-debug':
-      store().stagePendingDebug({
-        promptSnapshot: msg.promptSnapshot as any,
-        finishReason: msg.finishReason as string | undefined,
-      });
+      // M1 Step 1.7：stagePendingDebug 下线（也是挂在 entries finalize 上的）
       break;
 
     case 'update-debug':
@@ -311,7 +318,10 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
       break;
 
     case 'scene-change':
-      store().setCurrentScene(msg.scene as import('./game-store').SceneState);
+      store().setCurrentScene(
+        msg.scene as import('./game-store').SceneState,
+        msg.transition as 'fade' | 'cut' | 'dissolve' | undefined,
+      );
       break;
   }
 }

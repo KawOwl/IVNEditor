@@ -10,8 +10,8 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import { NarrativeView } from '../NarrativeView';
 import { InputPanel } from '../InputPanel';
+import { VNStageContainer } from './vn/VNStageContainer';
 import { useGameStore } from '../../stores/game-store';
 import {
   createRemoteSession,
@@ -82,31 +82,38 @@ export function PlayPanel({
   scriptId,
   playthroughId,
   compact = false,
-  showReasoning = false,
+  // showReasoning — 暂时保留 prop 接口避免调用方报错；M1 VN 视图下 reasoning
+  // 展示由 EditorDebugPanel 的 "raw streaming" tab（Step 1.7）承担
+  showReasoning: _showReasoning = false,
   editorMode = false,
   scriptVersionId,
   llmConfigId,
   autoStart = false,
 }: PlayPanelProps) {
+  void _showReasoning;
   const status = useGameStore((s) => s.status);
   const error = useGameStore((s) => s.error);
 
   const remoteRef = useRef<RemoteSession | null>(null);
 
-  // Show opening messages on mount (only for new games, not when restoring)
+  // Seed opening messages on mount (only for new games, not when restoring).
+  //
+  // M1 Step 1.3：老的 appendEntry(role:'system') → synthetic narration Sentence。
+  // 走和 LLM 产出一样的管线（parsedSentences），让 VN UI 从第一句开场就能
+  // click-to-advance。
   useEffect(() => {
-    // 恢复模式下跳过 opening messages —— 避免在 restored 到达前闪现
+    // 恢复模式下跳过 opening —— 服务端会重放真实 Sentences，不要盖一层假开场
     if (playthroughId && playthroughId !== 'new') return;
 
-    const { entries } = useGameStore.getState();
-    if (entries.length > 0) return; // already has content
+    const { parsedSentences } = useGameStore.getState();
+    if (parsedSentences.length > 0) return; // already has content
 
-    const { openingMessages } = manifest;
+    const { openingMessages, defaultScene } = manifest;
     if (openingMessages && openingMessages.length > 0) {
-      const appendEntry = useGameStore.getState().appendEntry;
-      for (const msg of openingMessages) {
-        appendEntry({ role: 'system', content: msg });
-      }
+      useGameStore.getState().seedOpeningSentences(
+        openingMessages,
+        defaultScene ?? { background: null, sprites: [] },
+      );
     }
   }, [manifest, playthroughId]);
 
@@ -236,13 +243,13 @@ export function PlayPanel({
   const handleReset = useCallback(async () => {
     handleStop();
     useGameStore.getState().reset();
-    // Re-show opening messages
-    const { openingMessages } = manifest;
+    // Re-seed opening as synthetic narration Sentences（与 mount 逻辑保持一致）
+    const { openingMessages, defaultScene } = manifest;
     if (openingMessages && openingMessages.length > 0) {
-      const appendEntry = useGameStore.getState().appendEntry;
-      for (const msg of openingMessages) {
-        appendEntry({ role: 'system', content: msg });
-      }
+      useGameStore.getState().seedOpeningSentences(
+        openingMessages,
+        defaultScene ?? { background: null, sprites: [] },
+      );
     }
 
     // 清 localStorage 的"上次游玩 id"
@@ -326,8 +333,13 @@ export function PlayPanel({
         </div>
       )}
 
-      {/* Narrative area */}
-      <NarrativeView showReasoning={showReasoning} />
+      {/* VN stage area — M1 Step 1.2：VN 渲染替代老 NarrativeView 气泡视图 */}
+      <div className="relative flex-1 min-h-0 bg-black">
+        <VNStageContainer
+          characters={manifest.characters ?? []}
+          backgrounds={manifest.backgrounds ?? []}
+        />
+      </div>
 
       {/* Input area */}
       <InputPanel onSubmit={handlePlayerInput} />

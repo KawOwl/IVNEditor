@@ -46,6 +46,13 @@ interface PublicScriptInfo {
   openingMessages?: string[];
   /** v2.7：剧本 production 用的 LLM config id（可能为 null，则走 fallback 链） */
   productionLlmConfigId?: string | null;
+  /**
+   * M3 起：VN 视觉资产（M1 前端 SpriteLayer / SceneBackground 需要查
+   * displayName 和 assetUrl）。不含 prompt segments，可以公开给玩家。
+   */
+  characters?: import('../../../src/core/types').CharacterAsset[];
+  backgrounds?: import('../../../src/core/types').BackgroundAsset[];
+  defaultScene?: import('../../../src/core/types').SceneState;
 }
 
 /** legacy ScriptRecord 形状（编辑器加载用，6.3 后废弃） */
@@ -76,6 +83,10 @@ function manifestToPublicInfo(
     firstChapterId: manifest.chapters[0]?.id ?? null,
     openingMessages: manifest.openingMessages,
     productionLlmConfigId,
+    // M3 起：带上 VN 资产（显示名 + assetUrl 查询用）
+    characters: manifest.characters,
+    backgrounds: manifest.backgrounds,
+    defaultScene: manifest.defaultScene,
   };
 }
 

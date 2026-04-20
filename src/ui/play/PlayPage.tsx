@@ -11,7 +11,7 @@ import { useAppStore } from '../../stores/app-store';
 import { useGameStore } from '../../stores/game-store';
 import { PlayPanel } from './PlayPanel';
 import { PlaythroughList } from './PlaythroughList';
-import { getTypewriterSpeed, setTypewriterSpeed } from '../NarrativeView';
+import { getTypewriterSpeed, setTypewriterSpeed } from './typewriter-speed';
 import type { ScriptManifest } from '../../core/types';
 import { cn } from '../../lib/utils';
 

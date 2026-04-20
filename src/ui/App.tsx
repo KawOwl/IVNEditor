@@ -32,6 +32,11 @@ interface PublicScriptInfo {
   chapterCount: number;
   firstChapterId: string | null;
   openingMessages?: string[];
+  productionLlmConfigId?: string | null;
+  /** M3 起：VN 资产（Step 1.2 补上透传路径，让前端 SpriteLayer 能查 displayName） */
+  characters?: import('../core/types').CharacterAsset[];
+  backgrounds?: import('../core/types').BackgroundAsset[];
+  defaultScene?: import('../core/types').SceneState;
 }
 
 /**
@@ -60,6 +65,10 @@ function publicInfoToManifest(info: PublicScriptInfo): ScriptManifest {
       recencyWindow: 0,
     },
     enabledTools: [],
+    // M3 VN 资产（M1 SpriteLayer / SceneBackground 查 displayName/assetUrl 用）
+    characters: info.characters,
+    backgrounds: info.backgrounds,
+    defaultScene: info.defaultScene,
   };
 }
 

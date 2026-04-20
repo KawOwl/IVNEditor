@@ -15,7 +15,7 @@ import {
   type LLMConfigEntry,
   type LLMConfigPayload,
 } from '../../stores/llm-configs-store';
-import { getTypewriterSpeed, setTypewriterSpeed } from '../NarrativeView';
+import { getTypewriterSpeed, setTypewriterSpeed } from '../play/typewriter-speed';
 import { cn } from '../../lib/utils';
 
 // ============================================================================

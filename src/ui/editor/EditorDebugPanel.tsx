@@ -13,9 +13,10 @@
 
 import { useState } from 'react';
 import { useGameStore } from '../../stores/game-store';
+import { useRawStreamingStore } from '../../stores/raw-streaming-store';
 import { cn } from '../../lib/utils';
 
-type DebugSection = 'prompt' | 'messages' | 'tokens' | 'state' | 'tools' | 'memory' | 'sentences';
+type DebugSection = 'prompt' | 'messages' | 'tokens' | 'state' | 'tools' | 'memory' | 'sentences' | 'raw';
 
 export function EditorDebugPanel() {
   const [activeSection, setActiveSection] = useState<DebugSection>('prompt');
@@ -28,6 +29,7 @@ export function EditorDebugPanel() {
     { id: 'tools', label: 'Tools' },
     { id: 'memory', label: 'Memory' },
     { id: 'sentences', label: 'Sentences' },
+    { id: 'raw', label: 'Raw' },
   ];
 
   return (
@@ -59,6 +61,7 @@ export function EditorDebugPanel() {
         {activeSection === 'tools' && <ToolsSection />}
         {activeSection === 'memory' && <MemorySection />}
         {activeSection === 'sentences' && <SentencesSection />}
+        {activeSection === 'raw' && <RawStreamingSection />}
       </div>
     </div>
   );
@@ -516,6 +519,60 @@ function SentenceRow({ sentence }: { sentence: import('../../stores/game-store')
         {sentence.scene.sprites.length === 0
           ? '—'
           : sentence.scene.sprites.map((s) => `${s.id}:${s.emotion}`).join(', ')}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Raw Streaming Section (M1 Step 1.7) — 最近一次 LLM generate 的原始 XML-lite 文本
+// ============================================================================
+//
+// VN UI 只消费结构化 Sentence，原始带标签的流式文本本来就丢了。
+// 这个 tab 订阅 raw-streaming-store 重新暴露，方便排查：
+//   - `<d>` 标签格式问题
+//   - speaker / addressee attrs 写错
+//   - maxOutputTokens 中途截断
+//   - 空白 / 换行畸形
+//
+// 每次新 generate（begin-streaming）自动清空；finalize 后残留供静态检查。
+function RawStreamingSection() {
+  const text = useRawStreamingStore((s) => s.text);
+  const reasoning = useRawStreamingStore((s) => s.reasoning);
+  const clear = useRawStreamingStore((s) => s.clear);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+          Latest generate · {text.length} chars · reasoning {reasoning.length}
+        </span>
+        <button
+          onClick={clear}
+          className="text-[10px] px-2 py-0.5 rounded border border-zinc-800 text-zinc-500 hover:text-zinc-300"
+        >
+          clear
+        </button>
+      </div>
+
+      {reasoning.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Reasoning</div>
+          <pre className="text-[11px] leading-relaxed text-zinc-400 whitespace-pre-wrap bg-zinc-900 rounded px-2 py-2 max-h-48 overflow-y-auto">
+            {reasoning}
+          </pre>
+        </div>
+      )}
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Output</div>
+        {text.length === 0 ? (
+          <Empty>尚无输出</Empty>
+        ) : (
+          <pre className="text-[11px] leading-relaxed text-zinc-200 whitespace-pre-wrap bg-zinc-900 rounded px-2 py-2">
+            {text}
+          </pre>
+        )}
       </div>
     </div>
   );

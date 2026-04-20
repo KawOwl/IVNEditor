@@ -26,10 +26,11 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
   const inputHint = useGameStore((s) => s.inputHint);
   const inputType = useGameStore((s) => s.inputType);
   const choices = useGameStore((s) => s.choices);
-  const isTypewriterPlaying = useGameStore((s) => s.typewriterPlayingIds.size > 0);
   const [text, setText] = useState('');
 
-  const isDisabled = status !== 'waiting-input' || isTypewriterPlaying;
+  // M1 Step 1.7：不再依赖 entries 打字机状态。VN 对话框打字机由 VNStageContainer
+  // 处理，输入框在 waiting-input 时一律启用（玩家中途想输入随时可以）。
+  const isDisabled = status !== 'waiting-input';
   const hasChoices = inputType === 'choice' && choices && choices.length > 0;
   const hasText = text.trim().length > 0;
 
@@ -72,14 +73,14 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
   return (
     <div className="border-t border-zinc-800 px-4 py-3 space-y-2">
       {/* Hint — 打字机播放完毕后才显示 */}
-      {status === 'waiting-input' && !isTypewriterPlaying && (
+      {status === 'waiting-input' && (
         <div className="text-sm text-zinc-400 italic">
           {displayHint}
         </div>
       )}
 
       {/* Choice buttons — 打字机播放完毕后才显示 */}
-      {hasChoices && !isTypewriterPlaying && (
+      {hasChoices && (
         <div className="flex flex-wrap gap-2">
           {choices!.map((choice, i) => (
             <button
