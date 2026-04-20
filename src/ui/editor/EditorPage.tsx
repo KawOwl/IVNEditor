@@ -40,6 +40,9 @@ import type {
   MemoryConfig,
   FlowGraph,
   SegmentRole,
+  CharacterAsset,
+  BackgroundAsset,
+  SceneState,
 } from '../../core/types';
 import type { StateVarInfo } from '../../core/editor/completion-sources';
 
@@ -179,6 +182,10 @@ export function EditorPage() {
   const [scriptLabel, setScriptLabel] = useState('未命名剧本');
   const [scriptDescription, setScriptDescription] = useState('');
   const [scriptTags, setScriptTags] = useState<string[]>([]);
+  // M2 Step 2.1：VN 视觉资产（角色 / 背景 / 默认场景）
+  const [characters, setCharacters] = useState<CharacterAsset[]>([]);
+  const [backgrounds, setBackgrounds] = useState<BackgroundAsset[]>([]);
+  const [defaultScene, setDefaultScene] = useState<SceneState | undefined>(undefined);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -332,6 +339,10 @@ export function EditorPage() {
     setPromptAssemblyOrder(manifest.promptAssemblyOrder);
     setDisabledAssemblySections(manifest.disabledAssemblySections ?? []);
     setProductionLlmConfigId(record.productionLlmConfigId ?? null);
+    // M2 Step 2.1：VN 资产
+    setCharacters(manifest.characters ?? []);
+    setBackgrounds(manifest.backgrounds ?? []);
+    setDefaultScene(manifest.defaultScene);
     setShowScriptLibrary(false);
   }, []);
 
@@ -474,6 +485,10 @@ export function EditorPage() {
         initialPrompt: initialPrompt || undefined,
         promptAssemblyOrder: promptAssemblyOrder,
         disabledAssemblySections: disabledAssemblySections.length > 0 ? disabledAssemblySections : undefined,
+        // M2 Step 2.1：VN 视觉资产（只在非空时写入，保持 manifest 干净）
+        characters: characters.length > 0 ? characters : undefined,
+        backgrounds: backgrounds.length > 0 ? backgrounds : undefined,
+        defaultScene,
         chapters: [{
           id: 'ch1',
           label: '第一章',
@@ -507,7 +522,7 @@ export function EditorPage() {
     } finally {
       setSaving(false);
     }
-  }, [loadedScriptId, scriptLabel, scriptDescription, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, disabledAssemblySections, productionLlmConfigId, refreshScriptList, refreshVersionList]);
+  }, [loadedScriptId, scriptLabel, scriptDescription, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, disabledAssemblySections, productionLlmConfigId, characters, backgrounds, defaultScene, refreshScriptList, refreshVersionList]);
 
   // --- Delete a script ---
   // DELETE /api/scripts/:id（级联删 versions + playthroughs）
@@ -1376,6 +1391,9 @@ ${doc.content}
                 enabledTools={enabledTools}
                 initialPrompt={initialPrompt}
                 productionLlmConfigId={productionLlmConfigId}
+                characters={characters}
+                backgrounds={backgrounds}
+                defaultScene={defaultScene}
                 onLabelChange={setScriptLabel}
                 onDescriptionChange={setScriptDescription}
                 onTagsChange={setScriptTags}
@@ -1384,6 +1402,9 @@ ${doc.content}
                 onEnabledToolsChange={setEnabledTools}
                 onInitialPromptChange={setInitialPrompt}
                 onProductionLlmConfigIdChange={setProductionLlmConfigId}
+                onCharactersChange={setCharacters}
+                onBackgroundsChange={setBackgrounds}
+                onDefaultSceneChange={setDefaultScene}
               />
             </div>
             <div className={cn('absolute inset-0 overflow-y-auto p-3', rightTab !== 'settings' && 'hidden')}>

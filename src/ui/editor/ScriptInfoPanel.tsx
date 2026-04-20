@@ -5,10 +5,23 @@
  */
 
 import { useCallback, useState } from 'react';
-import type { StateSchema, StateVariable, StateVariableType, MemoryConfig } from '../../core/types';
+import type {
+  StateSchema,
+  StateVariable,
+  StateVariableType,
+  MemoryConfig,
+  CharacterAsset,
+  BackgroundAsset,
+  SceneState,
+  SpriteState,
+  SpriteAsset,
+} from '../../core/types';
 import { listTools } from '../../core/tool-catalog';
 import { useLLMConfigsStore } from '../../stores/llm-configs-store';
 import { cn } from '../../lib/utils';
+
+/** snake_case id 校验：小写字母开头，可包含小写字母/数字/下划线 */
+const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 // ============================================================================
 // Props
@@ -24,6 +37,10 @@ export interface ScriptInfoPanelProps {
   initialPrompt: string;
   /** v2.7：剧本 production 使用的 LLM 配置 id。null = 未设置，走 fallback 链 */
   productionLlmConfigId: string | null;
+  // M2：VN 视觉资产
+  characters: CharacterAsset[];
+  backgrounds: BackgroundAsset[];
+  defaultScene: SceneState | undefined;
   onLabelChange: (label: string) => void;
   onDescriptionChange: (desc: string) => void;
   onTagsChange: (tags: string[]) => void;
@@ -32,6 +49,9 @@ export interface ScriptInfoPanelProps {
   onEnabledToolsChange: (tools: string[]) => void;
   onInitialPromptChange: (prompt: string) => void;
   onProductionLlmConfigIdChange: (id: string | null) => void;
+  onCharactersChange: (characters: CharacterAsset[]) => void;
+  onBackgroundsChange: (backgrounds: BackgroundAsset[]) => void;
+  onDefaultSceneChange: (scene: SceneState | undefined) => void;
 }
 
 // ============================================================================
@@ -55,6 +75,9 @@ export function ScriptInfoPanel({
   enabledTools,
   initialPrompt,
   productionLlmConfigId,
+  characters,
+  backgrounds,
+  defaultScene,
   onLabelChange,
   onDescriptionChange,
   onTagsChange,
@@ -63,6 +86,9 @@ export function ScriptInfoPanel({
   onEnabledToolsChange,
   onInitialPromptChange,
   onProductionLlmConfigIdChange,
+  onCharactersChange,
+  onBackgroundsChange,
+  onDefaultSceneChange,
 }: ScriptInfoPanelProps) {
   const llmConfigs = useLLMConfigsStore((s) => s.configs);
 
@@ -184,6 +210,26 @@ export function ScriptInfoPanel({
               </label>
             ))}
           </div>
+        </Section>
+
+        {/* M2：VN 角色资产 */}
+        <Section title="角色资产">
+          <CharactersSection characters={characters} onChange={onCharactersChange} />
+        </Section>
+
+        {/* M2：VN 背景资产 */}
+        <Section title="背景资产">
+          <BackgroundsSection backgrounds={backgrounds} onChange={onBackgroundsChange} />
+        </Section>
+
+        {/* M2：默认场景 */}
+        <Section title="默认场景">
+          <DefaultSceneSection
+            scene={defaultScene}
+            characters={characters}
+            backgrounds={backgrounds}
+            onChange={onDefaultSceneChange}
+          />
         </Section>
       </div>
     </div>
@@ -342,3 +388,452 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 const inputClass =
   'w-full text-xs px-2 py-1.5 rounded bg-zinc-900 border border-zinc-700 text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500';
+
+// ============================================================================
+// CharactersSection (M2 Step 2.2)
+// ============================================================================
+//
+// 角色列表 + 每个角色的 sprites 列表。
+// id 必须 snake_case（正则 ^[a-z][a-z0-9_]*$）、不重复、不空。
+// assetUrl 在 M2 阶段一律留空，等 M4 OSS pipeline 填。
+function CharactersSection({
+  characters,
+  onChange,
+}: {
+  characters: CharacterAsset[];
+  onChange: (characters: CharacterAsset[]) => void;
+}) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [newId, setNewId] = useState('');
+  const [newName, setNewName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAddCharacter = useCallback(() => {
+    const id = newId.trim();
+    const displayName = newName.trim();
+    if (!id || !displayName) {
+      setError('id 和 显示名 都不能为空');
+      return;
+    }
+    if (!ID_PATTERN.test(id)) {
+      setError('id 必须 snake_case（小写字母开头，仅含小写字母/数字/下划线）');
+      return;
+    }
+    if (characters.some((c) => c.id === id)) {
+      setError(`id "${id}" 已存在`);
+      return;
+    }
+    onChange([...characters, { id, displayName, sprites: [] }]);
+    setNewId('');
+    setNewName('');
+    setError(null);
+    setExpandedId(id);
+  }, [newId, newName, characters, onChange]);
+
+  const handleRemove = useCallback((id: string) => {
+    if (!confirm(`删除角色 "${id}"？（其相关的 SpriteAsset 也会一并删除）`)) return;
+    onChange(characters.filter((c) => c.id !== id));
+    if (expandedId === id) setExpandedId(null);
+  }, [characters, onChange, expandedId]);
+
+  const handleUpdateCharacter = useCallback(
+    (id: string, patch: Partial<CharacterAsset>) => {
+      onChange(characters.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+    },
+    [characters, onChange],
+  );
+
+  return (
+    <div className="space-y-2">
+      {characters.length === 0 ? (
+        <div className="text-[11px] text-zinc-600 italic">尚无角色</div>
+      ) : (
+        <ul className="space-y-1.5">
+          {characters.map((c) => (
+            <li key={c.id} className="border border-zinc-800 rounded overflow-hidden">
+              <div className="flex items-center gap-2 px-2 py-1.5 bg-zinc-900">
+                <span className="font-mono text-xs text-blue-400">{c.id}</span>
+                <span className="text-xs text-zinc-300">{c.displayName}</span>
+                <span className="text-[10px] text-zinc-600">{c.sprites.length} sprite{c.sprites.length === 1 ? '' : 's'}</span>
+                <div className="ml-auto flex gap-1">
+                  <button
+                    onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}
+                    className="text-[11px] px-2 py-0.5 rounded border border-zinc-700 text-zinc-500 hover:text-zinc-300"
+                  >
+                    {expandedId === c.id ? '收起' : '编辑'}
+                  </button>
+                  <button
+                    onClick={() => handleRemove(c.id)}
+                    className="text-[11px] px-2 py-0.5 rounded border border-zinc-700 text-zinc-500 hover:text-red-400"
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+              {expandedId === c.id && (
+                <div className="px-2 py-2 space-y-2 bg-zinc-900/50">
+                  <Field label="显示名">
+                    <input
+                      type="text"
+                      value={c.displayName}
+                      onChange={(e) => handleUpdateCharacter(c.id, { displayName: e.target.value })}
+                      className={inputClass}
+                    />
+                  </Field>
+                  <div>
+                    <div className="text-[10px] text-zinc-500 mb-1">立绘表情</div>
+                    <SpritesEditor
+                      sprites={c.sprites}
+                      onChange={(sprites) => handleUpdateCharacter(c.id, { sprites })}
+                    />
+                  </div>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* 新建角色 */}
+      <div className="pt-2 border-t border-zinc-800 space-y-1.5">
+        <div className="flex gap-1.5">
+          <input
+            type="text"
+            value={newId}
+            onChange={(e) => { setNewId(e.target.value); setError(null); }}
+            placeholder="角色 id (snake_case)"
+            className={cn(inputClass, 'flex-1')}
+          />
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => { setNewName(e.target.value); setError(null); }}
+            placeholder="显示名"
+            className={cn(inputClass, 'flex-1')}
+          />
+          <button
+            onClick={handleAddCharacter}
+            className="text-[11px] px-3 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500"
+          >
+            + 新角色
+          </button>
+        </div>
+        {error && <div className="text-[11px] text-red-400">{error}</div>}
+      </div>
+    </div>
+  );
+}
+
+/** 立绘表情子编辑器（id + label） */
+function SpritesEditor({
+  sprites,
+  onChange,
+}: {
+  sprites: SpriteAsset[];
+  onChange: (sprites: SpriteAsset[]) => void;
+}) {
+  const [newId, setNewId] = useState('');
+  const [newLabel, setNewLabel] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAdd = useCallback(() => {
+    const id = newId.trim();
+    if (!id) {
+      setError('表情 id 不能为空');
+      return;
+    }
+    if (!ID_PATTERN.test(id)) {
+      setError('id 必须 snake_case');
+      return;
+    }
+    if (sprites.some((s) => s.id === id)) {
+      setError(`表情 "${id}" 已存在`);
+      return;
+    }
+    onChange([...sprites, { id, label: newLabel.trim() || undefined }]);
+    setNewId('');
+    setNewLabel('');
+    setError(null);
+  }, [newId, newLabel, sprites, onChange]);
+
+  return (
+    <div className="space-y-1.5">
+      {sprites.length > 0 && (
+        <ul className="space-y-1">
+          {sprites.map((s, i) => (
+            <li key={s.id} className="flex items-center gap-2 text-xs">
+              <span className="font-mono text-amber-300 w-24 truncate">{s.id}</span>
+              <input
+                type="text"
+                value={s.label ?? ''}
+                onChange={(e) => {
+                  const next = [...sprites];
+                  next[i] = { ...s, label: e.target.value || undefined };
+                  onChange(next);
+                }}
+                placeholder="显示标签"
+                className={cn(inputClass, 'flex-1')}
+              />
+              <button
+                onClick={() => onChange(sprites.filter((_, j) => j !== i))}
+                className="text-[11px] px-2 rounded border border-zinc-700 text-zinc-500 hover:text-red-400"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex gap-1.5">
+        <input
+          type="text"
+          value={newId}
+          onChange={(e) => { setNewId(e.target.value); setError(null); }}
+          placeholder="新表情 id"
+          className={cn(inputClass, 'flex-1')}
+        />
+        <input
+          type="text"
+          value={newLabel}
+          onChange={(e) => setNewLabel(e.target.value)}
+          placeholder="标签（可选）"
+          className={cn(inputClass, 'flex-1')}
+        />
+        <button
+          onClick={handleAdd}
+          className="text-[11px] px-2 rounded border border-zinc-700 text-zinc-500 hover:text-zinc-300"
+        >
+          +
+        </button>
+      </div>
+      {error && <div className="text-[11px] text-red-400">{error}</div>}
+    </div>
+  );
+}
+
+// ============================================================================
+// BackgroundsSection (M2 Step 2.3)
+// ============================================================================
+function BackgroundsSection({
+  backgrounds,
+  onChange,
+}: {
+  backgrounds: BackgroundAsset[];
+  onChange: (backgrounds: BackgroundAsset[]) => void;
+}) {
+  const [newId, setNewId] = useState('');
+  const [newLabel, setNewLabel] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAdd = useCallback(() => {
+    const id = newId.trim();
+    if (!id) {
+      setError('背景 id 不能为空');
+      return;
+    }
+    if (!ID_PATTERN.test(id)) {
+      setError('id 必须 snake_case');
+      return;
+    }
+    if (backgrounds.some((b) => b.id === id)) {
+      setError(`背景 "${id}" 已存在`);
+      return;
+    }
+    onChange([...backgrounds, { id, label: newLabel.trim() || undefined }]);
+    setNewId('');
+    setNewLabel('');
+    setError(null);
+  }, [newId, newLabel, backgrounds, onChange]);
+
+  return (
+    <div className="space-y-2">
+      {backgrounds.length === 0 ? (
+        <div className="text-[11px] text-zinc-600 italic">尚无背景</div>
+      ) : (
+        <ul className="space-y-1">
+          {backgrounds.map((b, i) => (
+            <li key={b.id} className="flex items-center gap-2 text-xs">
+              <span className="font-mono text-cyan-300 w-32 truncate">{b.id}</span>
+              <input
+                type="text"
+                value={b.label ?? ''}
+                onChange={(e) => {
+                  const next = [...backgrounds];
+                  next[i] = { ...b, label: e.target.value || undefined };
+                  onChange(next);
+                }}
+                placeholder="显示标签"
+                className={cn(inputClass, 'flex-1')}
+              />
+              <button
+                onClick={() => onChange(backgrounds.filter((_, j) => j !== i))}
+                className="text-[11px] px-2 rounded border border-zinc-700 text-zinc-500 hover:text-red-400"
+              >
+                删除
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="pt-2 border-t border-zinc-800 space-y-1.5">
+        <div className="flex gap-1.5">
+          <input
+            type="text"
+            value={newId}
+            onChange={(e) => { setNewId(e.target.value); setError(null); }}
+            placeholder="背景 id (snake_case)"
+            className={cn(inputClass, 'flex-1')}
+          />
+          <input
+            type="text"
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+            placeholder="标签（可选）"
+            className={cn(inputClass, 'flex-1')}
+          />
+          <button
+            onClick={handleAdd}
+            className="text-[11px] px-3 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500"
+          >
+            + 新背景
+          </button>
+        </div>
+        {error && <div className="text-[11px] text-red-400">{error}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// DefaultSceneSection (M2 Step 2.4)
+// ============================================================================
+//
+// 开场背景 + 可选开场立绘（单个，未来可扩）。
+// 构造的 SceneState：
+//   { background: <id> | null, sprites: [{id,emotion,position}] | [] }
+function DefaultSceneSection({
+  scene,
+  characters,
+  backgrounds,
+  onChange,
+}: {
+  scene: SceneState | undefined;
+  characters: CharacterAsset[];
+  backgrounds: BackgroundAsset[];
+  onChange: (scene: SceneState | undefined) => void;
+}) {
+  const hasOpeningSprite = !!scene && scene.sprites.length > 0;
+  const firstSprite: SpriteState | undefined = scene?.sprites[0];
+
+  const updateScene = useCallback((patch: Partial<SceneState>) => {
+    const base: SceneState = scene ?? { background: null, sprites: [] };
+    onChange({ ...base, ...patch });
+  }, [scene, onChange]);
+
+  const toggleOpeningSprite = useCallback((on: boolean) => {
+    if (on) {
+      const firstChar = characters[0];
+      const firstEmotion = firstChar?.sprites[0];
+      if (!firstChar || !firstEmotion) {
+        alert('请先在"角色资产"中至少建一个角色 + 一个表情');
+        return;
+      }
+      updateScene({
+        sprites: [{ id: firstChar.id, emotion: firstEmotion.id, position: 'center' }],
+      });
+    } else {
+      updateScene({ sprites: [] });
+    }
+  }, [characters, updateScene]);
+
+  const updateSprite = useCallback((patch: Partial<SpriteState>) => {
+    if (!firstSprite) return;
+    updateScene({ sprites: [{ ...firstSprite, ...patch }] });
+  }, [firstSprite, updateScene]);
+
+  const selectedChar = firstSprite ? characters.find((c) => c.id === firstSprite.id) : undefined;
+
+  return (
+    <div className="space-y-2">
+      <Field label="开场背景">
+        <select
+          value={scene?.background ?? ''}
+          onChange={(e) => updateScene({ background: e.target.value || null })}
+          className={inputClass}
+          disabled={backgrounds.length === 0}
+        >
+          <option value="">（无背景 / 纯黑幕）</option>
+          {backgrounds.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.label ? `${b.label} · ${b.id}` : b.id}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {backgrounds.length === 0 && (
+        <div className="text-[11px] text-zinc-500 italic ml-[5.5rem]">先在上方"背景资产"中新建至少一个背景</div>
+      )}
+
+      <div className="pt-1">
+        <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={hasOpeningSprite}
+            onChange={(e) => toggleOpeningSprite(e.target.checked)}
+            disabled={characters.length === 0}
+            className="rounded border-zinc-600 bg-zinc-900"
+          />
+          <span>有开场立绘</span>
+          {characters.length === 0 && (
+            <span className="text-[10px] text-zinc-600">（先建角色）</span>
+          )}
+        </label>
+      </div>
+
+      {hasOpeningSprite && firstSprite && (
+        <div className="pl-6 space-y-1.5">
+          <Field label="角色">
+            <select
+              value={firstSprite.id}
+              onChange={(e) => {
+                const newCharId = e.target.value;
+                const newChar = characters.find((c) => c.id === newCharId);
+                const newEmotion = newChar?.sprites[0]?.id ?? firstSprite.emotion;
+                updateSprite({ id: newCharId, emotion: newEmotion });
+              }}
+              className={inputClass}
+            >
+              {characters.map((c) => (
+                <option key={c.id} value={c.id}>{c.displayName} · {c.id}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="表情">
+            <select
+              value={firstSprite.emotion}
+              onChange={(e) => updateSprite({ emotion: e.target.value })}
+              className={inputClass}
+              disabled={!selectedChar || selectedChar.sprites.length === 0}
+            >
+              {selectedChar?.sprites.length === 0 && <option value="">（角色无表情）</option>}
+              {selectedChar?.sprites.map((s) => (
+                <option key={s.id} value={s.id}>{s.label ? `${s.label} · ${s.id}` : s.id}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="位置">
+            <select
+              value={firstSprite.position ?? 'center'}
+              onChange={(e) => updateSprite({ position: e.target.value as 'left' | 'center' | 'right' })}
+              className={inputClass}
+            >
+              <option value="left">left</option>
+              <option value="center">center</option>
+              <option value="right">right</option>
+            </select>
+          </Field>
+        </div>
+      )}
+    </div>
+  );
+}
