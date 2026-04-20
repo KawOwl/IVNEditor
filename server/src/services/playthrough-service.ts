@@ -78,6 +78,13 @@ export interface PlaythroughDetail {
   inputType: string;
   choices: string[] | null;
   preview: string | null;
+  /** M3: VN 场景快照（断线重连恢复视觉用） */
+  currentScene: {
+    background: string | null;
+    sprites: Array<{ id: string; emotion: string; position?: string }>;
+  } | null;
+  /** M3: 玩家推进到第几条 Sentence（M2 用，M3 阶段 null） */
+  sentenceIndex: number | null;
   createdAt: Date;
   updatedAt: Date;
   entries: NarrativeEntryRow[];
@@ -232,6 +239,8 @@ export class PlaythroughService {
       inputType: pt.inputType,
       choices: pt.choices,
       preview: pt.preview,
+      currentScene: pt.currentScene ?? null,
+      sentenceIndex: pt.sentenceIndex,
       createdAt: pt.createdAt,
       updatedAt: pt.updatedAt,
       entries: entries as NarrativeEntryRow[],
@@ -323,6 +332,13 @@ export class PlaythroughService {
       inputType: string;
       choices: string[] | null;
       preview: string | null;
+      /** M3: VN 场景快照 */
+      currentScene: {
+        background: string | null;
+        sprites: Array<{ id: string; emotion: string; position?: string }>;
+      } | null;
+      /** M3: 玩家推进到第几条 Sentence */
+      sentenceIndex: number | null;
     }>,
   ): Promise<void> {
     await db

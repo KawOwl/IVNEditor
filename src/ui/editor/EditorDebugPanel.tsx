@@ -15,7 +15,7 @@ import { useState } from 'react';
 import { useGameStore } from '../../stores/game-store';
 import { cn } from '../../lib/utils';
 
-type DebugSection = 'prompt' | 'messages' | 'tokens' | 'state' | 'tools' | 'memory';
+type DebugSection = 'prompt' | 'messages' | 'tokens' | 'state' | 'tools' | 'memory' | 'sentences';
 
 export function EditorDebugPanel() {
   const [activeSection, setActiveSection] = useState<DebugSection>('prompt');
@@ -27,6 +27,7 @@ export function EditorDebugPanel() {
     { id: 'state', label: 'State' },
     { id: 'tools', label: 'Tools' },
     { id: 'memory', label: 'Memory' },
+    { id: 'sentences', label: 'Sentences' },
   ];
 
   return (
@@ -57,6 +58,7 @@ export function EditorDebugPanel() {
         {activeSection === 'state' && <StateSection />}
         {activeSection === 'tools' && <ToolsSection />}
         {activeSection === 'memory' && <MemorySection />}
+        {activeSection === 'sentences' && <SentencesSection />}
       </div>
     </div>
   );
@@ -389,6 +391,132 @@ function MemorySection() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Sentences Section (M3) — XML-lite parser 产出的结构化叙事
+// ============================================================================
+
+function SentencesSection() {
+  const sentences = useGameStore((s) => s.parsedSentences);
+  const currentScene = useGameStore((s) => s.currentScene);
+
+  return (
+    <div className="space-y-3">
+      {/* 当前场景 */}
+      <div className="border border-zinc-800 rounded p-2">
+        <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
+          Current Scene
+        </div>
+        <div className="text-[11px] text-zinc-300">
+          <div>
+            <span className="text-zinc-500">background:</span>{' '}
+            <span className="text-emerald-400">
+              {currentScene.background ?? 'null'}
+            </span>
+          </div>
+          <div className="mt-1">
+            <span className="text-zinc-500">sprites ({currentScene.sprites.length}):</span>{' '}
+            {currentScene.sprites.length === 0 ? (
+              <span className="text-zinc-600">—</span>
+            ) : (
+              <ul className="ml-3 mt-1 space-y-0.5">
+                {currentScene.sprites.map((sp, i) => (
+                  <li key={i} className="text-zinc-400">
+                    <span className="text-blue-400">{sp.id}</span>
+                    {' · '}
+                    <span className="text-amber-400">{sp.emotion}</span>
+                    {sp.position && (
+                      <span className="text-zinc-600"> @ {sp.position}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Sentences 列表 */}
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
+          Parsed Sentences ({sentences.length})
+        </div>
+        {sentences.length === 0 ? (
+          <Empty>尚未解析到任何 Sentence — LLM 输出需要带 XML-lite 格式</Empty>
+        ) : (
+          <div className="space-y-1.5">
+            {sentences.map((s, i) => (
+              <SentenceRow key={i} sentence={s} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SentenceRow({ sentence }: { sentence: import('../../stores/game-store').Sentence }) {
+  if (sentence.kind === 'narration') {
+    return (
+      <div className="border-l-2 border-zinc-700 pl-2 py-0.5">
+        <div className="text-[9px] text-zinc-600">
+          #{sentence.index} · narration · turn {sentence.turnNumber}
+        </div>
+        <div className="text-zinc-300 whitespace-pre-wrap">{sentence.text}</div>
+      </div>
+    );
+  }
+  if (sentence.kind === 'dialogue') {
+    return (
+      <div className="border-l-2 border-blue-700 pl-2 py-0.5">
+        <div className="text-[9px] text-zinc-600">
+          #{sentence.index} · dialogue · turn {sentence.turnNumber}
+          {sentence.truncated && (
+            <span className="text-red-400 ml-1">[truncated]</span>
+          )}
+        </div>
+        <div className="text-blue-300 text-[10px]">
+          <span className="text-blue-400">{sentence.pf.speaker}</span>
+          {sentence.pf.addressee && (
+            <>
+              {' → '}
+              <span className="text-cyan-400">{sentence.pf.addressee.join(', ')}</span>
+            </>
+          )}
+          {sentence.pf.overhearers && (
+            <>
+              {' +'}
+              <span className="text-yellow-500">{sentence.pf.overhearers.join(',')}</span>
+            </>
+          )}
+          {sentence.pf.eavesdroppers && (
+            <>
+              {' ?'}
+              <span className="text-red-400">{sentence.pf.eavesdroppers.join(',')}</span>
+            </>
+          )}
+        </div>
+        <div className="text-zinc-200 whitespace-pre-wrap">{sentence.text}</div>
+      </div>
+    );
+  }
+  // scene_change
+  return (
+    <div className="border-l-2 border-emerald-700 pl-2 py-0.5">
+      <div className="text-[9px] text-zinc-600">
+        #{sentence.index} · scene_change · turn {sentence.turnNumber}
+        {sentence.transition && <span className="ml-1">[{sentence.transition}]</span>}
+      </div>
+      <div className="text-[10px] text-emerald-300">
+        bg: {sentence.scene.background ?? 'null'}
+        {' · sprites: '}
+        {sentence.scene.sprites.length === 0
+          ? '—'
+          : sentence.scene.sprites.map((s) => `${s.id}:${s.emotion}`).join(', ')}
+      </div>
     </div>
   );
 }

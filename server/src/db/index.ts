@@ -16,11 +16,49 @@ if (!DATABASE_URL) {
   throw new Error('DATABASE_URL environment variable is required');
 }
 
+/**
+ * SSL 配置决策：
+ *
+ * PG_SSL 环境变量 > URL 里的 sslmode 参数 > 默认关闭
+ *
+ * 原因：部分托管 RDS（如你当前用的 pgm-wz9699v11xdbyu0ajo）**没开 SSL 端口**，
+ * 即使 URL 里写了 sslmode=require 也会被服务端拒绝
+ * （报 "The server does not support SSL connections"）。
+ *
+ * 另一方面 pg-connection-string v2 起，URL 里的 sslmode=require 被解读为
+ * verify-full，对阿里云 RDS 这类 CN 不匹配的证书会直接拒绝。
+ *
+ * 给出三种明确选项（按 PG_SSL env）：
+ *   - 'off'  | 'false' | 'disable' → 不走 SSL（本地/内网开发）
+ *   - 'require' → TLS 加密但不校验证书（托管 RDS 主流）
+ *   - 'verify' → 完整校验（仅当你有权威签发的证书）
+ *
+ * 默认：URL 里有 sslmode=... 时按 require 语义，没有就 off。
+ */
+function resolveSslConfig(): Pool['options']['ssl'] | false {
+  const explicit = process.env.PG_SSL?.toLowerCase();
+  if (explicit === 'off' || explicit === 'false' || explicit === 'disable') return false;
+  if (explicit === 'verify') return { rejectUnauthorized: true };
+  if (explicit === 'require') return { rejectUnauthorized: false };
+  // URL 里带 sslmode=require/verify-ca/verify-full/prefer 时默认加密但不严校验
+  if (/sslmode=(require|verify-ca|verify-full|prefer)/.test(DATABASE_URL)) {
+    return { rejectUnauthorized: false };
+  }
+  return false;
+}
+
+// 从 URL 里移除 sslmode 参数——ssl 走 pool.ssl 配置统一管理，避免冲突。
+const cleanedUrl = DATABASE_URL.replace(/([?&])sslmode=\w+&?/g, (_m, p) => (p === '?' ? '?' : ''))
+  .replace(/[?&]$/, '');
+
 const pool = new Pool({
-  connectionString: DATABASE_URL,
-  max: 10,               // 最大连接数
+  connectionString: cleanedUrl,
+  max: Number(process.env.PG_POOL_MAX ?? 30),
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  // 15s 覆盖跨 region 连接 + SSL 握手的 worst case。
+  // 本地开发连接阿里云 RDS 需要这个放宽；生产同 VPC 时 5s 也够。
+  connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS ?? 15000),
+  ssl: resolveSslConfig(),
 });
 
 export const db = drizzle(pool, { schema });

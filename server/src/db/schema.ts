@@ -239,6 +239,20 @@ export const playthroughs = pgTable('playthroughs', {
   stateVars: jsonb('state_vars').$type<Record<string, unknown>>(),
   memoryEntries: jsonb('memory_entries').$type<unknown[]>(),
   memorySummaries: jsonb('memory_summaries').$type<string[]>(),
+  /**
+   * VN 模式当前场景快照（M3）。由 change_scene / change_sprite 工具演进，
+   * 结构为 { background: string | null, sprites: SpriteState[] }。
+   * 断线重连时前端用此恢复视觉状态。
+   */
+  currentScene: jsonb('current_scene').$type<{
+    background: string | null;
+    sprites: Array<{ id: string; emotion: string; position?: string }>;
+  }>(),
+  /**
+   * VN 模式当前句子索引（M3）。用 M1/M2 的 Sentence[] 指针恢复玩家读到的位置。
+   * null = 尚未开始游玩。
+   */
+  sentenceIndex: integer('sentence_index'),
   inputHint: text('input_hint'),
   inputType: text('input_type').notNull().default('freetext'),
   choices: jsonb('choices').$type<string[]>(),

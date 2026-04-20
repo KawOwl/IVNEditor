@@ -50,6 +50,13 @@
       "when": 1776589782000,
       "tag": "0006_drop_thinking_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1776625000000,
+      "tag": "0007_vn_scene_state",
+      "breakpoints": true
     }
   ]
 }

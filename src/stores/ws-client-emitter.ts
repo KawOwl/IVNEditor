@@ -304,5 +304,14 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
     case 'update-debug':
       store().updateDebug(msg as any);
       break;
+
+    // --- VN Narrative & Scene (M3) ---
+    case 'sentence':
+      store().appendSentence(msg.sentence as import('./game-store').Sentence);
+      break;
+
+    case 'scene-change':
+      store().setCurrentScene(msg.scene as import('./game-store').SceneState);
+      break;
   }
 }

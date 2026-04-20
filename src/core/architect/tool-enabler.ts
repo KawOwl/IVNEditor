@@ -23,7 +23,9 @@ const OPTIONAL_TOOLS = [
   'inject_context',
   'list_context',
   'set_mood',
-  'show_image',
+  'change_scene',
+  'change_sprite',
+  'clear_stage',
 ] as const;
 
 // ============================================================================
@@ -41,15 +43,19 @@ GM（游戏主持人）有两个必选工具（update_state、signal_input_neede
 - inject_context: 临时注入世界观文档（GM 需要参考额外资料时）
 - list_context: 列出可注入的文档（配合 inject_context 使用）
 - set_mood: 设置场景氛围标签（影响 UI 视觉风格时）
-- show_image: 显示图片/CG（有视觉内容展示需求时）
+- change_scene: 切换背景 / 替换所有立绘 / 应用过渡（VN 场景变化）
+- change_sprite: 切换单个角色的表情或位置（不影响背景或其他立绘）
+- clear_stage: 清除所有立绘（场景淡出或戏剧性停顿）
 
 请根据 GM 提示词的内容，判断哪些可选工具应该启用。
-如果文档中没有明确提及某工具的使用场景，默认不启用。`;
+如果文档中没有明确提及某工具的使用场景，默认不启用。
+有视觉资产（立绘/背景）的剧本推荐启用 change_scene + change_sprite。`;
 
 const enablementSchema = z.object({
   enabledTools: z.array(z.enum([
     'read_state', 'query_changelog', 'pin_memory', 'query_memory',
-    'inject_context', 'list_context', 'set_mood', 'show_image',
+    'inject_context', 'list_context', 'set_mood',
+    'change_scene', 'change_sprite', 'clear_stage',
   ])),
   reasoning: z.string(),
 });

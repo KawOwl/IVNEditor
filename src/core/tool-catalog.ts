@@ -112,11 +112,35 @@ export const TOOL_CATALOG: readonly ToolMetadata[] = [
     uiDescription: '设置当前场景氛围标签（影响 UI 视觉风格）',
     required: false,
   },
+
+  // --- VN 场景工具（M3 新增，取代旧的 show_image）---
   {
-    name: 'show_image',
-    description: 'Display an image or CG in the UI.',
-    uiLabel: '显示图片',
-    uiDescription: '在玩家界面展示图片/CG',
+    name: 'change_scene',
+    description:
+      'Change the visual scene: update background image and/or replace all on-stage sprites. ' +
+      'Call when the narrative location changes (new room, new time of day) or when characters enter/leave. ' +
+      'Arguments: { background?: "bg_id", sprites?: [{id, emotion, position?}], transition?: "fade"|"cut"|"dissolve" }. ' +
+      'Omit background to keep current; pass empty sprites array to clear all characters.',
+    uiLabel: '切换场景',
+    uiDescription: '更换背景图 / 替换所有立绘 / 应用过渡特效',
+    required: false,
+  },
+  {
+    name: 'change_sprite',
+    description:
+      'Change a single character sprite (expression / pose / position) without touching background or other characters. ' +
+      'Use for in-scene emotion changes. Arguments: { character: "char_id", emotion: "emotion_id", position?: "left"|"center"|"right" }.',
+    uiLabel: '切换立绘',
+    uiDescription: '更换某个角色的表情 / 位置（不影响背景或其他立绘）',
+    required: false,
+  },
+  {
+    name: 'clear_stage',
+    description:
+      'Remove all sprites and optionally background (transition to black/empty). ' +
+      'Use for scene fadeouts or dramatic pauses. Takes no arguments.',
+    uiLabel: '清空舞台',
+    uiDescription: '清除所有立绘（用于场景淡出或戏剧性停顿）',
     required: false,
   },
 ];

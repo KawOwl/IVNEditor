@@ -13,6 +13,8 @@ export type {
   PromptSnapshot,
   ToolCallEntry,
   TokenBreakdownInfo,
+  Sentence,
+  SceneState,
 } from '../core/types';
 
 import type {
@@ -20,6 +22,8 @@ import type {
   PromptSnapshot,
   ToolCallEntry,
   TokenBreakdownInfo,
+  Sentence,
+  SceneState,
 } from '../core/types';
 
 // ============================================================================
@@ -63,6 +67,12 @@ export interface GameState {
   assembledMessages: Array<{ role: string; content: string }>;
   activeSegmentIds: string[];
 
+  // --- VN Narrative & Scene (M3) ---
+  /** Parser 产出的结构化 Sentence 序列（M1 VN UI 消费）。按产生顺序追加，不删除。 */
+  parsedSentences: Sentence[];
+  /** 当前 VN 场景快照（change_scene/change_sprite/clear_stage 工具演进）。 */
+  currentScene: SceneState;
+
   // --- Actions ---
   appendEntry: (entry: Omit<NarrativeEntry, 'id' | 'timestamp'>) => void;
   /** 创建一条新的 streaming entry，返回其 ID */
@@ -85,6 +95,10 @@ export interface GameState {
   addToolCall: (entry: Omit<ToolCallEntry, 'timestamp'>) => void;
   /** UI 上报打字机播放状态 */
   setTypewriterPlaying: (id: string, playing: boolean) => void;
+  /** M3: 追加解析出的 Sentence（narration / dialogue / scene_change） */
+  appendSentence: (sentence: Sentence) => void;
+  /** M3: 更新当前场景快照 */
+  setCurrentScene: (scene: SceneState) => void;
   reset: () => void;
 }
 
@@ -139,6 +153,8 @@ const initialState = {
   assembledSystemPrompt: null as string | null,
   assembledMessages: [] as Array<{ role: string; content: string }>,
   activeSegmentIds: [] as string[],
+  parsedSentences: [] as Sentence[],
+  currentScene: { background: null, sprites: [] } as SceneState,
 };
 
 export const useGameStore = create<GameState>((set) => ({
@@ -261,5 +277,17 @@ export const useGameStore = create<GameState>((set) => ({
       return { typewriterPlayingIds: next };
     }),
 
-  reset: () => set(initialState),
+  // --- M3: VN Narrative & Scene ---
+  appendSentence: (sentence) =>
+    set((state) => ({ parsedSentences: [...state.parsedSentences, sentence] })),
+
+  setCurrentScene: (scene) => set({ currentScene: scene }),
+
+  reset: () => set({
+    ...initialState,
+    // reset 时强制新 Set 实例，避免 Map/Set 引用串联
+    typewriterPlayingIds: new Set<string>(),
+    parsedSentences: [],
+    currentScene: { background: null, sprites: [] },
+  }),
 }));

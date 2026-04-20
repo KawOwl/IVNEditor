@@ -90,6 +90,11 @@ export class GameSessionWrapper {
     inputHint?: string | null;
     inputType?: string;
     choices?: string[] | null;
+    /** M3: VN 场景快照（可选，老 playthrough 为 null） */
+    currentScene?: {
+      background: string | null;
+      sprites: Array<{ id: string; emotion: string; position?: string }>;
+    } | null;
   }): void {
     if (!this.gameSession) return;
 
@@ -107,6 +112,9 @@ export class GameSessionWrapper {
       persistence: base.persistence,
       tracing: base.tracing,
       ...snapshot,
+      // M3: currentScene 从 snapshot 取，defaultScene 从 manifest 取（restore 时用作 fallback）
+      defaultScene: base.defaultScene,
+      currentScene: snapshot.currentScene as import('../../src/core/types').SceneState | null | undefined,
     };
 
     this.gameSession.restore(restoreConfig);
@@ -161,6 +169,8 @@ export class GameSessionWrapper {
       initialPrompt: manifest.initialPrompt,
       assemblyOrder: manifest.promptAssemblyOrder,
       disabledSections: manifest.disabledAssemblySections,
+      // M3: 把剧本 manifest 的默认场景透传给 GameSession 初始化
+      defaultScene: manifest.defaultScene,
       persistence: createPlaythroughPersistence(this.playthroughId),
       tracing: createBoundTracing({
         playthroughId: this.playthroughId,

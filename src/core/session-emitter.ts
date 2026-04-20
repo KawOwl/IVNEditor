@@ -8,7 +8,13 @@
  *   - 未来：WebSocket/SSE 实现（引擎在后端运行，事件推送到前端）
  */
 
-import type { PromptSnapshot, TokenBreakdownInfo, ToolCallEntry } from './types';
+import type {
+  PromptSnapshot,
+  TokenBreakdownInfo,
+  ToolCallEntry,
+  SceneState,
+  Sentence,
+} from './types';
 
 // ============================================================================
 // Types
@@ -78,4 +84,16 @@ export interface SessionEmitter {
   stagePendingDebug(info: { promptSnapshot?: PromptSnapshot; finishReason?: string }): void;
   /** Update debug panel data */
   updateDebug(debug: DebugSnapshot): void;
+
+  // --- VN Scene & Narrative (M3) ---
+  /**
+   * 一个已产出的 Sentence 追加到 playthrough 的 sentences 序列。
+   * 前端 VN UI 消费这个作为推进单元。
+   */
+  appendSentence(sentence: Sentence): void;
+  /**
+   * 场景变化（background / sprites）。前端 VN UI 更新 currentScene。
+   * 注：调用顺序和 appendSentence('scene_change') 一致——在发出 Sentence 前先 emit。
+   */
+  emitSceneChange(scene: SceneState, transition?: 'fade' | 'cut' | 'dissolve'): void;
 }

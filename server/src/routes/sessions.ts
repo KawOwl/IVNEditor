@@ -141,6 +141,8 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
           inputHint: detail.inputHint,
           inputType: detail.inputType,
           choices: detail.choices,
+          // M3: VN 场景快照（老 playthrough 无此字段，传 null 走 defaultScene fallback）
+          currentScene: detail.currentScene ?? null,
         });
       }
       // 新游戏：等客户端主动发 'start'

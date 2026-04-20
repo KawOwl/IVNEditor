@@ -42,7 +42,7 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
     },
 
     /**
-     * generate() 整体结束后同步 memory 快照
+     * generate() 整体结束后同步 memory 快照 + VN 场景（M3）
      * entry 入库已由 onNarrativeSegmentFinalized 负责
      */
     async onGenerateComplete(data): Promise<void> {
@@ -50,6 +50,7 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
         memoryEntries: data.memoryEntries,
         memorySummaries: data.memorySummaries,
         ...(data.preview !== undefined ? { preview: data.preview } : {}),
+        ...(data.currentScene !== undefined ? { currentScene: data.currentScene } : {}),
       });
     },
 

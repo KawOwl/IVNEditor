@@ -112,6 +112,92 @@ export const scriptManifestSchema = z.object({
 });
 
 // ============================================================================
+// VN Narrative — XML-lite 叙事协议的结构化类型（M3）
+// ============================================================================
+
+export const spriteStateSchema = z.object({
+  id: z.string(),
+  emotion: z.string(),
+  position: z.enum(['left', 'center', 'right']).optional(),
+});
+
+export const sceneStateSchema = z.object({
+  background: z.string().nullable(),
+  sprites: z.array(spriteStateSchema),
+});
+
+export const participationFrameSchema = z.object({
+  speaker: z.string(),
+  addressee: z.array(z.string()).optional(),
+  overhearers: z.array(z.string()).optional(),
+  eavesdroppers: z.array(z.string()).optional(),
+});
+
+export const sentenceSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('narration'),
+    text: z.string(),
+    sceneRef: sceneStateSchema,
+    turnNumber: z.number().int().nonnegative(),
+    index: z.number().int().nonnegative(),
+  }),
+  z.object({
+    kind: z.literal('dialogue'),
+    text: z.string(),
+    pf: participationFrameSchema,
+    sceneRef: sceneStateSchema,
+    turnNumber: z.number().int().nonnegative(),
+    index: z.number().int().nonnegative(),
+    truncated: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal('scene_change'),
+    scene: sceneStateSchema,
+    transition: z.enum(['fade', 'cut', 'dissolve']).optional(),
+    turnNumber: z.number().int().nonnegative(),
+    index: z.number().int().nonnegative(),
+  }),
+]);
+
+// ============================================================================
+// Script Assets — 剧本美术资产引用（M3 占位，M4 接 OSS）
+// ============================================================================
+
+export const spriteAssetSchema = z.object({
+  id: z.string(),
+  assetUrl: z.string().optional(),
+  label: z.string().optional(),
+});
+
+export const characterAssetSchema = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  sprites: z.array(spriteAssetSchema),
+});
+
+export const backgroundAssetSchema = z.object({
+  id: z.string(),
+  assetUrl: z.string().optional(),
+  label: z.string().optional(),
+});
+
+// ============================================================================
+// Tool args schemas for Scene-management tools（供 tool-catalog 复用）
+// ============================================================================
+
+export const changeSceneArgsSchema = z.object({
+  background: z.string().optional(),
+  sprites: z.array(spriteStateSchema).optional(),
+  transition: z.enum(['fade', 'cut', 'dissolve']).optional(),
+});
+
+export const changeSpriteArgsSchema = z.object({
+  character: z.string(),
+  emotion: z.string(),
+  position: z.enum(['left', 'center', 'right']).optional(),
+});
+
+// ============================================================================
 // Runtime State
 // ============================================================================
 

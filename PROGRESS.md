@@ -1,23 +1,29 @@
 # 项目进度
 
 ## 当前状态
-v2.6 剧本版本管理 + 编辑器试玩走后端全部完成（6.1-6.6）。v2.7 LLM 配置系统重构 + AI 改写续写也完成（7.1-7.2）。玩家侧和编辑器侧都只走后端 scripts + script_versions 双表路径，前端 IndexedDB 已退役。LLM 连接信息从"localStorage + 单 JSON 文件"迁移到 postgres 多套命名配置，每个剧本可选 production 用哪套，编辑器试玩可 localStorage 级覆盖。Langfuse trace 能区分 production / editor-playtest。
+M3（XML-lite 叙事协议 + 场景状态 + 视觉工具）Parts A–G 全部实现并在 preview 上端到端验证通过；migration 0007 已跑通，空 ivn_dev 库从零 bootstrap 成功。P2b 的 admin 创建限制已撤销——admin 可以自己走通完整玩家流了。整块 M3 + P2b 改动尚未提交，等用户决定是否拆分为一次/两次 commit。
 
 ## 当前任务
-**v2.6 剧本版本管理 + 编辑器试玩走后端（6.1-6.6 全部完成）**
-- 类型：重构 + 新功能 + 破坏性迁移
-- 来源：本轮讨论（见"v2.6 剧本版本管理"设计决策段）
-- 目标：后端统一存剧本 + 引入版本概念，编辑器试玩走后端便于排查
+**M3 视觉层铺底（XML-lite 叙事协议 + 场景状态）已完成 + P2b 回退**
+- 类型：新功能 + 设计回退
+- 来源：m3 plan / preview 验证反馈
+- 目标：LLM 输出可结构化解析为 sentence 流，场景状态（背景+精灵）端到端持久化 + WS 推流；admin 能创建 production playthrough
 
 ### 推进顺序
 
-1. ✅ **6.1 schema 迁移**（破坏性）—— 完成
-2. ✅ **6.2 后端路由 + 删 scriptStore** —— 完成
-3. ✅ **6.2b admin 账号合并进 users 表 + roles 角色表** —— 完成
-4. ✅ **6.3 前端编辑器适配** —— 完成
-5. ✅ **6.4 编辑器试玩走后端** —— 完成，Langfuse 能按 editor-playtest tag 区分
-6. ✅ **6.5 玩家侧适配** —— 完成，PlaythroughList 加了 kind=production 过滤
-7. ✅ **6.6 前端 IndexedDB 下线** —— 完成，两步 commit：6.6a 新增 script-archive + LocalBackupGate 脚手架，6.6b 删 script-storage + local engine mode + 重写 handleImportScript 走后端上传
+1. ✅ **A — types**：新增 SpriteState/SceneState/ParticipationFrame/Sentence 联合；ScriptManifest 扩 characters/backgrounds/defaultScene
+2. ✅ **B — tool-catalog/executor/engine-rules**：移除 show_image，加入 change_scene/change_sprite/clear_stage；engine-rules 追加 XML-lite 叙事格式说明 + few-shot
+3. ✅ **C — narrative-parser**：流式 XML-lite 状态机 + 27 单测（含末尾未闭合 `<d>` 自动 close 标 truncated）
+4. ✅ **D — game-session**：生成时挂 parser，onTextChunk → parser.push；currentScene 字段 + applyScenePatch；onGenerateComplete 持久化 currentScene
+5. ✅ **E — emitter + store + debug panel**：appendSentence / emitSceneChange；game-store 增 parsedSentences/currentScene；EditorDebugPanel 加 sentences tab
+6. ✅ **F — schema + migration 0007**：playthroughs 增 current_scene (jsonb) + sentence_index (integer)
+7. ✅ **G — preview 端到端验证**：空 ivn_dev 库 bootstrap → seed admin → 建测试剧本 → 试玩 → 观察 180 WS 消息中包含 2 scene-change + 5 sentence（narration + dialogue 含完整 PF）+ 2 tool-call，LLM 严格遵循 XML-lite 格式
+
+### P2b 回退（2026-04-19）
+- 之前短暂加过"admin 不能创建 production playthrough"的 403 限制，目的是防 admin userId 污染玩家游玩记录
+- 实测这让 admin 没法自己走完整玩家流（正当的编辑职责被拒）
+- 已撤销：`playthroughs.kind` + `users.role_id` 本身就是两维分类，分析时按需过滤即可；不在创建时加门
+- `server/src/routes/playthroughs.ts` POST 移除 kind/role 检查
 
 ## 已完成的里程碑
 
@@ -69,6 +75,8 @@ v2.6 剧本版本管理 + 编辑器试玩走后端全部完成（6.1-6.6）。v2
 | 2026-04-12 | IndexedDB 下线不做一键上传，走"强制导出备份+清理"流程 | 自动上传会在多设备/重名/孤儿 id 场景产生静默覆盖；备份+手动 import 更安全 | LocalBackupGate 作为过渡期 modal，检测到遗留数据时阻塞编辑器，逼用户先导 json 再清 IDB |
 | 2026-04-12 | LLM 配置每剧本独立 + playthrough 创建时固化 + fallback 链 | 多 admin 共用时每人可能要不同模型；production / 试玩独立；老 playthrough 不被 config 变更波及 | scripts 加 production_llm_config_id，playthroughs 加 llm_config_id NOT NULL；body.llmConfigId > script.productionLlmConfigId > 最早 config 兜底；编辑器 playtest dropdown 存 localStorage |
 | 2026-04-12 | AI 改写遇 length 截断自动续写，最多 8 段 | 长剧本 prompt 超 8192 tokens 是常态，手动补齐低效 | 循环 generate() 带 assistant history；UI 显示 "续写 N/8" 进度；derivedContent 每段 append |
+| 2026-04-19 | M3 引入 XML-lite 叙事协议 + 场景状态持久化 | 原"整段文本"输出无法驱动立绘/背景/PF 分析；需要流式解析 + 细粒度事件 | 新增 NarrativeParser（27 单测）；game-session/emitter/store/DebugPanel 全链路适配；迁移 0007 加 current_scene/sentence_index；工具集替换 show_image → change_scene/change_sprite/clear_stage |
+| 2026-04-19 | 撤销 admin 不能创 production playthrough 的限制 | kind + role_id 两维已够分析时过滤；硬门挡住 admin 自己走玩家流测试 | `server/src/routes/playthroughs.ts` POST 删掉 403 分支，注释明确记录"曾短暂限制过，已撤销" |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |

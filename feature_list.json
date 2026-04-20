@@ -373,5 +373,14 @@
     "type": "logic",
     "ref": "PROGRESS.md#v2.7 LLM 配置 + 改写续写",
     "verify": "短 prompt 单段返回；长 prompt 自动续写 N 段直到 stop；UI 显示 \"续写 N / 8\" 进度；达到上限 alert 提示"
+  },
+  {
+    "id": "M3",
+    "title": "视觉层铺底：XML-lite 叙事协议 + 场景状态 + 视觉工具",
+    "description": "LLM 输出用 <d s=... to=... hear=... eav=...>text</d> 标记对话，裸文本即旁白；流式 NarrativeParser 状态机解析为 Sentence 流（含 ParticipationFrame）；SceneState（背景+精灵）端到端持久化 (playthroughs.current_scene jsonb)；引入 change_scene/change_sprite/clear_stage 工具取代 show_image；WS 推流 sentence + scene-change 事件；EditorDebugPanel 新增 sentences tab",
+    "status": "done",
+    "type": "e2e",
+    "ref": "PROGRESS.md#M3 视觉层铺底",
+    "verify": "preview 上空库从 migrate → 建剧本 → 试玩一轮，观察 WS 消息中有 scene-change（背景 + 立绘 patch）+ sentence（narration 和 dialogue 含完整 PF）+ tool-call；narrative-parser 27 单测全绿；95 server tests 全绿；tsc clean"
   }
 ]

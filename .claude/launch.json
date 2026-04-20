@@ -6,6 +6,12 @@
       "runtimeExecutable": "/Users/kawowl/.local/share/fnm/node-versions/v22.15.0/installation/bin/node",
       "runtimeArgs": ["node_modules/vite/bin/vite.js", "--port", "5174"],
       "port": 5174
+    },
+    {
+      "name": "server",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "--cwd", "server", "--watch", "src/index.ts"],
+      "port": 3001
     }
   ]
 }

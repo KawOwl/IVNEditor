@@ -219,7 +219,8 @@ function ToolsPreview({ result }: { result: ArchitectResult }) {
         <div className="text-sm text-zinc-400 mb-2">可选工具</div>
         <div className="flex flex-wrap gap-2">
           {['read_state', 'query_changelog', 'pin_memory', 'query_memory',
-            'inject_context', 'list_context', 'advance_flow', 'set_mood', 'show_image',
+            'inject_context', 'list_context', 'set_mood',
+            'change_scene', 'change_sprite', 'clear_stage',
           ].map((name) => (
             <ToolBadge key={name} name={name} enabled={enabledOptionalTools.includes(name)} />
           ))}

@@ -140,6 +140,13 @@ export interface ScriptManifest {
   promptAssemblyOrder?: string[];
   /** 被禁用的 section ID 列表（不参与组装） */
   disabledAssemblySections?: string[];
+  // --- VN 资产引用（M3 起，optional 保持向后兼容）---
+  /** 剧本中出现的角色及其立绘资源 */
+  characters?: CharacterAsset[];
+  /** 剧本中出现的背景资源 */
+  backgrounds?: BackgroundAsset[];
+  /** 剧本开场的默认场景（玩家首次开始时的 currentScene 初值） */
+  defaultScene?: SceneState;
 }
 
 /** 首页卡片用的轻量目录条目 */
@@ -334,4 +341,103 @@ export interface TokenBreakdownInfo {
   contextSegments: number;
   total: number;
   budget: number;
+}
+
+// ============================================================================
+// VN Narrative — XML-lite 叙事协议产出的结构化类型（M3）
+// ============================================================================
+
+/**
+ * 立绘在场景中的呈现。
+ * id / emotion 是剧本 manifest 里定义的 character + sprite id（snake_case）。
+ * position 是可选的视觉位置，省略由前端决定默认布局。
+ */
+export interface SpriteState {
+  id: string;                          // 角色 id（如 "aonkei"）
+  emotion: string;                     // 表情 id（如 "praying" / "determined"）
+  position?: 'left' | 'center' | 'right';
+}
+
+/**
+ * 一帧场景的快照。由 change_scene / change_sprite / clear_stage 工具演进。
+ * 每个 Sentence 都 carry 一个 sceneRef 快照，backlog 回看时能正确还原视觉。
+ */
+export interface SceneState {
+  background: string | null;           // 背景 id；null = 无背景（纯色或 gradient）
+  sprites: SpriteState[];              // 在场的立绘，顺序即默认渲染顺序
+}
+
+/**
+ * Goffman 参与框架（Participation Framework）。
+ * 由 XML-lite 标签 <d s="..." to="..." hear="..." eav="..."> 解析而来。
+ *
+ * 参考：main 分支 `参与框架.md` AD-7~AD-10 决策。
+ *
+ * - speaker: 发话者 id（必填）
+ * - addressee: 受话者 id 列表（省略 = 独白，用 ['*'] 表示广播）
+ * - overhearers: 明知旁听者（speaker 知道他们在场）
+ * - eavesdroppers: 偷听者（speaker 不知道他们在场）
+ */
+export interface ParticipationFrame {
+  speaker: string;
+  addressee?: string[];                // 省略 = 独白/内心
+  overhearers?: string[];
+  eavesdroppers?: string[];
+}
+
+/**
+ * 叙事流的单个句子。由 streaming narrative parser 产出。
+ * 作为前端 VN UI + 记忆投影的共同数据源（"单一 map 函数"原则）。
+ *
+ * truncated 标记：streaming 结束时 parser 末尾降级闭合产生的 dialogue，
+ * 说明 LLM 输出被 maxOutputTokens 截断。Langfuse 会记录这种事件。
+ */
+export type Sentence =
+  | {
+      kind: 'narration';
+      text: string;
+      sceneRef: SceneState;
+      turnNumber: number;
+      index: number;                   // 在 playthrough 内的全局序号
+    }
+  | {
+      kind: 'dialogue';
+      text: string;
+      pf: ParticipationFrame;
+      sceneRef: SceneState;
+      turnNumber: number;
+      index: number;
+      truncated?: boolean;             // parser 末尾降级闭合的标记
+    }
+  | {
+      kind: 'scene_change';
+      scene: SceneState;
+      transition?: 'fade' | 'cut' | 'dissolve';
+      turnNumber: number;
+      index: number;
+    };
+
+// ============================================================================
+// Script Assets — 剧本美术资产引用（M3 起；M4 接入 OSS 完整上传链路）
+// ============================================================================
+
+/** 一个立绘资源 */
+export interface SpriteAsset {
+  id: string;                          // 表情 id（"praying" / "smiling"）
+  assetUrl?: string;                   // M3 可空，M4 填 OSS URL
+  label?: string;                      // 可选人读描述
+}
+
+/** 一个角色的所有立绘 */
+export interface CharacterAsset {
+  id: string;                          // snake_case（"aonkei"）
+  displayName: string;                 // UI 呈现名（"昂晴"）
+  sprites: SpriteAsset[];
+}
+
+/** 一个背景资源 */
+export interface BackgroundAsset {
+  id: string;                          // "classroom_evening"
+  assetUrl?: string;                   // M3 可空
+  label?: string;
 }

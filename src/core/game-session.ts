@@ -33,6 +33,8 @@ import type { SignalInputOptions } from './tool-executor';
 import { LLMClient } from './llm-client';
 import type { LLMConfig } from './llm-client';
 import type { SessionEmitter } from './session-emitter';
+import { NarrativeParser } from './narrative-parser';
+import type { Sentence, ParticipationFrame, SceneState } from './types';
 
 // ============================================================================
 // Types
@@ -60,11 +62,13 @@ export interface SessionPersistence {
     entry: { role: string; content: string; reasoning?: string; toolCalls?: unknown[]; finishReason?: string };
   }): Promise<void>;
 
-  /** generate() 全部结束后同步 memory 快照 + preview（不再负责 entry 入库） */
+  /** generate() 全部结束后同步 memory 快照 + preview + VN 场景（不再负责 entry 入库） */
   onGenerateComplete(data: {
     memoryEntries: unknown[];
     memorySummaries: string[];
     preview?: string | null;
+    /** M3: VN 当前场景快照，持久化到 playthroughs.current_scene */
+    currentScene?: SceneState | null;
   }): Promise<void>;
 
   /** 进入等待输入状态（signal_input_needed 或外循环 receive phase） */
@@ -205,6 +209,10 @@ export interface RestoreConfig {
   inputHint?: string | null;
   inputType?: string;
   choices?: string[] | null;
+  /** VN 当前场景快照（M3）。null = 老 playthrough，取 manifest.defaultScene 或空。 */
+  currentScene?: SceneState | null;
+  /** 场景默认值，当没有 currentScene 快照时用 */
+  defaultScene?: SceneState;
 }
 
 export interface GameSessionConfig {
@@ -221,6 +229,8 @@ export interface GameSessionConfig {
   disabledSections?: string[];   // 被禁用的 section ID 列表
   persistence?: SessionPersistence;  // 可选持久化（远程模式写 DB）
   tracing?: SessionTracing;          // 可选可观测性（远程模式接 Langfuse）
+  /** VN 模式首次开始时 currentScene 的初值（M3）。剧本 manifest.defaultScene 透传过来。 */
+  defaultScene?: SceneState;
 }
 
 // ============================================================================
@@ -263,6 +273,24 @@ export class GameSession {
    */
   private scenarioEnded = false;
   private scenarioEndReason: string | undefined;
+
+  /**
+   * VN 当前场景快照（M3）。由 change_scene / change_sprite / clear_stage 工具演进。
+   * start() 时从 manifest.defaultScene 或 {background:null, sprites:[]} 初始化，
+   * restore() 时从 DB 恢复。每次变化会发给 emitter 并在 generate 结束后持久化。
+   */
+  private currentScene: import('./types').SceneState = {
+    background: null,
+    sprites: [],
+  };
+
+  /**
+   * M3: applyScenePatch 完成后额外触发——发出 WS 事件 + 产出 scene_change Sentence。
+   * 只在 generate() 执行期间非 null。由 generate() 内部初始化。
+   */
+  private scenePatchEmitter:
+    | ((transition?: 'fade' | 'cut' | 'dissolve') => void)
+    | null = null;
 
   // 外循环 Receive 阶段的挂起 Promise（LLM 自然停止后等玩家输入）
   private inputResolve: ((text: string) => void) | null = null;
@@ -313,6 +341,10 @@ export class GameSession {
         this.memory.setInheritedSummary(config.inheritedSummary);
       }
 
+      // M3: 初始化 currentScene —— 用剧本 defaultScene，否则空
+      this.currentScene = config.defaultScene ?? { background: null, sprites: [] };
+      this.emitter.emitSceneChange(this.currentScene);
+
       // Sync initial state to UI
       this.syncDebugState();
 
@@ -357,6 +389,13 @@ export class GameSession {
         config.memoryEntries as import('./types').MemoryEntry[],
         config.memorySummaries,
       );
+
+      // M3: 恢复 currentScene —— 优先 DB 快照，其次 manifest 默认，最后空
+      this.currentScene =
+        config.currentScene ??
+        config.defaultScene ??
+        { background: null, sprites: [] };
+      this.emitter.emitSceneChange(this.currentScene);
 
       // 同步 UI
       this.syncDebugState();
@@ -520,14 +559,16 @@ export class GameSession {
           onSetMood: (_mood) => {
             // TODO: connect to UI mood system
           },
-          onShowImage: (_assetId) => {
-            // TODO: connect to UI image display
-          },
           onScenarioEnd: (reason) => {
             // 只记下 flag；实际的"退出循环 + 持久化"在本轮 generate 返回后做。
             // 这样 LLM 在 end_scenario 之后还能继续输出一小段收尾文字再 stop。
             this.scenarioEnded = true;
             this.scenarioEndReason = reason;
+          },
+          onSceneChange: (patch) => {
+            // M3 Part D 会在这里把 patch 应用到 this.currentScene 并
+            // 通过 emitter 推给前端。现在只记录调用，保证 tsc 通过。
+            this.applyScenePatch(patch);
           },
         });
         const enabledToolSet = getEnabledTools(allTools, this.enabledTools);
@@ -588,6 +629,70 @@ export class GameSession {
           messages: context.messages.map((m) => ({ role: m.role, content: m.content })),
         });
 
+        // M3: 为本轮创建 XML-lite Narrative Parser
+        // Parser 从 text-delta 流里解析出结构化 Sentence[]，与旧的
+        // entries[] 机制并存（M1 做 VN UI 时消费 Sentence[]）。
+        let turnSentenceIndex = 0;
+        const emitSentenceFrom = (
+          partial:
+            | { kind: 'narration'; text: string }
+            | { kind: 'dialogue'; text: string; pf: ParticipationFrame; truncated?: boolean }
+            | { kind: 'scene_change'; scene: SceneState; transition?: 'fade' | 'cut' | 'dissolve' },
+        ) => {
+          const base = { turnNumber: turn, index: turnSentenceIndex++ };
+          let sentence: Sentence;
+          if (partial.kind === 'narration') {
+            sentence = { kind: 'narration', text: partial.text, sceneRef: { ...this.currentScene }, ...base };
+          } else if (partial.kind === 'dialogue') {
+            sentence = {
+              kind: 'dialogue',
+              text: partial.text,
+              pf: partial.pf,
+              sceneRef: { ...this.currentScene },
+              ...base,
+              ...(partial.truncated !== undefined ? { truncated: partial.truncated } : {}),
+            };
+          } else {
+            sentence = {
+              kind: 'scene_change',
+              scene: partial.scene,
+              ...(partial.transition !== undefined ? { transition: partial.transition } : {}),
+              ...base,
+            };
+          }
+          this.emitter.appendSentence(sentence);
+        };
+
+        const narrativeParser = new NarrativeParser({
+          onNarrationChunk: (text) => {
+            emitSentenceFrom({ kind: 'narration', text });
+          },
+          // onDialogueStart / onDialogueChunk 不单独 emit——等整段 end 一次性
+          // emit Sentence（前端 VN 打字机从 Sentence 派生，无需子级 chunk 事件）
+          onDialogueEnd: (pf, fullText, truncated) => {
+            emitSentenceFrom({ kind: 'dialogue', text: fullText, pf, truncated });
+            // 🔭 tracing: XML-lite 流被截断（未闭合 </d>）记 Langfuse 事件
+            if (truncated) {
+              traceHandle?.event(
+                'narrative-truncation',
+                { speaker: pf.speaker, partialLength: fullText.length },
+                { turn, kind: 'dialogue' },
+              );
+            }
+          },
+        });
+        // 把 applyScenePatch 包装一层：除了更新 this.currentScene，
+        // 还要 emit scene-change 事件 + 产出一条 scene_change Sentence + Langfuse 事件
+        this.scenePatchEmitter = (transition) => {
+          this.emitter.emitSceneChange(this.currentScene, transition);
+          emitSentenceFrom({ kind: 'scene_change', scene: { ...this.currentScene }, transition });
+          traceHandle?.event(
+            'scene-change',
+            { scene: this.currentScene, transition },
+            { turn },
+          );
+        };
+
         // Call LLM (agentic tool loop — signal_input_needed 会挂起等玩家)
         //
         // 推理/叙事分离由 AI SDK 原生通道处理：
@@ -604,6 +709,8 @@ export class GameSession {
           onTextChunk: (chunk) => {
             this.currentNarrativeBuffer += chunk;
             this.emitter.appendToStreamingEntry(chunk);
+            // M3: 同步喂给 Narrative Parser 产出结构化 Sentence[]
+            narrativeParser.push(chunk);
           },
           onReasoningChunk: (chunk) => {
             this.emitter.appendReasoningToStreamingEntry(chunk);
@@ -648,6 +755,10 @@ export class GameSession {
 
         this.abortController = null;
 
+        // M3: parser 末尾降级（把未闭合 <d> 当 truncated 结束）
+        narrativeParser.finalize();
+        this.scenePatchEmitter = null;
+
         // Stage finish reason
         this.emitter.stagePendingDebug({ finishReason: result.finishReason });
 
@@ -688,6 +799,8 @@ export class GameSession {
           memoryEntries: this.memory.getAllEntries(),
           memorySummaries: this.memory.getSummaries(),
           preview: result.text ? result.text.slice(0, 80).replace(/\n/g, ' ') : null,
+          // M3: 持久化 VN 当前场景，断线重连时可恢复视觉状态
+          currentScene: this.currentScene,
         }).catch((e) => console.error('[Persistence] onGenerateComplete failed:', e));
 
         // Check if memory needs compression
@@ -866,5 +979,38 @@ export class GameSession {
       memoryEntryCount: this.memory.getAllEntries().length,
       memorySummaryCount: this.memory.getSummaries().length,
     });
+  }
+
+  /**
+   * M3: 应用 change_scene / change_sprite / clear_stage 工具产生的 scene patch。
+   * 步骤：
+   *   1. 更新 this.currentScene
+   *   2. 通过 scenePatchEmitter（由 generate() 装载）emit WS 事件 + Sentence
+   *   3. onGenerateComplete 时把 currentScene 持久化到 DB
+   */
+  private applyScenePatch(patch: import('./tool-executor').ScenePatch): void {
+    let transition: 'fade' | 'cut' | 'dissolve' | undefined;
+
+    if (patch.kind === 'clear') {
+      this.currentScene = { background: null, sprites: [] };
+    } else if (patch.kind === 'full') {
+      this.currentScene = {
+        background: patch.background !== undefined ? patch.background : this.currentScene.background,
+        sprites: patch.sprites !== undefined ? patch.sprites : this.currentScene.sprites,
+      };
+      transition = patch.transition;
+    } else if (patch.kind === 'single-sprite') {
+      // 替换同 id 的 sprite，否则追加
+      const existing = this.currentScene.sprites.findIndex((s) => s.id === patch.sprite.id);
+      const nextSprites = [...this.currentScene.sprites];
+      if (existing >= 0) {
+        nextSprites[existing] = patch.sprite;
+      } else {
+        nextSprites.push(patch.sprite);
+      }
+      this.currentScene = { ...this.currentScene, sprites: nextSprites };
+    }
+
+    this.scenePatchEmitter?.(transition);
   }
 }

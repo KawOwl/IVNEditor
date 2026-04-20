@@ -44,14 +44,38 @@ export interface ToolExecutorContext {
   /** 挂起模式：返回 Promise，等玩家输入后 resolve */
   waitForPlayerInput?: (options: SignalInputOptions) => Promise<string>;
   onSetMood?: (mood: string) => void;
-  onShowImage?: (assetId: string) => void;
   /**
    * `end_scenario` 工具调用时通知 game-session。
    * 调用后 game-session 会在本轮 generate 结束后不再进入下一轮 receive。
    * reason 是 LLM 可选传入的结束原因，用于持久化到 DB。
    */
   onScenarioEnd?: (reason?: string) => void;
+  /**
+   * M3: VN 场景工具回调
+   * change_scene / change_sprite / clear_stage 都经由这个回调通知 game-session。
+   * game-session 负责维护 currentScene state + 向前端 emitter 推送 scene-change 事件。
+   */
+  onSceneChange?: (patch: ScenePatch) => void;
 }
+
+/**
+ * Scene 变化的 patch。不同工具产生不同形态：
+ *   change_scene → { kind: 'full', background?, sprites?, transition? }
+ *   change_sprite → { kind: 'single-sprite', sprite: { id, emotion, position? } }
+ *   clear_stage → { kind: 'clear' }
+ */
+export type ScenePatch =
+  | {
+      kind: 'full';
+      background?: string;
+      sprites?: Array<{ id: string; emotion: string; position?: 'left' | 'center' | 'right' }>;
+      transition?: 'fade' | 'cut' | 'dissolve';
+    }
+  | {
+      kind: 'single-sprite';
+      sprite: { id: string; emotion: string; position?: 'left' | 'center' | 'right' };
+    }
+  | { kind: 'clear' };
 
 // ============================================================================
 // Tool Definitions Factory
@@ -244,15 +268,61 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
     },
   );
 
-  tools['show_image'] = handler(
-    'show_image',
+  // --- VN 场景工具（M3 新增） ---
+  tools['change_scene'] = handler(
+    'change_scene',
     z.object({
-      asset_id: z.string().describe('The image asset ID to display'),
+      background: z.string().optional().describe('Background asset id (snake_case, e.g. "classroom_evening"). Omit to keep current.'),
+      sprites: z
+        .array(
+          z.object({
+            id: z.string().describe('Character id (snake_case)'),
+            emotion: z.string().describe('Emotion/pose id (snake_case)'),
+            position: z.enum(['left', 'center', 'right']).optional(),
+          }),
+        )
+        .optional()
+        .describe('Full sprite stack replacing current. Empty array = clear sprites.'),
+      transition: z.enum(['fade', 'cut', 'dissolve']).optional().describe('Visual transition style, default "fade"'),
     }),
     (args) => {
-      const { asset_id } = args as { asset_id: string };
-      ctx.onShowImage?.(asset_id);
-      return { success: true, displayed: asset_id };
+      const { background, sprites, transition } = args as {
+        background?: string;
+        sprites?: Array<{ id: string; emotion: string; position?: 'left' | 'center' | 'right' }>;
+        transition?: 'fade' | 'cut' | 'dissolve';
+      };
+      ctx.onSceneChange?.({ kind: 'full', background, sprites, transition });
+      return { success: true };
+    },
+  );
+
+  tools['change_sprite'] = handler(
+    'change_sprite',
+    z.object({
+      character: z.string().describe('Character id (snake_case)'),
+      emotion: z.string().describe('New emotion/pose id'),
+      position: z.enum(['left', 'center', 'right']).optional(),
+    }),
+    (args) => {
+      const { character, emotion, position } = args as {
+        character: string;
+        emotion: string;
+        position?: 'left' | 'center' | 'right';
+      };
+      ctx.onSceneChange?.({
+        kind: 'single-sprite',
+        sprite: { id: character, emotion, position },
+      });
+      return { success: true };
+    },
+  );
+
+  tools['clear_stage'] = handler(
+    'clear_stage',
+    z.object({}),
+    () => {
+      ctx.onSceneChange?.({ kind: 'clear' });
+      return { success: true };
     },
   );
 

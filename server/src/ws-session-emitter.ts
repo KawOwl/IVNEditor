@@ -9,7 +9,7 @@
  */
 
 import type { SessionEmitter, SessionStatus, DebugSnapshot } from '../../src/core/session-emitter';
-import type { PromptSnapshot, ToolCallEntry } from '../../src/core/types';
+import type { PromptSnapshot, ToolCallEntry, SceneState, Sentence } from '../../src/core/types';
 
 type WS = { send(data: string): void };
 
@@ -99,6 +99,15 @@ export function createWebSocketEmitter(
     updateDebug(snapshot: DebugSnapshot) {
       if (!debug) return;
       emit('update-debug', snapshot);
+    },
+
+    // --- VN Narrative & Scene (M3) ---
+    appendSentence(sentence: Sentence) {
+      emit('sentence', { sentence });
+    },
+
+    emitSceneChange(scene: SceneState, transition?: 'fade' | 'cut' | 'dissolve') {
+      emit('scene-change', { scene, transition });
     },
   };
 }
