@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from 'react';
 import type { SpriteState, CharacterAsset } from '../../../core/types';
+import { getBackendUrl } from '../../../core/engine-mode';
 
 export interface SpriteLayerProps {
   /** 当前在场立绘（来自 SceneState.sprites） */
@@ -57,24 +58,28 @@ function Sprite({ sprite, characters }: SpriteProps) {
 
   // 进场 fade-in：mount 时 opacity 0，下一帧变成 1，200ms 过渡
   const [opacity, setOpacity] = useState(0);
+  // M4：图加载失败 → 回落占位卡片
+  const [imgFailed, setImgFailed] = useState(false);
   useEffect(() => {
     const raf = requestAnimationFrame(() => setOpacity(1));
     return () => cancelAnimationFrame(raf);
   }, []);
   const fadeStyle = { opacity, transition: 'opacity 200ms ease-in-out' } as const;
 
-  if (assetUrl) {
+  if (assetUrl && !imgFailed) {
+    const resolvedUrl = assetUrl.startsWith('http') ? assetUrl : `${getBackendUrl()}${assetUrl}`;
     return (
       <img
-        src={assetUrl}
+        src={resolvedUrl}
         alt={`${displayName} · ${emotionLabel}`}
         className={`absolute bottom-0 ${posClass} h-[85%] w-auto object-contain object-bottom`}
         style={fadeStyle}
+        onError={() => setImgFailed(true)}
       />
     );
   }
 
-  // 占位卡片
+  // 占位卡片（无 URL 或加载失败）
   return (
     <div
       className={`absolute bottom-[18%] ${posClass} flex h-48 w-32 flex-col items-center justify-center rounded-lg border border-zinc-600 bg-zinc-800/70 text-center text-zinc-300 shadow-lg`}

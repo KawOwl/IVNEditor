@@ -18,6 +18,8 @@ import type {
 } from '../../core/types';
 import { listTools } from '../../core/tool-catalog';
 import { useLLMConfigsStore } from '../../stores/llm-configs-store';
+import { useAssetUpload } from './use-asset-upload';
+import { getBackendUrl } from '../../core/engine-mode';
 import { cn } from '../../lib/utils';
 
 /** snake_case id 校验：小写字母开头，可包含小写字母/数字/下划线 */
@@ -41,6 +43,8 @@ export interface ScriptInfoPanelProps {
   characters: CharacterAsset[];
   backgrounds: BackgroundAsset[];
   defaultScene: SceneState | undefined;
+  /** M4：资产上传用的 script id；null = 剧本还没保存过，上传按钮应禁用 */
+  loadedScriptId: string | null;
   onLabelChange: (label: string) => void;
   onDescriptionChange: (desc: string) => void;
   onTagsChange: (tags: string[]) => void;
@@ -78,6 +82,7 @@ export function ScriptInfoPanel({
   characters,
   backgrounds,
   defaultScene,
+  loadedScriptId,
   onLabelChange,
   onDescriptionChange,
   onTagsChange,
@@ -214,12 +219,20 @@ export function ScriptInfoPanel({
 
         {/* M2：VN 角色资产 */}
         <Section title="角色资产">
-          <CharactersSection characters={characters} onChange={onCharactersChange} />
+          <CharactersSection
+            characters={characters}
+            onChange={onCharactersChange}
+            loadedScriptId={loadedScriptId}
+          />
         </Section>
 
         {/* M2：VN 背景资产 */}
         <Section title="背景资产">
-          <BackgroundsSection backgrounds={backgrounds} onChange={onBackgroundsChange} />
+          <BackgroundsSection
+            backgrounds={backgrounds}
+            onChange={onBackgroundsChange}
+            loadedScriptId={loadedScriptId}
+          />
         </Section>
 
         {/* M2：默认场景 */}
@@ -399,9 +412,11 @@ const inputClass =
 function CharactersSection({
   characters,
   onChange,
+  loadedScriptId,
 }: {
   characters: CharacterAsset[];
   onChange: (characters: CharacterAsset[]) => void;
+  loadedScriptId: string | null;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [newId, setNewId] = useState('');
@@ -485,6 +500,7 @@ function CharactersSection({
                     <SpritesEditor
                       sprites={c.sprites}
                       onChange={(sprites) => handleUpdateCharacter(c.id, { sprites })}
+                      loadedScriptId={loadedScriptId}
                     />
                   </div>
                 </div>
@@ -524,17 +540,20 @@ function CharactersSection({
   );
 }
 
-/** 立绘表情子编辑器（id + label） */
+/** 立绘表情子编辑器（id + label + M4 上传图片） */
 function SpritesEditor({
   sprites,
   onChange,
+  loadedScriptId,
 }: {
   sprites: SpriteAsset[];
   onChange: (sprites: SpriteAsset[]) => void;
+  loadedScriptId: string | null;
 }) {
   const [newId, setNewId] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const { upload, uploading } = useAssetUpload(loadedScriptId, 'sprite');
 
   const handleAdd = useCallback(() => {
     const id = newId.trim();
@@ -556,13 +575,35 @@ function SpritesEditor({
     setError(null);
   }, [newId, newLabel, sprites, onChange]);
 
+  const handleFilePick = async (index: number, file: File | null) => {
+    if (!file) return;
+    try {
+      const assetUrl = await upload(file);
+      const next = [...sprites];
+      next[index] = { ...next[index]!, assetUrl };
+      onChange(next);
+    } catch (e) {
+      alert(`上传失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   return (
     <div className="space-y-1.5">
       {sprites.length > 0 && (
         <ul className="space-y-1">
           {sprites.map((s, i) => (
             <li key={s.id} className="flex items-center gap-2 text-xs">
-              <span className="font-mono text-amber-300 w-24 truncate">{s.id}</span>
+              {/* 图片预览 / 占位 */}
+              {s.assetUrl ? (
+                <img
+                  src={`${getBackendUrl()}${s.assetUrl}`}
+                  alt={s.id}
+                  className="h-10 w-10 rounded border border-zinc-700 object-cover bg-zinc-950"
+                />
+              ) : (
+                <div className="h-10 w-10 rounded border border-dashed border-zinc-700 flex items-center justify-center text-[9px] text-zinc-600">无图</div>
+              )}
+              <span className="font-mono text-amber-300 w-20 truncate">{s.id}</span>
               <input
                 type="text"
                 value={s.label ?? ''}
@@ -574,6 +615,24 @@ function SpritesEditor({
                 placeholder="显示标签"
                 className={cn(inputClass, 'flex-1')}
               />
+              <label
+                className={cn(
+                  'text-[11px] px-2 py-1 rounded border border-zinc-700 cursor-pointer',
+                  uploading || !loadedScriptId
+                    ? 'opacity-40 cursor-not-allowed text-zinc-600'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:border-zinc-500',
+                )}
+                title={loadedScriptId ? '上传 / 替换立绘图' : '请先保存剧本'}
+              >
+                {s.assetUrl ? '换' : '传'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={uploading || !loadedScriptId}
+                  onChange={(e) => { handleFilePick(i, e.target.files?.[0] ?? null); e.target.value = ''; }}
+                />
+              </label>
               <button
                 onClick={() => onChange(sprites.filter((_, j) => j !== i))}
                 className="text-[11px] px-2 rounded border border-zinc-700 text-zinc-500 hover:text-red-400"
@@ -617,13 +676,28 @@ function SpritesEditor({
 function BackgroundsSection({
   backgrounds,
   onChange,
+  loadedScriptId,
 }: {
   backgrounds: BackgroundAsset[];
   onChange: (backgrounds: BackgroundAsset[]) => void;
+  loadedScriptId: string | null;
 }) {
   const [newId, setNewId] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const { upload, uploading } = useAssetUpload(loadedScriptId, 'background');
+
+  const handleFilePick = async (index: number, file: File | null) => {
+    if (!file) return;
+    try {
+      const assetUrl = await upload(file);
+      const next = [...backgrounds];
+      next[index] = { ...next[index]!, assetUrl };
+      onChange(next);
+    } catch (e) {
+      alert(`上传失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
 
   const handleAdd = useCallback(() => {
     const id = newId.trim();
@@ -653,6 +727,15 @@ function BackgroundsSection({
         <ul className="space-y-1">
           {backgrounds.map((b, i) => (
             <li key={b.id} className="flex items-center gap-2 text-xs">
+              {b.assetUrl ? (
+                <img
+                  src={`${getBackendUrl()}${b.assetUrl}`}
+                  alt={b.id}
+                  className="h-10 w-16 rounded border border-zinc-700 object-cover bg-zinc-950"
+                />
+              ) : (
+                <div className="h-10 w-16 rounded border border-dashed border-zinc-700 flex items-center justify-center text-[9px] text-zinc-600">无图</div>
+              )}
               <span className="font-mono text-cyan-300 w-32 truncate">{b.id}</span>
               <input
                 type="text"
@@ -665,6 +748,24 @@ function BackgroundsSection({
                 placeholder="显示标签"
                 className={cn(inputClass, 'flex-1')}
               />
+              <label
+                className={cn(
+                  'text-[11px] px-2 py-1 rounded border border-zinc-700 cursor-pointer',
+                  uploading || !loadedScriptId
+                    ? 'opacity-40 cursor-not-allowed text-zinc-600'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:border-zinc-500',
+                )}
+                title={loadedScriptId ? '上传 / 替换背景图' : '请先保存剧本'}
+              >
+                {b.assetUrl ? '换' : '传'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={uploading || !loadedScriptId}
+                  onChange={(e) => { handleFilePick(i, e.target.files?.[0] ?? null); e.target.value = ''; }}
+                />
+              </label>
               <button
                 onClick={() => onChange(backgrounds.filter((_, j) => j !== i))}
                 className="text-[11px] px-2 rounded border border-zinc-700 text-zinc-500 hover:text-red-400"
@@ -752,6 +853,10 @@ function DefaultSceneSection({
   }, [firstSprite, updateScene]);
 
   const selectedChar = firstSprite ? characters.find((c) => c.id === firstSprite.id) : undefined;
+  const selectedBg = scene?.background ? backgrounds.find((b) => b.id === scene.background) : undefined;
+  const selectedSprite = firstSprite && selectedChar
+    ? selectedChar.sprites.find((s) => s.id === firstSprite.emotion)
+    : undefined;
 
   return (
     <div className="space-y-2">
@@ -772,6 +877,47 @@ function DefaultSceneSection({
       </Field>
       {backgrounds.length === 0 && (
         <div className="text-[11px] text-zinc-500 italic ml-[5.5rem]">先在上方"背景资产"中新建至少一个背景</div>
+      )}
+
+      {/* M4 Step 4.5：所选背景 + 开场立绘的缩略预览，叠加展示 */}
+      {selectedBg && (
+        <div className="ml-[5.5rem] pt-1">
+          <div className="relative w-40 h-24 rounded border border-zinc-700 overflow-hidden bg-zinc-900">
+            {selectedBg.assetUrl ? (
+              <img
+                src={`${getBackendUrl()}${selectedBg.assetUrl}`}
+                alt={selectedBg.id}
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center text-[10px] font-mono text-zinc-500">
+                {selectedBg.label ?? selectedBg.id}
+              </div>
+            )}
+            {selectedSprite && firstSprite && (
+              <div
+                className={cn(
+                  'absolute bottom-0 flex items-end justify-center',
+                  firstSprite.position === 'left' ? 'left-1 w-1/3' :
+                  firstSprite.position === 'right' ? 'right-1 w-1/3' :
+                  'left-1/2 -translate-x-1/2 w-1/3',
+                )}
+              >
+                {selectedSprite.assetUrl ? (
+                  <img
+                    src={`${getBackendUrl()}${selectedSprite.assetUrl}`}
+                    alt={selectedChar?.id}
+                    className="max-h-[85%] object-contain"
+                  />
+                ) : (
+                  <div className="text-[9px] font-mono text-zinc-300 bg-zinc-800/80 rounded px-1">
+                    {selectedChar?.id}:{selectedSprite.id}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       <div className="pt-1">

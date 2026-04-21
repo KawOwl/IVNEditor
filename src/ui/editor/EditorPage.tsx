@@ -1394,6 +1394,7 @@ ${doc.content}
                 characters={characters}
                 backgrounds={backgrounds}
                 defaultScene={defaultScene}
+                loadedScriptId={loadedScriptId}
                 onLabelChange={setScriptLabel}
                 onDescriptionChange={setScriptDescription}
                 onTagsChange={setScriptTags}

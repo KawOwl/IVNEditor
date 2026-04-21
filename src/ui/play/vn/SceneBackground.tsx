@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { BackgroundAsset } from '../../../core/types';
+import { getBackendUrl } from '../../../core/engine-mode';
 
 export type SceneTransition = 'fade' | 'cut' | 'dissolve';
 
@@ -86,6 +87,8 @@ interface LayerProps {
 function Layer({ backgroundId, backgrounds, phase, duration }: LayerProps) {
   // 入场层：opacity 0 → 1；离场层：opacity 1 → 0
   const [opacity, setOpacity] = useState(phase === 'in' ? 0 : 1);
+  // M4：图加载失败回落占位
+  const [imgFailed, setImgFailed] = useState(false);
 
   useEffect(() => {
     if (duration === 0) {
@@ -109,17 +112,22 @@ function Layer({ backgroundId, backgrounds, phase, duration }: LayerProps) {
   const asset = backgrounds.find((b) => b.id === backgroundId);
   const assetUrl = asset?.assetUrl;
 
-  if (assetUrl) {
+  if (assetUrl && !imgFailed) {
+    // M4：用 <img> 而不是 background-image，这样 onError 能兜底
+    const resolvedUrl = assetUrl.startsWith('http') ? assetUrl : `${getBackendUrl()}${assetUrl}`;
     return (
-      <div
-        className="absolute inset-0 bg-cover bg-center"
-        style={{ ...style, backgroundImage: `url(${JSON.stringify(assetUrl)})` }}
-        aria-label={`scene-background-${backgroundId}`}
-      />
+      <div className="absolute inset-0" style={style} aria-label={`scene-background-${backgroundId}`}>
+        <img
+          src={resolvedUrl}
+          alt={asset?.label ?? backgroundId}
+          className="w-full h-full object-cover"
+          onError={() => setImgFailed(true)}
+        />
+      </div>
     );
   }
 
-  // 占位
+  // 占位（assetUrl 未设 OR 图加载失败）
   const label = asset?.label ?? backgroundId;
   return (
     <div
