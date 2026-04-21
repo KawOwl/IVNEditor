@@ -56,8 +56,13 @@ WORKDIR /app/server
 
 # --- Layer 3: 后端依赖（只在 server/package.json 变化时重跑）---
 COPY server/package.json server/bun.lock* ./
+# --linker=hoisted：走 npm 式扁平 node_modules，不用 bun 1.3 默认的 isolated
+# cache 结构。默认 isolated 模式下 bun 运行时会从 ~/.bun/install/cache/pkg@@@N
+# 里加载模块，peer dep 和 variant 解析会挑出和 lockfile 不一致的版本（踩过
+# ai@6.0.168 拿到而不是 lockfile pin 的 6.0.143 → zod/v4 import 解析挂）。
+# hoisted 保证 node_modules/pkg 就是 bun 实际读的那份。
 RUN --mount=type=cache,id=bun-cache,target=/root/.bun/install/cache \
-    bun install --frozen-lockfile
+    bun install --frozen-lockfile --linker=hoisted
 
 # ============================================================
 # Stage 3: 运行镜像 —— 组装最终镜像
