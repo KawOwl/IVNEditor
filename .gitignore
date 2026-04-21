@@ -14,3 +14,6 @@ trace-*.json
 
 # k3s 压测环境 env（含密码/AK）
 ops/k3s-pressuretest/env
+
+# MinIO 本地 dev 数据目录（M4 asset pipeline）
+ops/minio/data/

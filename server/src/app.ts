@@ -20,6 +20,7 @@ import { sessionRoutes } from './routes/sessions';
 import { llmConfigRoutes } from './routes/llm-configs';
 import { authRoutes } from './routes/auth';
 import { playthroughRoutes } from './routes/playthroughs';
+import { assetRoutes } from './routes/assets';
 
 export function buildApp() {
   return new Elysia()
@@ -31,6 +32,7 @@ export function buildApp() {
     .use(llmConfigRoutes)
     .use(authRoutes)
     .use(playthroughRoutes)
+    .use(assetRoutes)
     .get('/health', () => ({ ok: true, timestamp: Date.now() }));
 }
 

@@ -57,6 +57,13 @@
       "when": 1776625000000,
       "tag": "0007_vn_scene_state",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1776700000000,
+      "tag": "0008_script_assets",
+      "breakpoints": true
     }
   ]
 }

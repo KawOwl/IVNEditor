@@ -1,0 +1,35 @@
+# MinIO — 本地 dev 用的 S3 兼容对象存储
+# 启动：  docker compose up -d
+# 控制台：http://localhost:9001（账号/密码见下面的 env）
+# API 端：http://localhost:9000（server/.env 里 S3_ENDPOINT 填这个）
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: ivn-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console UI
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio12345
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+
+  # 启动后自动建 bucket（避免首次要手动点）
+  minio-init:
+    image: minio/mc:latest
+    container_name: ivn-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+        sleep 3;
+        /usr/bin/mc alias set local http://minio:9000 minio minio12345;
+        /usr/bin/mc mb --ignore-existing local/ivn-assets;
+        echo '[minio-init] bucket ready: local/ivn-assets';
+        exit 0;
+      "
+    restart: "no"

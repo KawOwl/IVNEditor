@@ -20,6 +20,7 @@ import {
   pgTable,
   text,
   integer,
+  bigint,
   boolean,
   jsonb,
   timestamp,
@@ -289,4 +290,31 @@ export const narrativeEntries = pgTable('narrative_entries', {
   index('idx_narrative_entries_order_idx').on(table.playthroughId, table.orderIdx),
   // 防止并发写入导致 orderIdx 重复（P1 修复）
   unique('uniq_narrative_entry_order').on(table.playthroughId, table.orderIdx),
+]);
+
+// ============================================================================
+// Script Assets — VN 美术资产（M4）
+// ============================================================================
+//
+// 资产跟 script 走（owner = script.author_user_id），删剧本级联删。
+// storage_key 是 S3 里的 object key（生产是阿里云 OSS，dev 是 MinIO）。
+// manifest 里的 `assetUrl` 字段存 `/api/assets/<storage_key>`，前端 <img src> 直接可用。
+export const scriptAssets = pgTable('script_assets', {
+  id: text('id').primaryKey(),
+  scriptId: text('script_id')
+    .notNull()
+    .references(() => scripts.id, { onDelete: 'cascade' }),
+  /** 'background' | 'sprite' —— 目前仅用于分类展示，后端不强制校验用途 */
+  kind: text('kind').notNull(),
+  /** S3 object key，形如 "scripts/<sid>/<uuid>.png"；unique 全局避重 */
+  storageKey: text('storage_key').notNull().unique(),
+  /** 上传时的原文件名（诊断用，非必须） */
+  originalName: text('original_name'),
+  /** 上传 request 带的 Content-Type（不做白名单） */
+  contentType: text('content_type'),
+  /** 文件大小（诊断 / 审计） */
+  sizeBytes: bigint('size_bytes', { mode: 'number' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_script_assets_script').on(table.scriptId),
 ]);
