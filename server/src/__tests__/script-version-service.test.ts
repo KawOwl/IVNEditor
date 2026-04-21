@@ -16,6 +16,7 @@ import { ScriptVersionService, hashManifest } from '../services/script-version-s
 import { scriptService } from '../services/script-service';
 import { playthroughService } from '../services/playthrough-service';
 import { db, schema } from '../db';
+import { assertTestDatabase } from './_db-guard';
 import type { ScriptManifest } from '../../../src/core/types';
 
 const service = new ScriptVersionService();
@@ -25,6 +26,7 @@ const service = new ScriptVersionService();
 // ============================================================================
 
 async function cleanTables() {
+  await assertTestDatabase();
   await db.delete(schema.narrativeEntries);
   await db.delete(schema.playthroughs);
   await db.delete(schema.scriptVersions);

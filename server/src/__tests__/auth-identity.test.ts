@@ -20,12 +20,14 @@ import {
 import { userService } from '../services/user-service';
 import { db, schema } from '../db';
 import { eq } from 'drizzle-orm';
+import { assertTestDatabase } from './_db-guard';
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
 async function cleanTables() {
+  await assertTestDatabase();
   await db.delete(schema.narrativeEntries);
   await db.delete(schema.playthroughs);
   await db.delete(schema.scriptVersions);
