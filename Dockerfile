@@ -19,10 +19,12 @@
 # ============================================================
 # Stage 1: 前端 builder —— 用 Node + pnpm 做 vite build
 # ============================================================
-FROM node:22-alpine AS frontend-builder
+# Node 24（当前 Current，2026-10 转 Active LTS）。Vite 8 要 ≥ 20.19 或 22.12+，24 满足。
+# Node 22 也行（Active LTS 到 2027-04），build stage 是丢弃层，选新的。
+FROM node:24-alpine AS frontend-builder
 WORKDIR /build
 
-# pnpm 通过 corepack 激活（node:22 自带 corepack）
+# pnpm 通过 corepack 激活。packageManager 字段锁在 package.json，corepack 用那个版本
 RUN corepack enable && corepack prepare pnpm@10.12.4 --activate
 
 # --- Layer 2a: 前端依赖（只在 package.json / lock 变化时重跑）---
@@ -49,7 +51,7 @@ RUN pnpm build
 # ============================================================
 # Stage 2: 后端依赖 —— 用 Bun 解 server 依赖
 # ============================================================
-FROM oven/bun:1.1-alpine AS backend-deps
+FROM oven/bun:1.3-alpine AS backend-deps
 WORKDIR /app/server
 
 # --- Layer 3: 后端依赖（只在 server/package.json 变化时重跑）---
@@ -60,7 +62,7 @@ RUN --mount=type=cache,id=bun-cache,target=/root/.bun/install/cache \
 # ============================================================
 # Stage 3: 运行镜像 —— 组装最终镜像
 # ============================================================
-FROM oven/bun:1.1-alpine AS runtime
+FROM oven/bun:1.3-alpine AS runtime
 WORKDIR /app
 
 # 运行时依赖：curl 用于 healthcheck、tini 当 PID 1（优雅退出）
