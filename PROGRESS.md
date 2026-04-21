@@ -1,19 +1,33 @@
 # 项目进度
 
 ## 当前状态
-M1 + M2 全部完成：
-- M1（玩家侧 VN 渲染层）: 3 commits（feat(m1) + refactor(m1)）；三层组件 + click-to-advance + 打字机 + 场景过渡 + backlog + opening narration 前置 + 删老 NarrativeView/DebugPanel
-- M2（编辑器侧 VN 资产管理）: 1 commit（feat(m2)）；ScriptInfoPanel 加角色/背景/默认场景三个 section，round-trip 验证过
+M1 + M2 + M4 全部完成（代码层）。M4 2 个 commit 已落地：
+- `feat(m4a)` 后端资产 pipeline（S3 抽象 + migration 0008 + routes + MinIO 本地 dev）
+- `feat(m4b)` 前端上传 UI + 缩略图 + M1 渲染真图 + 加载失败兜底
 
-下一步待定。候选方向：
-- **M4**: OSS 资产 pipeline（characters/backgrounds 真实图片上传 + CDN + assetUrl 回填）—— 把 M1/M2 占位层变成真立绘
-- **backlog 点击回跳** / **auto 播放** / **章节切换动画** 等 VN 纵深功能
-- **openingMessages UI**（当前只能手写 manifest；M2 没包含这一块）
+**待用户端操作**：启动 Docker Desktop → `cd ops/minio && docker compose up -d`
+起 MinIO，然后就可以 preview 上试真图上传 + 渲染。
 
 ## 当前任务
-（M1 + M2 刚完成，等用户指定下一步）
+（M4 代码完成，等本地 MinIO 环境可用后做 E2E 验证；也看用户下一步指哪）
 
 ## 已完成的里程碑
+
+### M4：资产上传 pipeline（2026-04-21）
+- **后端** (commit feat(m4a))
+  - migration 0008 `script_assets` 表（FK scripts ON DELETE CASCADE）
+  - `AssetStorage` S3 抽象（AWS SDK v3 + lib-storage Upload 流式分片）
+  - `asset-service.ts` CRUD + `assets.ts` 四个 routes（POST/GET list/GET read/DELETE）
+  - 不做 mime/size 白名单（决策 Q5：不限制）
+  - 本地 dev：`ops/minio/docker-compose.yml`（含 minio-init 自动建 bucket）
+  - `server/.env.example` 加 S3 配置
+- **前端** (commit feat(m4b))
+  - `useAssetUpload` hook (multipart POST)
+  - ScriptInfoPanel SpritesEditor：40×40 缩略图 + "传/换" 按钮（scriptId 为 null 时 disabled）
+  - ScriptInfoPanel BackgroundsSection：64×40 缩略图 + "传/换" 按钮
+  - DefaultSceneSection：160×96 预览，背景 + 立绘按 position 叠加
+  - M1 SceneBackground / SpriteLayer：assetUrl 真图渲染 + onError 回落占位
+- Plan / 决策表见 `.claude/plans/m4-asset-pipeline.md`
 
 ### M1 + M2：VN 播放与资产编辑（2026-04-21）
 - **M1** 玩家侧 VN 渲染层（commits 00edf2c / ed9c41f）

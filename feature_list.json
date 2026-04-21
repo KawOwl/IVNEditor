@@ -400,5 +400,14 @@
     "type": "ui",
     "ref": ".claude/plans/m1-vn-renderer.md",
     "verify": "preview E2E：建 sakuya(咲夜) + smile(微笑) / cafe_interior(咖啡馆内景) / defaultScene = cafe_interior + sakuya:smile@center → 保存 → DB 里 script_versions.manifest 的 characters/backgrounds/defaultScene 三字段 round-trip 完整；tsc clean；server tests 95/95"
+  },
+  {
+    "id": "M4",
+    "title": "资产上传 pipeline（S3 协议 + MinIO/OSS + 编辑器上传 + M1 渲染真图）",
+    "description": "script_assets 表 + S3 协议抽象层（@aws-sdk/client-s3，本地 MinIO / 生产阿里云 OSS）；POST /api/scripts/:id/assets 上传 + GET /api/assets/:key 反代；CharactersSection / BackgroundsSection 加上传按钮 + 缩略图预览；DefaultSceneSection 预览真图；M1 SceneBackground / SpriteLayer 加载真图 + 加载失败兜底占位",
+    "status": "done",
+    "type": "e2e",
+    "ref": ".claude/plans/m4-asset-pipeline.md",
+    "verify": "preview E2E：启 MinIO → 编辑器上传 1 立绘 + 1 背景 → 保存发布 → 玩家流看到真图；关 MinIO 刷新 → 占位兜底；manifest.characters[].sprites[].assetUrl / backgrounds[].assetUrl round-trip 完整；tsc clean；server tests 全绿"
   }
 ]
