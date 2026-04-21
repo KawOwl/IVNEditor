@@ -27,7 +27,7 @@ REGISTRY_PUSH="${REGISTRY_PUSH:-memoryx-registry-registry.cn-shenzhen.cr.aliyunc
 REGISTRY_PULL="${REGISTRY_PULL:-memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com}"
 
 # 命名空间 + repo（按你实际的 ACR 配置）
-NAMESPACE="${NAMESPACE:-ivn-prod}"
+NAMESPACE="${NAMESPACE:-ivn}"
 REPO="${REPO:-engine}"
 
 PUSH_IMAGE="${REGISTRY_PUSH}/${NAMESPACE}/${REPO}:${TAG}"
