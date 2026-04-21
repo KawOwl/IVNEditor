@@ -2,52 +2,66 @@
 #
 # 构建并推送 IVN 引擎镜像到阿里云 ACR
 #
+# 两个 endpoint：
+#   公网：  registry.cn-shenzhen.aliyuncs.com       — 本地 push 用（付流量费但少）
+#   VPC：   registry-vpc.cn-shenzhen.aliyuncs.com   — ECS 从 VPC 内 pull 用（免流量、快）
+# 同一个镜像两个 endpoint 共享，push 到公网后 VPC 也能立刻 pull。
+#
 # 用法：
 #   cd ops/k3s-pressuretest/
-#   ./build-and-push.sh v1
 #   ./build-and-push.sh v2
 #
-# 首次运行前：
-#   docker login registry-vpc.cn-shenzhen.aliyuncs.com
-#
+# 首次：
+#   docker login registry.cn-shenzhen.aliyuncs.com
+#   （账号用 ACR 访问凭证的用户名；密码是 ACR 控制台设的"固定密码"）
 
 set -euo pipefail
 
 TAG="${1:-latest}"
-# 按你实际的 ACR 命名空间改
-REGISTRY="${REGISTRY:-registry-vpc.cn-shenzhen.aliyuncs.com}"
+
+# 公网 / VPC endpoint
+REGISTRY_PUSH="${REGISTRY_PUSH:-registry.cn-shenzhen.aliyuncs.com}"
+REGISTRY_PULL="${REGISTRY_PULL:-registry-vpc.cn-shenzhen.aliyuncs.com}"
+
+# 命名空间 + repo（按你实际的 ACR 配置）
 NAMESPACE="${NAMESPACE:-ivn-prod}"
 REPO="${REPO:-engine}"
 
-IMAGE="${REGISTRY}/${NAMESPACE}/${REPO}:${TAG}"
+PUSH_IMAGE="${REGISTRY_PUSH}/${NAMESPACE}/${REPO}:${TAG}"
+PULL_IMAGE="${REGISTRY_PULL}/${NAMESPACE}/${REPO}:${TAG}"
 
 # 项目根目录 = 本脚本所在目录的上上层
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-echo "[build] 镜像: $IMAGE"
-echo "[build] context: $(pwd)"
+echo "[build] 镜像（本地 tag）: $PUSH_IMAGE"
+echo "[build] context:          $(pwd)"
 
 # 开 BuildKit（默认已开，保险 export 一下）—— 分层 cache + --mount=type=cache 必需
 export DOCKER_BUILDKIT=1
 
 docker build \
-  --tag "$IMAGE" \
+  --tag "$PUSH_IMAGE" \
   --progress=plain \
   --platform linux/amd64 \
   .
 
 echo ""
 echo "[build] 镜像分层："
-docker history "$IMAGE" --format "table {{.ID}}\t{{.Size}}\t{{.CreatedBy}}" | head -20
+docker history "$PUSH_IMAGE" --format "table {{.ID}}\t{{.Size}}\t{{.CreatedBy}}" | head -20
 
 echo ""
-echo "[push] 推送到 $IMAGE"
-docker push "$IMAGE"
+echo "[push] 推送到公网 endpoint: $PUSH_IMAGE"
+docker push "$PUSH_IMAGE"
 
 echo ""
-echo "✅ 完成: $IMAGE"
+echo "✅ 完成"
+echo ""
+echo "两个地址（同一个 image，两个 DNS）："
+echo "  公网（本地 pull / push）: $PUSH_IMAGE"
+echo "  VPC（ECS pull，免流量）: $PULL_IMAGE"
 echo ""
 echo "下一步："
-echo "  1. 更新 ops/k3s-pressuretest/env: IVN_IMAGE=$IMAGE"
+echo "  1. 更新 ops/k3s-pressuretest/env: IVN_IMAGE=$PULL_IMAGE"
+echo "     （k3s manifests 里用 VPC 地址，ECS pull 免流量费）"
 echo "  2. 在 ECS 上: sudo -E bash setup.sh"
-echo "     （或仅更新镜像: kubectl -n ivn set image deploy/ivn-engine server=$IMAGE）"
+echo "     或仅更新镜像: kubectl -n ivn set image deploy/ivn-engine server=$PULL_IMAGE"
