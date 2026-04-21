@@ -80,6 +80,11 @@ COPY server/drizzle.config.ts ./server/
 COPY server/scripts/ ./server/scripts/
 COPY server/tsconfig.json ./server/
 COPY server/package.json ./server/
+# 运行时也要 bun.lock：`bun run` 启动时若没 lock，会按 package.json 的 `^x` 重新
+# resolve 最新版本，绕过 `bun install --frozen-lockfile` 在 backend-deps 阶段装进
+# node_modules 的确定版本。曾因此踩过 `ai@6.0.168` 里的 `zod/v4` peer dep
+# 不兼容问题，根因就是 runtime 缺 lock → 重 resolve → 拿到非 lockfile 指定版本。
+COPY server/bun.lock* ./server/
 
 # --- 前端 dist 需要在项目根（server 代码里 DIST_DIR = ../../dist）---
 COPY --from=frontend-builder /build/dist ./dist
