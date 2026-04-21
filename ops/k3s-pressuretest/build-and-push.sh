@@ -2,26 +2,29 @@
 #
 # 构建并推送 IVN 引擎镜像到阿里云 ACR
 #
-# 两个 endpoint：
-#   公网：  registry.cn-shenzhen.aliyuncs.com       — 本地 push 用（付流量费但少）
-#   VPC：   registry-vpc.cn-shenzhen.aliyuncs.com   — ECS 从 VPC 内 pull 用（免流量、快）
+# 两个 endpoint（企业版 ACR 格式：<instance>-registry.<region>.cr.aliyuncs.com）：
+#   公网：  memoryx-registry-registry.cn-shenzhen.cr.aliyuncs.com       — 本地 push
+#   VPC：   memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com   — ECS pull（免流量）
 # 同一个镜像两个 endpoint 共享，push 到公网后 VPC 也能立刻 pull。
+#
+# 个人版 ACR 用的是 `registry.cn-shenzhen.aliyuncs.com`（没有实例前缀、
+# 没有 `.cr.`），改 REGISTRY_PUSH/REGISTRY_PULL 覆盖即可。
 #
 # 用法：
 #   cd ops/k3s-pressuretest/
 #   ./build-and-push.sh v2
 #
 # 首次：
-#   docker login registry.cn-shenzhen.aliyuncs.com
+#   docker login memoryx-registry-registry.cn-shenzhen.cr.aliyuncs.com
 #   （账号用 ACR 访问凭证的用户名；密码是 ACR 控制台设的"固定密码"）
 
 set -euo pipefail
 
 TAG="${1:-latest}"
 
-# 公网 / VPC endpoint
-REGISTRY_PUSH="${REGISTRY_PUSH:-registry.cn-shenzhen.aliyuncs.com}"
-REGISTRY_PULL="${REGISTRY_PULL:-registry-vpc.cn-shenzhen.aliyuncs.com}"
+# 公网 / VPC endpoint（企业版 ACR）
+REGISTRY_PUSH="${REGISTRY_PUSH:-memoryx-registry-registry.cn-shenzhen.cr.aliyuncs.com}"
+REGISTRY_PULL="${REGISTRY_PULL:-memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com}"
 
 # 命名空间 + repo（按你实际的 ACR 配置）
 NAMESPACE="${NAMESPACE:-ivn-prod}"
