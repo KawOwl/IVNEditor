@@ -25,7 +25,7 @@
 import { Elysia } from 'elysia';
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
-import { requireAdmin, requireAnyIdentity, isResponse } from '../auth-identity';
+import { requireAdmin, isResponse } from '../auth-identity';
 import { scriptService } from '../services/script-service';
 import { assetService, type AssetKind } from '../services/asset-service';
 import { getAssetStorage } from '../services/asset-storage';
@@ -169,9 +169,12 @@ export const assetRoutes = new Elysia({ prefix: '/api' })
   })
 
   // GET /assets/* — 反代 S3
-  .get('/assets/*', async ({ params, request }) => {
-    const ident = await requireAnyIdentity(request);
-    if (isResponse(ident)) return ident;
+  //
+  // 公开：`<img src>` 不会带 Authorization header，要求鉴权会被 Chrome ORB
+  // 挡成 ERR_BLOCKED_BY_ORB。storage_key 是 uuid-based 路径（形如
+  // `scripts/<sid>/<uuid>.png`），不可猜测，充当 capability token。
+  // 非 admin 不会拿到 key（manifest 里才有，manifest 只 published version 对公众开放）。
+  .get('/assets/*', async ({ params }) => {
     const key = (params as Record<string, string>)['*'];
     if (!key) {
       return new Response(JSON.stringify({ error: 'Missing key' }), {
