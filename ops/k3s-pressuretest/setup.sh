@@ -212,7 +212,22 @@ kubectl -n ivn create secret generic ivn-backend \
   --from-literal=LANGFUSE_SECRET_KEY="${LANGFUSE_SECRET_KEY:-}" \
   --from-literal=ADMIN_USERS="${IVN_ADMIN_USERS}" \
   --from-literal=PG_POOL_MAX="${PG_POOL_MAX:-40}" \
-  --from-literal=NODE_ENV="production"
+  --from-literal=NODE_ENV="production" \
+  `# M4 asset pipeline - 复用 Langfuse 那套 OSS 凭证，bucket 里 IVN 写 scripts/ 前缀，` \
+  `# 和 Langfuse 的 events/ media/ 前缀自然分开不冲突` \
+  --from-literal=S3_ENDPOINT="https://${OSS_ENDPOINT}" \
+  --from-literal=S3_REGION="${OSS_REGION:-cn-shenzhen}" \
+  --from-literal=S3_ACCESS_KEY_ID="${OSS_AK}" \
+  --from-literal=S3_SECRET_ACCESS_KEY="${OSS_SK}" \
+  --from-literal=S3_BUCKET="${OSS_BUCKET}" \
+  `# 阿里云 OSS 必须 false（virtual-hosted-style），MinIO dev 才 true` \
+  --from-literal=S3_FORCE_PATH_STYLE="false" \
+  `# LLM：服务端做 bootstrap 种子（server 启动时若 llm_configs 表空就用这些建默认 config）` \
+  --from-literal=LLM_PROVIDER="${LLM_PROVIDER:-openai-compatible}" \
+  --from-literal=LLM_BASE_URL="${LLM_BASE_URL:-https://api.deepseek.com/v1}" \
+  --from-literal=LLM_API_KEY="${LLM_API_KEY:-}" \
+  --from-literal=LLM_MODEL="${LLM_MODEL:-deepseek-chat}" \
+  --from-literal=LLM_NAME="${LLM_NAME:-deepseek}"
 
 info "== 创建 ACR 拉取凭证 =="
 if [[ -n "${ACR_USERNAME:-}" && -n "${ACR_PASSWORD:-}" && -n "${ACR_SERVER:-}" ]]; then
