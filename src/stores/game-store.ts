@@ -188,8 +188,14 @@ export const useGameStore = create<GameState>((set) => ({
       while (next < state.parsedSentences.length && state.parsedSentences[next]?.kind === 'scene_change') {
         next += 1;
       }
-      // next 可能 === parsedSentences.length，越界时 VNStageContainer 的
-      // sentence 取值为 undefined → DialogBox 显示 "…" 等待后续 Sentence。
+      // 越界（全部都是 scene_change 或已经在末尾）→ 找最后一个非 scene_change 的 index 停住，
+      // 不要推到 length，避免 DialogBox 显示空白 "…" 让玩家以为还有后文。
+      if (next >= state.parsedSentences.length) {
+        let last = state.parsedSentences.length - 1;
+        while (last >= 0 && state.parsedSentences[last]?.kind === 'scene_change') last--;
+        if (last < 0) return state; // 整串都是 scene_change，什么也别动
+        return { visibleSentenceIndex: last };
+      }
       return { visibleSentenceIndex: next };
     }),
 

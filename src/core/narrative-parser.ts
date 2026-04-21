@@ -113,8 +113,10 @@ export class NarrativeParser {
           this.buffer = '';
         }
         const pf = this.currentPF ?? { speaker: 'unknown' };
-        this.cb.onDialogueEnd?.(pf, this.currentDialogueText, true);
-        this.cb.onSentenceComplete?.('dialogue', this.currentDialogueText);
+        // trim 首尾空白——防止 `<d s=".">\nhello\n</d>` 带出前后换行
+        const trimmedTextEnd = this.currentDialogueText.trim();
+        this.cb.onDialogueEnd?.(pf, trimmedTextEnd, true);
+        this.cb.onSentenceComplete?.('dialogue', trimmedTextEnd);
         this.currentPF = null;
         this.currentDialogueText = '';
         this.mode = 'OUTSIDE';
@@ -217,8 +219,9 @@ export class NarrativeParser {
         const tagName = this.buffer.slice(2, gtIdx).trim();
         if (tagName === 'd' && this.currentPF) {
           // 正常闭合 <d>
-          this.cb.onDialogueEnd?.(this.currentPF, this.currentDialogueText, false);
-          this.cb.onSentenceComplete?.('dialogue', this.currentDialogueText);
+          const trimmedDlg = this.currentDialogueText.trim();
+          this.cb.onDialogueEnd?.(this.currentPF, trimmedDlg, false);
+          this.cb.onSentenceComplete?.('dialogue', trimmedDlg);
           this.currentPF = null;
           this.currentDialogueText = '';
         }
@@ -277,8 +280,13 @@ export class NarrativeParser {
   private flushNarration(): void {
     if (!this.narrationPendingFlush && !this.narrationBuffer) return;
     if (this.narrationBuffer) {
-      this.cb.onNarrationChunk?.(this.narrationBuffer);
-      this.cb.onSentenceComplete?.('narration', this.narrationBuffer);
+      // trim 掉 `</d>` 和下一个 `<d>` 之间留下的单独空行 / 前后换行
+      // （.trim() 只剪首尾空白，不动段落内部的 \n\n，所以多段旁白还是多段）
+      const trimmed = this.narrationBuffer.trim();
+      if (trimmed.length > 0) {
+        this.cb.onNarrationChunk?.(trimmed);
+        this.cb.onSentenceComplete?.('narration', trimmed);
+      }
       this.narrationBuffer = '';
     }
     this.narrationPendingFlush = false;
