@@ -10,11 +10,20 @@
 #   5. 目标 image 已 push 到 ACR（用 build-and-push.sh）
 #
 # 用法：
-#   ACR_USERNAME=xxx ACR_PASSWORD=xxx bash ivn-setup.sh
+#   ACR_USERNAME=xxx ACR_PASSWORD=xxx \
+#   IVN_PG_USER=ivn_user IVN_PG_PASSWORD='xxx' \
+#   bash ivn-setup.sh
+#
+# 必填环境变量：
+#   IVN_PG_USER      IVN 在 RDS 里的 PG 用户名（和 Langfuse 不一样，独立账号）
+#   IVN_PG_PASSWORD  对应密码（里面有特殊字符不用手动转义，脚本会 URL-encode）
 #
 # 可选环境变量：
 #   IVN_IMAGE        默认 memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com/ivn/engine:v2
 #   IVN_DB_NAME      默认 ivn_test
+#   IVN_PG_HOST      默认从 langfuse-env 抽（同一个 RDS 实例）
+#   IVN_PG_PORT      默认从 langfuse-env 抽（通常 5432）
+#   IVN_PG_SSLMODE   默认 require
 #   NODE_PORT        默认 30081（对外访问端口）
 #   ACR_SERVER       默认 memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com
 
@@ -25,7 +34,7 @@ set -euo pipefail
 # ============================================================
 IVN_IMAGE="${IVN_IMAGE:-memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com/ivn/engine:v2}"
 IVN_DB_NAME="${IVN_DB_NAME:-ivn_test}"
-NODE_PORT="${NODE_PORT:-30081}"
+NODE_PORT="${NODE_PORT:-30001}"
 ACR_SERVER="${ACR_SERVER:-memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com}"
 ADMIN_CREDS_FILE="${ADMIN_CREDS_FILE:-$HOME/ivn-admin-credentials.txt}"
 
@@ -56,19 +65,26 @@ get_lf() {
     | python3 -c "import json,sys,base64; d=json.load(sys.stdin); v=d.get('data',{}).get('$1'); print(base64.b64decode(v).decode() if v else '')"
 }
 
+# --- IVN 的 PG 凭证（用户必填；和 Langfuse 不同账号）---
+[[ -n "${IVN_PG_USER:-}" ]]     || die "IVN_PG_USER 未设置。例：IVN_PG_USER=ivn_test_user bash ivn-setup.sh"
+[[ -n "${IVN_PG_PASSWORD:-}" ]] || die "IVN_PG_PASSWORD 未设置"
+
+# --- PG host/port：没传就从 langfuse-env 抽（同一个 RDS 实例）---
 LF_DATABASE_URL=$(get_lf DATABASE_URL)
 [[ -n "$LF_DATABASE_URL" ]] || die "langfuse-env.DATABASE_URL 为空"
 
-# 把 Langfuse 的 DB URL 最后一段（database 名）换成 IVN 的
-#   postgresql://user:pass@host:5432/langfuse?sslmode=require
-# → postgresql://user:pass@host:5432/ivn_test?sslmode=require
-IVN_DATABASE_URL=$(echo "$LF_DATABASE_URL" | python3 -c "
-import sys, re, urllib.parse as u
-url = sys.stdin.read().strip()
-p = u.urlparse(url)
-new_path = '/$IVN_DB_NAME'
-print(u.urlunparse((p.scheme, p.netloc, new_path, p.params, p.query, p.fragment)))
-")
+IVN_PG_HOST="${IVN_PG_HOST:-$(echo "$LF_DATABASE_URL" | python3 -c "import sys, urllib.parse as u; print(u.urlparse(sys.stdin.read().strip()).hostname)")}"
+IVN_PG_PORT="${IVN_PG_PORT:-$(echo "$LF_DATABASE_URL" | python3 -c "import sys, urllib.parse as u; print(u.urlparse(sys.stdin.read().strip()).port or 5432)")}"
+IVN_PG_SSLMODE="${IVN_PG_SSLMODE:-require}"
+
+# 构造 DATABASE_URL：USER 和 PASSWORD 做 URL-encode（防 @ # $ % 等特殊字符）
+IVN_DATABASE_URL=$(python3 <<EOF
+import urllib.parse as u
+user = u.quote("$IVN_PG_USER", safe="")
+password = u.quote("$IVN_PG_PASSWORD", safe="")
+print(f"postgresql://{user}:{password}@$IVN_PG_HOST:$IVN_PG_PORT/$IVN_DB_NAME?sslmode=$IVN_PG_SSLMODE")
+EOF
+)
 
 OSS_AK=$(get_lf LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID)
 OSS_SK=$(get_lf LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY)
@@ -114,6 +130,10 @@ kubectl -n ivn delete secret ivn-backend --ignore-not-found >/dev/null
 
 kubectl -n ivn create secret generic ivn-backend \
   --from-literal=DATABASE_URL="$IVN_DATABASE_URL" \
+  `# 阿里云 RDS 默认没开 SSL 端口，就算 URL 写 sslmode=require 也连不上。` \
+  `# PG_SSL=off 会让 server/src/db/index.ts 显式用 ssl:false，而且把 URL 里的` \
+  `# sslmode= 剥掉避免 pg-connection-string 解析成 verify-full。` \
+  --from-literal=PG_SSL="off" \
   --from-literal=LANGFUSE_HOST="http://langfuse-web.langfuse.svc.cluster.local:3000" \
   --from-literal=LANGFUSE_PUBLIC_KEY="$LF_PUBLIC" \
   --from-literal=LANGFUSE_SECRET_KEY="$LF_SECRET" \
@@ -128,7 +148,7 @@ kubectl -n ivn create secret generic ivn-backend \
   --from-literal=S3_FORCE_PATH_STYLE="false" \
   >/dev/null
 
-info "  DATABASE_URL    → .../$IVN_DB_NAME"
+info "  DATABASE_URL    → $IVN_PG_USER@$IVN_PG_HOST:$IVN_PG_PORT/$IVN_DB_NAME"
 info "  S3_BUCKET       → $OSS_BUCKET"
 info "  LANGFUSE_HOST   → cluster-internal service"
 info "  ADMIN_USERS     → admin:$(echo "$IVN_ADMIN_PASSWORD" | cut -c1-4)****"
