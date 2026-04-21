@@ -45,6 +45,15 @@ function extFromMime(mime: string | undefined): string {
   return map[mime.toLowerCase()] ?? '';
 }
 
+/** 从 DATABASE_URL 解析出 db name 放进资产 metadata，便于在 OSS 控制台分辨
+ *  是哪个 ivn 实例产的 object（比如 ivn_dev / ivn_prod 共用一个 bucket 时）。
+ *  解析失败返回 'unknown'。只在 module 加载时算一次。 */
+const DB_NAME = (() => {
+  const raw = process.env.DATABASE_URL ?? '';
+  const m = raw.match(/\/([^/?]+)(?:\?|$)/);
+  return m?.[1] ?? 'unknown';
+})();
+
 /** 验证 admin 调用方确实是 script 所有者 */
 async function requireScriptOwner(
   request: Request,
@@ -109,8 +118,17 @@ export const assetRoutes = new Elysia({ prefix: '/api' })
     const storage = getAssetStorage();
     // Bun 的 File 有 .stream() 方法返回 Web ReadableStream
     const webStream = file.stream();
+    // 带上溯源 metadata：哪个 app / 哪个 db / 哪个 script / 什么用途 / 谁传的
+    // S3 metadata 值必须 ASCII，所以不带原始文件名（那个在 DB `original_name` 列里）
+    const metadata: Record<string, string> = {
+      app: 'ivn-engine',
+      db: DB_NAME,
+      'script-id': params.id,
+      'asset-kind': kind,
+      'uploaded-by': auth.adminUserId,
+    };
     try {
-      await storage.put(storageKey, webStream, contentType);
+      await storage.put(storageKey, webStream, contentType, metadata);
     } catch (err) {
       console.error('[assets] upload failed:', err);
       return new Response(

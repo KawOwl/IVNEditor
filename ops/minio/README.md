@@ -59,6 +59,12 @@ S3_FORCE_PATH_STYLE=true                              # 阿里云也支持 path-
 
 ## 常见坑
 
-1. **`forcePathStyle` 必须 true**：阿里云 OSS 和 MinIO 都支持 path-style，AWS SDK v3 默认是 virtual-hosted-style（`bucket.endpoint/key`），会解析成 `bucket.localhost:9000/...` 导致连接失败
-2. **CORS**：本 MVP 不需要，因为前端是通过 server 反代 (`GET /api/assets/*`) 拉对象，不是直接请求 OSS
-3. **生产上 OSS bucket 要开"读写"权限给 AK**：默认新建 bucket 是 private，用 `oss-util set-acl` 之类工具设好访问策略
+1. **`S3_FORCE_PATH_STYLE` 在两家不同**：
+   - **MinIO**：必须 `true`（走 `localhost:9000/bucket/key`），否则解析成 `bucket.localhost:9000` 连不上
+   - **阿里云 OSS**：必须 `false`（走 `bucket.oss-cn-xxx.aliyuncs.com/key`）。实测 OSS 会直接返回
+     `SecondLevelDomainForbidden: Please use virtual hosted style to access` 拒绝 path-style
+2. **CORS**：本 MVP 不需要，因为前端通过 server 反代 (`GET /api/assets/*`) 拉对象，不是直接请求 OSS
+3. **生产上 OSS bucket ACL**：默认 private 就行，我们走后端反代。给 AK 最小权限时 Resource 圈定到那一个 bucket，Action 给 `oss:GetObject` / `oss:PutObject` / `oss:DeleteObject`
+4. **Metadata**：上传时会自动带上溯源 metadata（`app=ivn-engine` / `db=<database>` /
+   `script-id=<sid>` / `asset-kind=<sprite|background>` / `uploaded-by=<user-id>`），
+   OSS 控制台 object 详情 → "用户 meta" 里能看到

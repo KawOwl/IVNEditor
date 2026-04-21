@@ -36,8 +36,18 @@ export interface AssetGetResult {
 }
 
 export interface AssetStorage {
-  /** 上传一个 object；stream 可以是 Node Readable 或 Web ReadableStream */
-  put(key: string, body: NodeReadable | ReadableStream, contentType?: string): Promise<void>;
+  /**
+   * 上传一个 object；stream 可以是 Node Readable 或 Web ReadableStream。
+   * metadata 会作为 S3 的 user-defined metadata（`x-amz-meta-*`）写入，
+   * 可用于审计 / 回溯是哪个项目/db/脚本产生的 object。
+   * 注意：S3 metadata 值必须是 ASCII，非 ASCII 内容（中文等）须提前 URL-encode 或放 DB 里。
+   */
+  put(
+    key: string,
+    body: NodeReadable | ReadableStream,
+    contentType?: string,
+    metadata?: Record<string, string>,
+  ): Promise<void>;
   /** 读取 object。不存在返回 null（不抛） */
   get(key: string): Promise<AssetGetResult | null>;
   /** 删除 object；不存在静默忽略 */
@@ -66,8 +76,14 @@ export class S3AssetStorage implements AssetStorage {
   private bucket: string;
 
   constructor(config: S3StorageConfig) {
+    // 兜底：endpoint 没写 scheme 时自动补 https://（用户常忘写，AWS SDK 这里很严格，
+    // 没 scheme 会 throw "Invalid URL"）
+    const normalizedEndpoint = /^https?:\/\//i.test(config.endpoint)
+      ? config.endpoint
+      : `https://${config.endpoint}`;
+
     const clientConfig: S3ClientConfig = {
-      endpoint: config.endpoint,
+      endpoint: normalizedEndpoint,
       region: config.region,
       credentials: {
         accessKeyId: config.accessKeyId,
@@ -83,6 +99,7 @@ export class S3AssetStorage implements AssetStorage {
     key: string,
     body: NodeReadable | ReadableStream,
     contentType?: string,
+    metadata?: Record<string, string>,
   ): Promise<void> {
     // lib-storage 的 Upload 自动分片 + 流式，大文件不会压垮内存
     const upload = new Upload({
@@ -92,6 +109,9 @@ export class S3AssetStorage implements AssetStorage {
         Key: key,
         Body: body as NodeReadable, // SDK 类型接受 Readable，运行时也接受 Web stream
         ContentType: contentType,
+        // S3 user-defined metadata → 在 OSS 控制台 / ListObjects / HeadObject 时可见
+        // SDK 会自动加 `x-amz-meta-` 前缀；Key 自动小写（S3 协议规范）
+        Metadata: metadata,
       },
     });
     await upload.done();
