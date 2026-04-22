@@ -83,6 +83,17 @@ export interface StepInfo {
    * 目的是降低传输和存储体积，同时保留足够的诊断信息。
    */
   stepInputMessages?: Array<{ role: string; content: string }>;
+  /**
+   * 该 step 实际发给 LLM 的 system prompt。
+   *
+   * 如果 prepareStepSystem 在本 step 返回了覆盖字符串 → 这里是那个字符串；
+   * 否则 → 是外层传入 streamText 的 systemPrompt 初值。
+   *
+   * 用途：tracing 层记录"**LLM 在本 step 真正看到的 system**"。
+   * 没这个字段前，Focus Injection D 方案的 per-step system 切换在 Langfuse
+   * 里完全不可观察（input.system 永远显示开局快照）。
+   */
+  effectiveSystemPrompt?: string;
 }
 
 export interface GenerateOptions {
@@ -212,6 +223,10 @@ export class LLMClient {
     const stepInputsMap = new Map<number, Array<{ role: string; content: string }>>();
     // 该 step 的真实"开始发往 provider"瞬间。配合 responseTimestamp 得到 TTFT。
     const stepStartAtMap = new Map<number, Date>();
+    // 该 step 实际发往 provider 的 system prompt。prepareStep 返回的覆盖值会被记进来；
+    // 返回 undefined 或未提供 prepareStepSystem 时，记为外层的 systemPrompt。
+    // tracing 层读这个以反映 Focus Injection D 的 per-step 切换。
+    const stepSystemMap = new Map<number, string>();
 
     // Build AI SDK messages
     const aiMessages: Array<{ role: 'user' | 'assistant'; content: string }> = messages.map((m) => ({
@@ -230,10 +245,13 @@ export class LLMClient {
       // Focus Injection D：per-step system prompt 覆盖。每个 step 开始前，
       // 如果上层想根据当前 state 换一份 system，在这里返回新字符串。
       // 返回 undefined → AI SDK 用外层的 `system` 参数。
+      //
+      // 每 step 实际使用的 system 都存进 stepSystemMap，供 onStepFinish 回传 tracing。
       ...(prepareStepSystem
         ? {
             prepareStep: async ({ stepNumber, steps }: { stepNumber: number; steps: ReadonlyArray<unknown> }) => {
               const sys = await prepareStepSystem({ stepNumber, steps });
+              stepSystemMap.set(stepNumber, sys !== undefined ? sys : systemPrompt);
               return sys !== undefined ? { system: sys } : undefined;
             },
           }
@@ -312,6 +330,10 @@ export class LLMClient {
             stepStartAt: stepStartAtMap.get(step.stepNumber),
             // 该 step 实际看到的完整 messages（从 onStepStart 捕获）
             stepInputMessages: stepInputsMap.get(step.stepNumber),
+            // 该 step 实际发给 LLM 的 system（prepareStep 覆盖 or 外层 fallback）
+            // —— tracing 层用这个替换 initialInput.systemPrompt 的一次性快照，
+            //    让 Langfuse UI 每 step 能看到真实的 system prompt
+            effectiveSystemPrompt: stepSystemMap.get(step.stepNumber) ?? systemPrompt,
           });
         } catch (err) {
           console.error('[llm-client] onStep handler threw:', err);

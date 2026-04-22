@@ -164,6 +164,8 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
     responseTimestamp?: Date;
     stepStartAt?: Date;
     stepInputMessages?: Array<{ role: string; content: string }>;
+    /** 该 step 实际发给 LLM 的 system（Focus Injection D）。没有则 fallback 到 initialInput.systemPrompt */
+    effectiveSystemPrompt?: string;
   }): void {
     try {
       // 创建一个已完成的 generation span（创建时即 end）
@@ -201,14 +203,21 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
       // 这样 Langfuse UI 里每个 step 都能看到 LLM **实际看到的**完整上下文，
       // 而不只是初始的 "开始游戏" 一条。
       // fallback 到 initialInput（只有初始 systemPrompt + messages）。
+      //
+      // Focus Injection D 后的修正：system 字段优先用 effectiveSystemPrompt
+      //（本 step 实际发给 LLM 的 system），只有没传时才 fallback 到 initialInput.
+      // 否则 per-step 切换的 system 在 Langfuse 里完全不可见。
+      const stepSystem = step.effectiveSystemPrompt
+        ?? this.initialInput?.systemPrompt
+        ?? '(system prompt omitted)';
       const stepInput = step.stepInputMessages
         ? {
-            system: this.initialInput?.systemPrompt ?? '(system prompt omitted)',
+            system: stepSystem,
             messages: step.stepInputMessages,
             _messageCount: step.stepInputMessages.length,
           }
         : this.initialInput
-          ? { system: this.initialInput.systemPrompt, messages: this.initialInput.messages }
+          ? { system: stepSystem, messages: this.initialInput.messages }
           : undefined;
 
       const gen = this.trace.generation({

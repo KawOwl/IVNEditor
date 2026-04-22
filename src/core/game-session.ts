@@ -164,6 +164,12 @@ export interface GenerateTraceHandle {
      * tracing 层写进 generation span 的 input，替代初始的 this.initialInput。
      */
     stepInputMessages?: Array<{ role: string; content: string }>;
+    /**
+     * 该 step 实际发给 LLM 的 system prompt（Focus Injection D 后必需）。
+     * tracing 层用这个替换 initialInput.systemPrompt 的开局快照，
+     * 让 Langfuse UI 里每 step 的 input.system 反映真实内容。
+     */
+    effectiveSystemPrompt?: string;
   }): void;
 
   /** 开始一次工具调用，返回 handle 用于结束 */
@@ -855,6 +861,7 @@ export class GameSession {
               responseTimestamp: step.responseTimestamp,
               stepStartAt: step.stepStartAt,
               stepInputMessages: step.stepInputMessages,
+              effectiveSystemPrompt: step.effectiveSystemPrompt,
             });
           },
         });
