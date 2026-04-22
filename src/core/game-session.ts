@@ -340,6 +340,9 @@ export class GameSession {
     try {
       // Initialize core modules
       this.stateStore = new StateStore(config.stateSchema);
+      // LLMClient 先于 Memory 创建 —— llm-summarizer adapter 构造时要
+      // 注入 llmClient 做 compressFn，所以顺序不能再像之前那样 memory 在前。
+      this.llmClient = new LLMClient(config.llmConfig);
       this.memory = await createMemory({
         scope: {
           playthroughId: config.playthroughId,
@@ -347,8 +350,8 @@ export class GameSession {
           chapterId: config.chapterId,
         },
         config: config.memoryConfig,
+        llmClient: this.llmClient,
       });
-      this.llmClient = new LLMClient(config.llmConfig);
       this.segments = config.segments;
       this.enabledTools = config.enabledTools ?? [];
       this.tokenBudget = config.tokenBudget ?? 120000;
@@ -391,6 +394,8 @@ export class GameSession {
     try {
       // 初始化核心模块（同 start）
       this.stateStore = new StateStore(config.stateSchema);
+      // LLMClient 先于 Memory 创建（llm-summarizer adapter 需要）
+      this.llmClient = new LLMClient(config.llmConfig);
       this.memory = await createMemory({
         scope: {
           playthroughId: config.playthroughId,
@@ -398,8 +403,8 @@ export class GameSession {
           chapterId: config.chapterId,
         },
         config: config.memoryConfig,
+        llmClient: this.llmClient,
       });
-      this.llmClient = new LLMClient(config.llmConfig);
       this.segments = config.segments;
       this.enabledTools = config.enabledTools ?? [];
       this.tokenBudget = config.tokenBudget ?? 120000;
