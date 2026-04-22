@@ -60,8 +60,6 @@ const SNAPSHOT_KIND = 'mem0-v1';
 interface Mem0State {
   /** 本地短期窗口 —— 供 getRecentAsMessages 用。不含云端数据。 */
   recentEntries: MemoryEntry[];
-  /** 等待上传到 mem0 的新 entries（批量 flush 降低 API 调用次数） */
-  pendingForFlush: MemoryEntry[];
 }
 
 // ============================================================================
@@ -80,7 +78,7 @@ function generateId(): string {
 export class Mem0Memory implements Memory {
   readonly kind = 'mem0';
 
-  private state: Mem0State = { recentEntries: [], pendingForFlush: [] };
+  private state: Mem0State = { recentEntries: [] };
   private readonly client: MemoryClient;
   private readonly userId: string;
   private readonly retrieveTopK: number;
@@ -129,8 +127,22 @@ export class Mem0Memory implements Memory {
       );
     }
 
-    // 攒着等 maybeCompact 批量 flush（而不是每条一次 HTTP）
-    this.state.pendingForFlush.push(entry);
+    // 立即 fire-and-forget flush 到 mem0 云端。不 await —— appendTurn 返回要快，
+    // 不能被 mem0 HTTP RTT 阻塞。失败在 .catch 里 log，依赖 mem0 自己的 PENDING
+    // 队列重试（实测 add 只是 100ms 接收请求，不等入库完成）。
+    //
+    // 之前版本用 pendingForFlush + maybeCompact 批量，但 VN 游戏的 generate()
+    // 在 signal_input_needed 挂起时不返回，maybeCompact 永远轮不到 —— 只好
+    // 在每条 appendTurn 时 flush。
+    this.client
+      .add([entryToMem0Message(entry)], {
+        userId: this.userId,
+        metadata: { source: 'gameplay', turn: params.turn, role: params.role },
+      })
+      .catch((err) => {
+        console.error('[Mem0Memory] appendTurn flush failed:', err);
+      });
+
     return entry;
   }
 
@@ -243,32 +255,18 @@ export class Mem0Memory implements Memory {
    * 处理重试的副作用 —— mem0 的 add 会基于 hash 去重，重复 add 不会造成
    * 记忆膨胀）。
    */
+  /**
+   * mem0 adapter 的 maybeCompact 是 no-op。
+   *
+   * 原因：VN 模式下 game-session 的 generate() 因 signal_input_needed 挂起
+   * 而几乎不返回，T6 maybeCompact 的调用点永远轮不到。改为 appendTurn 时
+   * 直接 fire-and-forget flush 到 mem0。
+   *
+   * （legacy / llm-summarizer 保留 maybeCompact 逻辑没问题 —— 它们依赖的是
+   * total token 超阈值触发，本地同步完成，即便调用稀少也只是"压缩延后"。）
+   */
   async maybeCompact(): Promise<void> {
-    if (this.state.pendingForFlush.length === 0) return;
-
-    const batch = this.state.pendingForFlush.slice();
-    try {
-      const messages = batch
-        .filter((e) => !e.pinned)  // pinned 已在 pin() 里立即 flush 过
-        .map(entryToMem0Message);
-      if (messages.length > 0) {
-        await this.client.add(messages, {
-          userId: this.userId,
-          // mem0 会自己决定存什么、如何摘要；我们只提供 metadata 便于未来过滤
-          metadata: { source: 'gameplay' },
-        });
-      }
-      // 成功后清 pending
-      this.state.pendingForFlush = [];
-    } catch (err) {
-      console.error('[Mem0Memory] flush failed, will retry on next compact:', err);
-      // 保留 pendingForFlush，不清空。但防止它无限增长，cap 到 recentEntries 一样的上限
-      if (this.state.pendingForFlush.length > this.maxRecentEntries) {
-        this.state.pendingForFlush = this.state.pendingForFlush.slice(
-          -this.maxRecentEntries,
-        );
-      }
-    }
+    // no-op; flush 在 appendTurn / pin 里即时完成
   }
 
   async snapshot(): Promise<MemorySnapshot> {
@@ -276,8 +274,6 @@ export class Mem0Memory implements Memory {
       kind: SNAPSHOT_KIND,
       // 本地窗口持久化 —— 断线重连恢复短期 messages[] 不丢
       recentEntries: structuredClone(this.state.recentEntries),
-      // 未 flush 的 pending 也存一下 —— 重启后 maybeCompact 还能把它们送到 mem0
-      pendingForFlush: structuredClone(this.state.pendingForFlush),
       // userId 存一份便于调试（不读回，构造时从 scope 拿）
       userId: this.userId,
     };
@@ -294,9 +290,6 @@ export class Mem0Memory implements Memory {
       recentEntries: structuredClone(
         (snap.recentEntries ?? []) as MemoryEntry[],
       ),
-      pendingForFlush: structuredClone(
-        (snap.pendingForFlush ?? []) as MemoryEntry[],
-      ),
     };
   }
 
@@ -305,7 +298,7 @@ export class Mem0Memory implements Memory {
    * 失败吞掉错（reset 多用于测试，失败也不该卡住）。
    */
   async reset(): Promise<void> {
-    this.state = { recentEntries: [], pendingForFlush: [] };
+    this.state = { recentEntries: [] };
     try {
       await this.client.deleteAll({ userId: this.userId });
     } catch (err) {
