@@ -51,11 +51,20 @@ RUN pnpm build
 # ============================================================
 # Stage 2: 后端依赖 —— 用 Bun 解 server 依赖
 # ============================================================
+# WORKDIR /app：node_modules 装到 /app/node_modules，这样 server/src/* 和
+# src/core/*（二者都被 server 运行时加载）向上找 node_modules 都能命中。
+# 如果装在 /app/server/node_modules 下，src/core/ 里的代码（如
+# `import 'zod/v4'` in tool-executor.ts）因为 node resolution 从
+# /app/src/core/ 向上不经过 server/，会 ENOENT。
 FROM oven/bun:1.3-alpine AS backend-deps
-WORKDIR /app/server
+WORKDIR /app
 
 # --- Layer 3: 后端依赖（只在 server/package.json 变化时重跑）---
-COPY server/package.json server/bun.lock* ./
+# 把 server/package.json 作为 /app/package.json —— 逻辑上 server 还是独立
+# 子项目（本地源码仍在 server/package.json），只是 runtime 把它提到根
+# 位置让 node_modules 对整个 /app tree 可见。
+COPY server/package.json ./package.json
+COPY server/bun.lock* ./
 # --linker=hoisted：走 npm 式扁平 node_modules，不用 bun 1.3 默认的 isolated
 # cache 结构。默认 isolated 模式下 bun 运行时会从 ~/.bun/install/cache/pkg@@@N
 # 里加载模块，peer dep 和 variant 解析会挑出和 lockfile 不一致的版本（踩过
@@ -73,9 +82,15 @@ WORKDIR /app
 # 运行时依赖：curl 用于 healthcheck、tini 当 PID 1（优雅退出）
 RUN apk add --no-cache curl tini
 
-# --- Layer 3 继续：把 node_modules 从 deps stage 拷过来 ---
-# 这是"大"但"稳定"的层——只在 server/package.json 变化时失效
-COPY --from=backend-deps /app/server/node_modules ./server/node_modules
+# --- Layer 3 继续：把 node_modules + package.json + lockfile 从 deps stage 拷到 /app 根 ---
+# node_modules 在 /app/node_modules，server/src/* 和 src/core/* 两路都能
+# 向上解析到这份依赖。这是"大"但"稳定"的层——只在 server/package.json 变化时失效。
+COPY --from=backend-deps /app/node_modules ./node_modules
+COPY --from=backend-deps /app/package.json ./package.json
+# 运行时也要 bun.lock：`bun run` 启动时若没 lock，会按 package.json 的 `^x`
+# 重新 resolve 最新版本，绕过 backend-deps 里装的确定版本。踩过 ai@6.0.168
+# 里的 zod/v4 peer dep 不兼容问题。
+COPY --from=backend-deps /app/bun.lock* ./
 
 # --- Layer 5: 后端源码（改代码最常重跑的层，体积小）---
 # 关键：源码放在依赖之后，这样改 src 不会触发重装依赖
@@ -84,12 +99,6 @@ COPY server/drizzle/ ./server/drizzle/
 COPY server/drizzle.config.ts ./server/
 COPY server/scripts/ ./server/scripts/
 COPY server/tsconfig.json ./server/
-COPY server/package.json ./server/
-# 运行时也要 bun.lock：`bun run` 启动时若没 lock，会按 package.json 的 `^x` 重新
-# resolve 最新版本，绕过 `bun install --frozen-lockfile` 在 backend-deps 阶段装进
-# node_modules 的确定版本。曾因此踩过 `ai@6.0.168` 里的 `zod/v4` peer dep
-# 不兼容问题，根因就是 runtime 缺 lock → 重 resolve → 拿到非 lockfile 指定版本。
-COPY server/bun.lock* ./server/
 
 # --- 前端 dist 需要在项目根（server 代码里 DIST_DIR = ../../dist）---
 COPY --from=frontend-builder /build/dist ./dist
