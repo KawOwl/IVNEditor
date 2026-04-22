@@ -142,10 +142,18 @@ export class NarrativeParser {
         // 找下一个 "<" 或吃完整段 buffer
         const ltIdx = this.buffer.indexOf('<');
         if (ltIdx === -1) {
-          // 全是纯文本，但可能下个 chunk 接 <x ，所以保守：保留最后 0 字符缓冲
+          // 全是纯文本。立刻 flush —— 如果本 chunk 没有 `<`，下一 chunk 要么
+          // 继续纯文本（再 flush 一段 narration），要么开新 `<d>` tag（这是
+          // dialogue 的干净边界，不会和上一段 narration 拼错）。
+          //
+          // 历史 bug：这里原本 return 不 flush，希望累积到下一个 `<` 再一起
+          // emit。结果"完全不带 XML 标签的叙事"永远触发不了 flush，VN UI
+          // 只能等 finalize() —— 但 signal_input_needed 会在 finalize 前挂起，
+          // 玩家看到的就是"只有选项没有叙事"。
           this.narrationBuffer += this.buffer;
           this.buffer = '';
           this.narrationPendingFlush = true;
+          this.flushNarration();
           return;
         }
         // "<" 之前是旁白

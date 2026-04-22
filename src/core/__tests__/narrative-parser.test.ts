@@ -48,6 +48,23 @@ describe('NarrativeParser · 基础', () => {
     expect(events[0]).toMatchObject({ type: 'narration', text: '黄昏的教室里只剩下她一个人。' });
   });
 
+  it('纯旁白多 chunk 流式喂入时，在 push 时就 emit 出来（不等 finalize）', () => {
+    // Regression：历史上 parser 在完全无 XML tag 的流里，narrationBuffer 一直攒到
+    // finalize() 才 flush，导致 VN UI 在 signal_input_needed 挂起前什么叙事都没
+    // 看到，玩家只看到选项（见 trace 7e163edc-...）。
+    const { parser, events } = collect();
+    parser.push('你走向广场边缘。');
+    // 至少要 emit 出 narration，别等到 finalize 才吐
+    expect(events.filter(e => e.type === 'narration').length).toBeGreaterThan(0);
+    parser.push('阳光穿过树叶，在地上投下斑驳的光影。');
+    expect(events.filter(e => e.type === 'narration').length).toBeGreaterThan(1);
+    parser.finalize();
+    // finalize 后所有 narration 都应该已经 emit，且总内容完整
+    const allNarration = events.filter(e => e.type === 'narration').map(e => e.text).join('');
+    expect(allNarration).toContain('你走向广场边缘');
+    expect(allNarration).toContain('阳光穿过树叶');
+  });
+
   it('只有对话', () => {
     const { parser, events } = collect();
     parser.push('<d s="sakuya" to="player">欢迎光临</d>');

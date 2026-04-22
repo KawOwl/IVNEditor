@@ -333,6 +333,13 @@ export class GameSession {
     | ((transition?: 'fade' | 'cut' | 'dissolve') => void)
     | null = null;
 
+  /**
+   * 把 generate() 内部 narration 累积 buffer 刷出去。
+   * signal_input_needed 挂起前 createWaitForPlayerInput 调这个，确保玩家在
+   * 看到选项之前先看到最新的旁白 Sentence。generate() 执行期间非 null。
+   */
+  private pendingNarrationFlusher: (() => void) | null = null;
+
   // 外循环 Receive 阶段的挂起 Promise（LLM 自然停止后等玩家输入）
   private inputResolve: ((text: string) => void) | null = null;
 
@@ -741,12 +748,36 @@ export class GameSession {
           this.emitter.appendSentence(sentence);
         };
 
+        // Narration 跨 chunk 累积器：
+        //   parser 修复后每个纯文本 chunk 都会 flush 一次 onNarrationChunk；
+        //   直接每 chunk 一条 Sentence 会导致 VN UI 碎得像连点几十下才读完一段。
+        //   这里在 session 层把连续 narration chunk 攒起来，遇到"段落边界"
+        //   （双换行 \n\n）或者 narration 流被打断（dialogue 开始 / 场景切换 /
+        //   signal 挂起 / generate 结束）时，作为一条 Sentence emit。
+        let pendingNarration = '';
+        const flushPendingNarration = () => {
+          const trimmed = pendingNarration.trim();
+          if (trimmed) emitSentenceFrom({ kind: 'narration', text: trimmed });
+          pendingNarration = '';
+        };
+
         const narrativeParser = new NarrativeParser({
           onNarrationChunk: (text) => {
-            emitSentenceFrom({ kind: 'narration', text });
+            pendingNarration += text;
+            // 段落级切分：遇到 `\n\n` 切出一段，剩余留到下次
+            while (pendingNarration.includes('\n\n')) {
+              const idx = pendingNarration.indexOf('\n\n');
+              const para = pendingNarration.slice(0, idx).trim();
+              if (para) emitSentenceFrom({ kind: 'narration', text: para });
+              pendingNarration = pendingNarration.slice(idx + 2);
+            }
           },
-          // onDialogueStart / onDialogueChunk 不单独 emit——等整段 end 一次性
-          // emit Sentence（前端 VN 打字机从 Sentence 派生，无需子级 chunk 事件）
+          onDialogueStart: () => {
+            // 对话开始前把未出口的 narration 先 emit 掉，保证顺序
+            flushPendingNarration();
+          },
+          // onDialogueChunk 不单独 emit——等整段 end 一次性 emit Sentence
+          // （前端 VN 打字机从 Sentence 派生，无需子级 chunk 事件）
           onDialogueEnd: (pf, fullText, truncated) => {
             emitSentenceFrom({ kind: 'dialogue', text: fullText, pf, truncated });
             // 🔭 tracing: XML-lite 流被截断（未闭合 </d>）记 Langfuse 事件
@@ -759,9 +790,15 @@ export class GameSession {
             }
           },
         });
+        // 暴露 flushPendingNarration 给 scene change / signal 挂起 / generate 结束，
+        // 让这些"叙事边界"把正在攒的 narration 推给前端。
+        // (TS: 这里用 closure，不暴露到 this —— 下面同 try 块内调用即可)
         // 把 applyScenePatch 包装一层：除了更新 this.currentScene，
         // 还要 emit scene-change 事件 + 产出一条 scene_change Sentence + Langfuse 事件
         this.scenePatchEmitter = (transition) => {
+          // 先把攒着的 narration emit 掉，再插 scene-change，保证玩家看到的顺序是
+          // "前一段旁白 → 场景切换 → 后一段旁白"
+          flushPendingNarration();
           this.emitter.emitSceneChange(this.currentScene, transition);
           emitSentenceFrom({ kind: 'scene_change', scene: { ...this.currentScene }, transition });
           traceHandle?.event(
@@ -770,6 +807,9 @@ export class GameSession {
             { turn },
           );
         };
+        // signal_input_needed 挂起前 game-session 需要把攒的 narration emit 给前端。
+        // 把 flush 暴露到实例字段，让 createWaitForPlayerInput 能调用到这个 closure。
+        this.pendingNarrationFlusher = flushPendingNarration;
 
         // Call LLM (agentic tool loop — signal_input_needed 会挂起等玩家)
         //
@@ -870,7 +910,11 @@ export class GameSession {
 
         // M3: parser 末尾降级（把未闭合 <d> 当 truncated 结束）
         narrativeParser.finalize();
+        // finalize 会把 parser 里剩余的 narrationBuffer emit 成 onNarrationChunk，
+        // 最后再 flush 一次 session 层累积器，保证整 generate 的 narration 全到前端
+        flushPendingNarration();
         this.scenePatchEmitter = null;
+        this.pendingNarrationFlusher = null;
 
         // Stage finish reason
         this.emitter.stagePendingDebug({ finishReason: result.finishReason });
@@ -1045,6 +1089,13 @@ export class GameSession {
   /** 创建 waitForPlayerInput 回调，供 signal_input_needed 的 execute 使用 */
   private createWaitForPlayerInput(): (options: SignalInputOptions) => Promise<string> {
     return async (options: SignalInputOptions) => {
+      // ★ signal 挂起前先把 narration 累积 buffer 推给前端：
+      //   parser 层已经 flush 出 onNarrationChunk，session 层的
+      //   pendingNarrationFlusher 再把攒着的段落拼成 Sentence 推出去。
+      //   否则"完全不带 XML 标签的段落"在本轮会滞留到 generate 结束，
+      //   玩家先看到选项再看到叙事（或根本看不到叙事）。
+      this.pendingNarrationFlusher?.();
+
       // ★ 挂起前把当前叙事段同时写入两个地方：
       //   1. narrative_entries 表（DB 叙事记录，供 UI 恢复显示）
       //   2. MemoryManager entries（供下一次 assembleContext 拿 recent history）

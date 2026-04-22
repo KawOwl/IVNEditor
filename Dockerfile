@@ -42,8 +42,8 @@ COPY tsconfig.tsbuildinfo* ./
 COPY components.json ./
 COPY vite.config.ts ./
 COPY src/ ./src/
-# 如果有 public/ 或其他 vite 需要的目录，在这里补
-# COPY public/ ./public/
+# Vite 默认把 public/ 下的文件原样拷进 dist/（favicon 等静态资源）
+COPY public/ ./public/
 
 RUN pnpm build
 # 产物在 /build/dist/
