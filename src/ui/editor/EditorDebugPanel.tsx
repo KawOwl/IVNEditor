@@ -15,6 +15,7 @@ import { useState } from 'react';
 import { useGameStore } from '../../stores/game-store';
 import { useRawStreamingStore } from '../../stores/raw-streaming-store';
 import { cn } from '../../lib/utils';
+import type { SceneState } from '../../core/types';
 
 type DebugSection = 'prompt' | 'messages' | 'tokens' | 'state' | 'tools' | 'memory' | 'sentences' | 'raw';
 
@@ -506,6 +507,16 @@ function SentenceRow({ sentence }: { sentence: import('../../stores/game-store')
       </div>
     );
   }
+  if (sentence.kind === 'player_input') {
+    return (
+      <div className="border-l-2 border-sky-700 pl-2 py-0.5">
+        <div className="text-[9px] text-zinc-600">
+          #{sentence.index} · player_input · turn {sentence.turnNumber}
+        </div>
+        <div className="text-sky-200 whitespace-pre-wrap text-[11px]">{sentence.text}</div>
+      </div>
+    );
+  }
   // scene_change
   return (
     <div className="border-l-2 border-emerald-700 pl-2 py-0.5">
@@ -518,7 +529,7 @@ function SentenceRow({ sentence }: { sentence: import('../../stores/game-store')
         {' · sprites: '}
         {sentence.scene.sprites.length === 0
           ? '—'
-          : sentence.scene.sprites.map((s) => `${s.id}:${s.emotion}`).join(', ')}
+          : sentence.scene.sprites.map((s: SceneState['sprites'][number]) => `${s.id}:${s.emotion}`).join(', ')}
       </div>
     </div>
   );

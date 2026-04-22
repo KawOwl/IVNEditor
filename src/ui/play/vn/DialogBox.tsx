@@ -24,13 +24,43 @@ export interface DialogBoxProps {
    * 不传 = 直接显示 sentence.text 原文（例如 backlog 回看、打字机禁用）。
    */
   displayText?: string;
+  /**
+   * 当前游标之后还有未读 Sentence → 显示"▼"提示玩家可以点击推进。
+   */
+  hasMore?: boolean;
+  /**
+   * LLM 正在生成（status='generating' 且游标已在末端）→ 显示"..."动画，
+   * 让玩家知道"在写，稍等"而不是误以为已结束。
+   */
+  generating?: boolean;
 }
 
-export function DialogBox({ sentence, characters, displayText }: DialogBoxProps) {
+export function DialogBox({ sentence, characters, displayText, hasMore, generating }: DialogBoxProps) {
   return (
     <div className="absolute inset-x-0 bottom-0 bg-zinc-950/90 backdrop-blur-sm border-t border-zinc-700/60">
-      <div className="mx-auto max-w-4xl px-6 py-5 min-h-[8rem]">
+      <div className="relative mx-auto max-w-4xl px-6 py-5 min-h-[8rem]">
         {renderBody(sentence, characters, displayText)}
+        {/* 右下角状态指示：生成中 / 还有内容 / 两者都没有 → 空 */}
+        {generating && (
+          <div
+            className="absolute right-4 bottom-3 text-xs text-zinc-400 flex items-center gap-1"
+            aria-label="dialog-generating"
+          >
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400 animate-pulse" />
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400 animate-pulse [animation-delay:150ms]" />
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400 animate-pulse [animation-delay:300ms]" />
+            <span className="ml-1">生成中</span>
+          </div>
+        )}
+        {!generating && hasMore && (
+          <div
+            className="absolute right-4 bottom-3 text-zinc-400 text-base animate-bounce"
+            aria-label="dialog-has-more"
+            title="点击/空格继续"
+          >
+            ▼
+          </div>
+        )}
       </div>
     </div>
   );
@@ -66,6 +96,19 @@ function renderBody(
         <p className="text-base leading-relaxed text-zinc-200 whitespace-pre-wrap">
           {textToShow}
           {isTyping && <span className="ml-0.5 inline-block h-4 w-[0.5ch] animate-pulse bg-zinc-400/60 align-text-bottom" />}
+        </p>
+      </div>
+    );
+  }
+
+  if (sentence.kind === 'player_input') {
+    // 玩家的回复气泡 —— speaker 显示"我"，右对齐区分来自角色的对话
+    return (
+      <div aria-label="dialog-player-input">
+        <div className="mb-2 flex justify-end text-sm font-semibold text-sky-300">我</div>
+        <p className="text-base leading-relaxed text-sky-100/90 whitespace-pre-wrap text-right">
+          {textToShow}
+          {isTyping && <span className="ml-0.5 inline-block h-4 w-[0.5ch] animate-pulse bg-sky-300/60 align-text-bottom" />}
         </p>
       </div>
     );

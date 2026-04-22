@@ -165,14 +165,36 @@ export const useGameStore = create<GameState>((set) => ({
   // --- M3: VN Narrative & Scene ---
   appendSentence: (sentence) =>
     set((state) => {
-      const next = [...state.parsedSentences, sentence];
+      const prev = state.parsedSentences;
+      const next = [...prev, sentence];
+      let vsi = state.visibleSentenceIndex;
+
       // 游标初始化：首次追加时从 null → 找第一个非 scene_change 的位置。
       // scene_change 只驱动背景/立绘切换，不应该让玩家看到空白对话框。
-      let vsi = state.visibleSentenceIndex;
       if (vsi === null) {
         const firstNonSC = next.findIndex((s) => s.kind !== 'scene_change');
         vsi = firstNonSC >= 0 ? firstNonSC : null;
+        return { parsedSentences: next, visibleSentenceIndex: vsi };
       }
+
+      // 自动前进：如果玩家已经看到"当前所有 Sentence 的最末非 scene_change 一条"，
+      // 新来一条 Sentence 时自动把游标推到新末尾（跳过 scene_change）。
+      // 这样正在读最新叙事的玩家不会"读到一半卡住，再点一下才有反应"。
+      //
+      // 判断条件：vsi 是 prev 数组里"最后一个非 scene_change 的 index"。
+      // （前面加的那些 scene_change 不影响玩家的"读到末尾"判断。）
+      let lastReadableInPrev = prev.length - 1;
+      while (lastReadableInPrev >= 0 && prev[lastReadableInPrev]?.kind === 'scene_change') {
+        lastReadableInPrev--;
+      }
+      const playerAtTail = vsi === lastReadableInPrev;
+      if (playerAtTail && sentence.kind !== 'scene_change') {
+        vsi = next.length - 1;
+      } else if (playerAtTail && sentence.kind === 'scene_change') {
+        // 新来的是 scene_change，玩家还在 prev 的末尾，此 scene_change 不该
+        // 让玩家"被迫点一下"—— 不动游标，背景会自动更新
+      }
+      // 玩家在往回翻（vsi < lastReadableInPrev）：不打扰
       return { parsedSentences: next, visibleSentenceIndex: vsi };
     }),
 

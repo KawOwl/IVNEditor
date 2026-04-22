@@ -435,6 +435,18 @@ export type Sentence =
       transition?: 'fade' | 'cut' | 'dissolve';
       turnNumber: number;
       index: number;
+    }
+  | {
+      /**
+       * 玩家的输入（signal_input_needed 里选的选项 / 自由输入）。
+       * VN UI 会把它以"玩家回复气泡"形式显示在 backlog + 对话框里。
+       * 由 game-session.submitInput 触发 appendSentence，而不是来自 LLM。
+       */
+      kind: 'player_input';
+      text: string;
+      sceneRef: SceneState;
+      turnNumber: number;
+      index: number;
     };
 
 // ============================================================================

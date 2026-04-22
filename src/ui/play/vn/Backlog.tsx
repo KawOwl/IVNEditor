@@ -89,6 +89,17 @@ function BacklogEntry({
     );
   }
 
+  if (sentence.kind === 'player_input') {
+    return (
+      <div className="border-l-2 border-sky-400/40 pl-2">
+        <div className="text-xs font-semibold text-sky-300/90">我</div>
+        <div className="text-sm leading-relaxed text-sky-100/80 whitespace-pre-wrap">
+          {sentence.text}
+        </div>
+      </div>
+    );
+  }
+
   // dialogue
   const speakerName = resolveSpeakerName(sentence.pf.speaker, characters);
   return (

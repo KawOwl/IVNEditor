@@ -36,9 +36,13 @@ export interface VNStageProps {
   displayText?: string;
   /** M1 Step 1.5：最近一次 scene-change 的过渡类型 */
   transition?: SceneTransition;
+  /** 游标后面还有未读 Sentence */
+  hasMore?: boolean;
+  /** LLM 正在生成中（玩家应该等待） */
+  generating?: boolean;
 }
 
-export function VNStage({ scene, sentence, characters, backgrounds, onClick, displayText, transition }: VNStageProps) {
+export function VNStage({ scene, sentence, characters, backgrounds, onClick, displayText, transition, hasMore, generating }: VNStageProps) {
   return (
     <div
       className="relative h-full w-full overflow-hidden select-none"
@@ -55,7 +59,13 @@ export function VNStage({ scene, sentence, characters, backgrounds, onClick, dis
       </div>
       {/* z-20 对话框 */}
       <div className="absolute inset-x-0 bottom-0 z-20">
-        <DialogBox sentence={sentence} characters={characters} displayText={displayText} />
+        <DialogBox
+          sentence={sentence}
+          characters={characters}
+          displayText={displayText}
+          hasMore={hasMore}
+          generating={generating}
+        />
       </div>
     </div>
   );

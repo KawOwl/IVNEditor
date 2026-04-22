@@ -43,6 +43,80 @@ import type { Sentence, ParticipationFrame, SceneState } from './types';
 // Types
 // ============================================================================
 
+// ============================================================================
+// 旁白 Sentence 切分策略
+// ============================================================================
+
+/**
+ * 一段连续旁白里下一个切分点。VN UI 对一条 Sentence 一屏打字机的粒度敏感：
+ *   - 太大：玩家读一段要等很久、也不好 backlog 翻页
+ *   - 太小：点击推进变得碎
+ *
+ * 切分优先级（从高到低）：
+ *   1. `\n\n` —— 作者 / 模型自然的段落边界
+ *   2. 超过 MAX 软阈值 + 找到句末标点（。！？.!?）—— 长段落按句分
+ *   3. 超过 HARD 硬上限 + 找到任意收束字符（。！？.!? ， ；\n 空格）—— 兜底
+ *   4. 没找到合适切点 → 返回 null，留给后续 chunk / finalize
+ *
+ * 返回：
+ *   - `null` 表示现在不切，继续累积
+ *   - `{ end, consume }`：`end` = Sentence 文本结束下标（exclusive，切出 [0, end) 作 Sentence）；
+ *                         `consume` = 从 buffer 丢掉的长度（= end + 分隔符长度）
+ */
+export const NARRATION_SOFT_LIMIT = 400;   // 超过这个长度开始找句末标点切
+export const NARRATION_HARD_LIMIT = 800;   // 超过这个长度必须切（找不到句末也切）
+
+// 导出以便 unit test 单独测。生产代码只在 game-session 内部用。
+export function findNarrationCut(buf: string): { end: number; consume: number } | null {
+  // 1. \n\n 段落边界
+  const paraIdx = buf.indexOf('\n\n');
+  if (paraIdx >= 0) {
+    return { end: paraIdx, consume: paraIdx + 2 };
+  }
+  // 2. 软阈值 + 句末标点（中英文 。！？.!?）
+  if (buf.length > NARRATION_SOFT_LIMIT) {
+    // 从软阈值 * 0.7 位置开始往后找第一个句末
+    const searchFrom = Math.floor(NARRATION_SOFT_LIMIT * 0.7);
+    const sentIdx = findSentenceEnd(buf, searchFrom);
+    if (sentIdx >= 0) {
+      return { end: sentIdx + 1, consume: sentIdx + 1 };
+    }
+  }
+  // 3. 硬上限兜底：从 0 位置找任意收束字符
+  if (buf.length > NARRATION_HARD_LIMIT) {
+    const weakIdx = findWeakBreak(buf, Math.floor(NARRATION_HARD_LIMIT * 0.7));
+    if (weakIdx >= 0) {
+      return { end: weakIdx + 1, consume: weakIdx + 1 };
+    }
+    // 真·没标点（理论上不应该发生）→ 硬切在 HARD 上
+    return { end: NARRATION_HARD_LIMIT, consume: NARRATION_HARD_LIMIT };
+  }
+  return null;
+}
+
+/** 从 from 开始找第一个句末标点的下标；没找到返回 -1。 */
+function findSentenceEnd(buf: string, from: number): number {
+  for (let i = from; i < buf.length; i++) {
+    const ch = buf[i];
+    if (ch === '。' || ch === '！' || ch === '？' || ch === '.' || ch === '!' || ch === '?') {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** 找任意收束字符（句末/逗号/分号/换行/空格）的下标；没找到返回 -1。 */
+function findWeakBreak(buf: string, from: number): number {
+  for (let i = from; i < buf.length; i++) {
+    const ch = buf[i];
+    if (ch === '。' || ch === '！' || ch === '？' || ch === '.' || ch === '!' || ch === '?'
+        || ch === '，' || ch === '；' || ch === ',' || ch === ';' || ch === '\n' || ch === ' ') {
+      return i;
+    }
+  }
+  return -1;
+}
+
 /**
  * SessionPersistence — 可选的持久化回调接口
  *
@@ -494,6 +568,7 @@ export class GameSession {
 
         if (inputText) {
           this.emitter.appendEntry({ role: 'receive', content: inputText });
+          this.emitPlayerInputSentence(inputText);
           await this.memory.appendTurn({
             turn: config.turn,
             role: 'receive',
@@ -540,8 +615,9 @@ export class GameSession {
       this.emitter.setInputType('freetext');
       this.emitter.setStatus('generating');
 
-      // 显示玩家输入到叙事流
+      // 显示玩家输入到叙事流（legacy entries channel + VN Sentence channel）
       this.emitter.appendEntry({ role: 'receive', content: text });
+      this.emitPlayerInputSentence(text);
 
       // 记录到记忆
       const turn = this.stateStore.getTurn();
@@ -764,12 +840,14 @@ export class GameSession {
         const narrativeParser = new NarrativeParser({
           onNarrationChunk: (text) => {
             pendingNarration += text;
-            // 段落级切分：遇到 `\n\n` 切出一段，剩余留到下次
-            while (pendingNarration.includes('\n\n')) {
-              const idx = pendingNarration.indexOf('\n\n');
-              const para = pendingNarration.slice(0, idx).trim();
+            // 段落级切分：优先 `\n\n`（编剧/模型自然的段落边界），
+            // 次选"超过字数阈值后找句末标点切"，防止极端情况下一段太长。
+            while (true) {
+              const nextCut = findNarrationCut(pendingNarration);
+              if (nextCut === null) break;
+              const para = pendingNarration.slice(0, nextCut.end).trim();
               if (para) emitSentenceFrom({ kind: 'narration', text: para });
-              pendingNarration = pendingNarration.slice(idx + 2);
+              pendingNarration = pendingNarration.slice(nextCut.consume);
             }
           },
           onDialogueStart: () => {
@@ -1028,6 +1106,7 @@ export class GameSession {
 
         if (inputText) {
           this.emitter.appendEntry({ role: 'receive', content: inputText });
+          this.emitPlayerInputSentence(inputText);
 
           await this.memory.appendTurn({
             turn,
@@ -1087,6 +1166,28 @@ export class GameSession {
   }
 
   /** 创建 waitForPlayerInput 回调，供 signal_input_needed 的 execute 使用 */
+  /**
+   * 把玩家输入 emit 成一条 `player_input` Sentence，让 VN UI（对话框 / backlog）
+   * 能显示"玩家的回复气泡"。
+   *
+   * 在 signal 挂起路径和外循环 Receive 路径下都要调，保持叙事流里玩家和 GM
+   * 一问一答的顺序。restore 路径也会为 `role='receive'` entries 合成同样的 Sentence
+   * （在 ws-client-emitter 的 'restored' 分支里做）。
+   *
+   * index 用 Date.now()：player_input 不在 generate 内部的 turnSentenceIndex
+   * 序列里，只需要全局单调即可（前端按 parsedSentences 数组顺序渲染，index 字段
+   * 只是 React key 和诊断标识）。
+   */
+  private emitPlayerInputSentence(text: string): void {
+    this.emitter.appendSentence({
+      kind: 'player_input',
+      text,
+      sceneRef: { ...this.currentScene },
+      turnNumber: this.stateStore.getTurn(),
+      index: Date.now(),
+    });
+  }
+
   private createWaitForPlayerInput(): (options: SignalInputOptions) => Promise<string> {
     return async (options: SignalInputOptions) => {
       // ★ signal 挂起前先把 narration 累积 buffer 推给前端：

@@ -36,6 +36,7 @@ export function VNStageContainer({ characters, backgrounds }: VNStageContainerPr
   const visibleSentenceIndex = useGameStore((s) => s.visibleSentenceIndex);
   const advanceSentence = useGameStore((s) => s.advanceSentence);
   const lastSceneTransition = useGameStore((s) => s.lastSceneTransition);
+  const status = useGameStore((s) => s.status);
 
   // 当前展示哪一句？
   //   - visibleSentenceIndex === null → 没开始/刚 reset，对话框显示 "…"
@@ -101,6 +102,23 @@ export function VNStageContainer({ characters, backgrounds }: VNStageContainerPr
     return () => window.removeEventListener('keydown', handleKey);
   }, [advanceSentence, fullText.length, typewriter]);
 
+  // 游标之后还有未读 Sentence？（跳过 scene_change，找下一个可读的）
+  const hasMore = (() => {
+    if (visibleSentenceIndex === null) return false;
+    // 当前是 scene_change（罕见）也不算有更多
+    for (let i = visibleSentenceIndex + 1; i < parsedSentences.length; i++) {
+      if (parsedSentences[i]?.kind !== 'scene_change') return true;
+    }
+    return false;
+  })();
+
+  // LLM 正在生成 + 打字机已经完成 + 没有更多 Sentence 可读 → 显示 "生成中" 指示
+  // （打字机进行中自然有光标动画；已经看到新 sentence 时也不用冗余提示）
+  const generating =
+    status === 'generating' &&
+    !hasMore &&
+    (fullText.length === 0 || typewriter.done);
+
   return (
     <div className="relative h-full w-full">
       <VNStage
@@ -111,6 +129,8 @@ export function VNStageContainer({ characters, backgrounds }: VNStageContainerPr
         onClick={handleClick}
         displayText={fullText.length > 0 ? typewriter.displayed : undefined}
         transition={lastSceneTransition}
+        hasMore={hasMore && typewriter.done}
+        generating={generating}
       />
       {/* Backlog drawer 挂在 stage 之外，避免它的点击被 stage click 吞掉 */}
       <Backlog characters={characters} />

@@ -294,10 +294,19 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
       let globalIndex = 0;
       let turnNumber = 0;
       for (const entry of entries) {
-        if (entry.role !== 'generate') {
-          // role='receive' 是玩家输入，不在 VN 叙事层渲染
+        if (entry.role === 'receive') {
+          // 玩家的回复气泡 —— 合成一条 player_input Sentence 让 backlog 能重现
+          const s: Sentence = {
+            kind: 'player_input',
+            text: entry.content,
+            sceneRef,
+            turnNumber,
+            index: globalIndex++,
+          };
+          store().appendSentence(s);
           continue;
         }
+        if (entry.role !== 'generate') continue;
         turnNumber++;
         const parser = new NarrativeParser({
           onNarrationChunk: (text) => {
