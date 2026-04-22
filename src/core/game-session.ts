@@ -626,19 +626,35 @@ export class GameSession {
         });
         const enabledToolSet = getEnabledTools(allTools, this.enabledTools);
 
-        // Assemble context
-        const focus = computeFocus(this.stateStore.getAll());
-        const context = await assembleContext({
-          segments: this.segments,
-          stateStore: this.stateStore,
-          memory: this.memory,
-          tokenBudget: this.tokenBudget,
-          initialPrompt: this.initialPrompt,
-          currentQuery: await this.buildRetrievalQuery(),
-          focus,
-          assemblyOrder: this.assemblyOrder,
-          disabledSections: this.disabledSections,
-        });
+        // Assemble context —— 抽成闭包，让 prepareStep hook 里也能按当前 state 重调。
+        //
+        // Focus Injection D：一次 generate() 可以跨多个 scene 切换（signal_input_needed
+        // 挂起期间 state.current_scene 可能变化），外层 assembleContext 只在开头跑一次
+        // 拿到的是初始 focus 对应的 prompt。为了让后续 step 能看到新 scene 的 segment，
+        // prepareStep 里会在 focus 变化时调这个闭包重新 assemble。
+        const runAssemble = async (focus: ReturnType<typeof computeFocus>) => {
+          return assembleContext({
+            segments: this.segments,
+            stateStore: this.stateStore,
+            memory: this.memory,
+            tokenBudget: this.tokenBudget,
+            initialPrompt: this.initialPrompt,
+            currentQuery: await this.buildRetrievalQuery(),
+            focus,
+            assemblyOrder: this.assemblyOrder,
+            disabledSections: this.disabledSections,
+          });
+        };
+
+        let focus = computeFocus(this.stateStore.getAll());
+        let context = await runAssemble(focus);
+
+        // prepareStep 缓存：同一个 focus key 不反复跑 assembleContext，避免无谓的
+        // memory.retrieve + prompt cache miss。只有 focus 真的变了才重算。
+        const focusKey = (f: ReturnType<typeof computeFocus>) =>
+          JSON.stringify({ scene: f.scene, characters: f.characters, stage: f.stage });
+        let cachedFocusKey = focusKey(focus);
+        let cachedSystemPrompt = context.systemPrompt;
 
         // Compute active segment IDs
         const activeSegmentIds = this.segments
@@ -762,6 +778,39 @@ export class GameSession {
           maxSteps: 30,
           // maxOutputTokens 默认从 LLMClient 的 config.maxOutputTokens 取（P2a 修复）
           abortSignal: this.abortController.signal,
+          // Focus Injection D：per-step 读 state，focus 变了就重 assemble
+          //
+          // 注意 AI SDK 的 prepareStep 语义：返回 undefined → 用**外层初始** system；
+          // 返回 string → 覆盖本 step 的 system。所以一旦 focus 变过一次，之后每个
+          // step 都必须返回**当时的 cachedSystemPrompt**（而不是 undefined），否则
+          // AI SDK 会回到外层初始 prompt，把之前 refresh 过的场景段又丢了。
+          //
+          // Provider 侧 prompt cache：每次返回相同字符串时 prefix 一致，能命中 cache。
+          // 只有 focus 真的变了那一 step 会 miss 一次。
+          prepareStepSystem: async ({ stepNumber }) => {
+            // step 0 外层已 assemble 过了，返回 undefined 让 AI SDK 用外层 systemPrompt
+            if (stepNumber === 0) return undefined;
+            const curFocus = computeFocus(this.stateStore.getAll());
+            const curKey = focusKey(curFocus);
+            if (curKey === cachedFocusKey) {
+              // focus 没变。如果从没 refresh 过（cachedSystemPrompt 就是外层那份），
+              // 返回 undefined 让 AI SDK 用外层；否则返回缓存值维持现状。
+              if (cachedSystemPrompt === context.systemPrompt) return undefined;
+              return cachedSystemPrompt;
+            }
+            // focus 变了 → 重 assemble
+            const prevFocus = JSON.parse(cachedFocusKey) as unknown;
+            const newCtx = await runAssemble(curFocus);
+            cachedFocusKey = curKey;
+            cachedSystemPrompt = newCtx.systemPrompt;
+            // 可观测性：给 tracing 层打一条 focus 变更事件
+            traceHandle?.event(
+              'focus-refresh',
+              { from: prevFocus, to: curFocus },
+              { stepNumber },
+            );
+            return newCtx.systemPrompt;
+          },
           onTextChunk: (chunk) => {
             this.currentNarrativeBuffer += chunk;
             this.emitter.appendToStreamingEntry(chunk);

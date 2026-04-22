@@ -98,6 +98,22 @@ export interface GenerateOptions {
   onToolResult?: (name: string, result: unknown) => void;
   /** 每个 step（内部 LLM API 调用）结束时触发，用于追踪/观测 */
   onStep?: (step: StepInfo) => void;
+  /**
+   * Per-step system prompt 覆盖钩子（Focus Injection D 方案）。
+   *
+   * 每个 step 发送给 provider **之前**触发。返回 string → 覆盖本 step 的 system；
+   * 返回 undefined → 沿用 streamText 外层传入的 systemPrompt。
+   *
+   * 用途：game-session 在这里读当前 state_vars，探测 focus (current_scene 等) 是否
+   * 变了。没变则返回 undefined（外层 prompt 不动，provider 侧命中 prompt cache）；
+   * 变了则调 assembleContext 重算 prompt 返回。
+   *
+   * stepNumber=0 通常返回 undefined（外层已经算过初始 prompt 了）。
+   */
+  prepareStepSystem?: (info: {
+    stepNumber: number;
+    steps: ReadonlyArray<unknown>;  // 已完成 step 的只读数组
+  }) => Promise<string | undefined> | string | undefined;
 }
 
 export interface GenerateResult {
@@ -184,6 +200,7 @@ export class LLMClient {
       onToolCall: onToolCallCb,
       onToolResult: onToolResultCb,
       onStep,
+      prepareStepSystem,
     } = options;
 
     const aiTools = buildAISDKTools(toolHandlers);
@@ -210,6 +227,17 @@ export class LLMClient {
       stopWhen: [stepCountIs(maxSteps)],
       maxOutputTokens,
       abortSignal,
+      // Focus Injection D：per-step system prompt 覆盖。每个 step 开始前，
+      // 如果上层想根据当前 state 换一份 system，在这里返回新字符串。
+      // 返回 undefined → AI SDK 用外层的 `system` 参数。
+      ...(prepareStepSystem
+        ? {
+            prepareStep: async ({ stepNumber, steps }: { stepNumber: number; steps: ReadonlyArray<unknown> }) => {
+              const sys = await prepareStepSystem({ stepNumber, steps });
+              return sys !== undefined ? { system: sys } : undefined;
+            },
+          }
+        : {}),
       // 捕获每个 step 的完整 input messages（含前序 step 的 tool results）
       // 以及该 step 开始的真实瞬间（tracing 层用作 generation span startTime）。
       experimental_onStepStart: (event) => {
