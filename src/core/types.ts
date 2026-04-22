@@ -205,17 +205,8 @@ export interface MemoryEntry {
   pinned?: boolean;
 }
 
-/**
- * MemoryState —— 仅保留结构给老引用者；**新实现用 MemorySnapshot opaque JSON**。
- *
- * inheritedSummary 字段已移除（章节不再是 memory 生命周期事件）。
- * 此 interface 预计在后续清理里整个删除，届时所有消费方切到 MemorySnapshot。
- */
-export interface MemoryState {
-  entries: MemoryEntry[];
-  summaries: string[];
-  watermark: number;              // 压缩水位线：此序号之前的条目已被压缩
-}
+// MemoryState 已删除 —— 新实现用 Memory / MemorySnapshot（opaque JSON）表示记忆状态。
+// 老字段 inheritedSummary（章节继承）和 watermark（未被任何 hot path 使用）一并去除。
 
 // Layer 4: Runtime — 临时执行状态（不持久化）
 export interface RuntimeState {

@@ -412,13 +412,10 @@ export class GameSession {
       this.stateStore.restore(config.stateVars, config.turn);
       // DB 里目前还是两列格式（Commit 4 会合并为单列 memorySnapshot）。
       // 这里重组成 legacy-v1 snapshot 再喂给 LegacyMemory.restore。
-      const memoryEntries = config.memoryEntries as import('./types').MemoryEntry[];
       await this.memory.restore({
         kind: 'legacy-v1',
-        entries: memoryEntries,
+        entries: config.memoryEntries as import('./types').MemoryEntry[],
         summaries: config.memorySummaries,
-        // watermark 原代码也是从最后一条 entry.turn 重算，行为等价
-        watermark: memoryEntries[memoryEntries.length - 1]?.turn ?? 0,
       });
 
       // M3: 恢复 currentScene —— 优先 DB 快照，其次 manifest 默认，最后空

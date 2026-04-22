@@ -54,13 +54,14 @@ function generateId(): string {
 /**
  * Legacy adapter 的内部状态
  *
- * 注意：不含 inheritedSummary —— 章节继承从 Memory 接口剥离
- * （executeChapterTransition 本就是死代码，没有 playthrough 会受影响）
+ * - 不含 inheritedSummary —— 章节继承从 Memory 接口剥离
+ *   （executeChapterTransition 本就是死代码，没有 playthrough 会受影响）
+ * - 不含 watermark —— 原字段虽然在 compress 后更新，但整个仓库
+ *   **没有任何 hot path 读取它**，连原 restore 的重算也是不准确的。删掉。
  */
 interface LegacyState {
   entries: MemoryEntry[];
   summaries: string[];
-  watermark: number;
 }
 
 // ============================================================================
@@ -69,7 +70,7 @@ interface LegacyState {
 
 export class LegacyMemory implements Memory {
   readonly kind = 'legacy';
-  private state: LegacyState = { entries: [], summaries: [], watermark: 0 };
+  private state: LegacyState = { entries: [], summaries: [] };
 
   constructor(
     private readonly config: MemoryConfig,
@@ -185,9 +186,6 @@ export class LegacyMemory implements Memory {
     const summary = await this.compressFn(toCompress, compressionHints);
     this.state.summaries.push(summary);
 
-    const last = toCompress[toCompress.length - 1];
-    if (last) this.state.watermark = last.turn;
-
     this.state.entries = [...pinned, ...toKeep];
   }
 
@@ -196,7 +194,6 @@ export class LegacyMemory implements Memory {
       kind: 'legacy-v1',
       entries: structuredClone(this.state.entries),
       summaries: [...this.state.summaries],
-      watermark: this.state.watermark,
     };
   }
 
@@ -209,12 +206,11 @@ export class LegacyMemory implements Memory {
     this.state = {
       entries: structuredClone((snap.entries ?? []) as MemoryEntry[]),
       summaries: [...((snap.summaries ?? []) as string[])],
-      watermark: (snap.watermark ?? 0) as number,
     };
   }
 
   async reset(): Promise<void> {
-    this.state = { entries: [], summaries: [], watermark: 0 };
+    this.state = { entries: [], summaries: [] };
   }
 
   // ─── Internal helpers ──────────────────────────────────────────────
