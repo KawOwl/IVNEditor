@@ -151,8 +151,17 @@ async function connectWebSocket(
   // 拿到 auth sessionId（player token）
   const authSessionId = await ensureSessionId();
 
-  const wsProtocol = baseUrl.startsWith('https') ? 'wss' : 'ws';
-  const wsHost = baseUrl.replace(/^https?:\/\//, '');
+  // 生产 build 用相对路径（getBackendUrl() 返回 ''），WS 需要 fallback 到页面同源
+  // 否则 `ws:///api/...` 三斜杠空 host，浏览器直接 SyntaxError
+  let wsProtocol: string;
+  let wsHost: string;
+  if (baseUrl) {
+    wsProtocol = baseUrl.startsWith('https') ? 'wss' : 'ws';
+    wsHost = baseUrl.replace(/^https?:\/\//, '');
+  } else {
+    wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    wsHost = window.location.host;
+  }
   const wsUrl = `${wsProtocol}://${wsHost}/api/sessions/ws?sessionId=${encodeURIComponent(authSessionId)}&playthroughId=${encodeURIComponent(playthroughId)}`;
   const ws = new WebSocket(wsUrl);
 
