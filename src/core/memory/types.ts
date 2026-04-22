@@ -154,6 +154,14 @@ export interface Memory {
 export interface CreateMemoryOptions {
   scope: MemoryScope;
   config: MemoryConfig;
-  /** LLMSummarizer / mem0 adapter 需要；legacy 忽略 */
+  /** LLMSummarizer 需要；legacy / mem0 忽略 */
   llmClient?: import('../llm-client').LLMClient;
+  /**
+   * mem0 adapter 需要的 API key —— 由 server 侧从 env / secret 读取后注入，
+   * factory 不直接读 process.env（因为 factory 也会被前端 tsc 编译，
+   * 前端没有 process 全局）。
+   *
+   * 也可以通过 config.providerOptions.apiKey 覆盖（剧本级定制），优先级更高。
+   */
+  mem0ApiKey?: string;
 }

@@ -116,6 +116,8 @@ export class GameSessionWrapper {
       disabledSections: base.disabledSections,
       persistence: base.persistence,
       tracing: base.tracing,
+      // mem0 key 从 base 带过来（base 已经从 env 读好了）
+      mem0ApiKey: base.mem0ApiKey,
       ...snapshot,
       // M3: currentScene 从 snapshot 取，defaultScene 从 manifest 取（restore 时用作 fallback）
       defaultScene: base.defaultScene,
@@ -180,6 +182,8 @@ export class GameSessionWrapper {
       disabledSections: manifest.disabledAssemblySections,
       // M3: 把剧本 manifest 的默认场景透传给 GameSession 初始化
       defaultScene: manifest.defaultScene,
+      // mem0 adapter 需要 API key —— 从 env 读后注入。没配也没事，只有 provider='mem0' 时 factory 才检查。
+      mem0ApiKey: process.env.MEM0_API_KEY,
       persistence: createPlaythroughPersistence(this.playthroughId),
       tracing: createBoundTracing({
         playthroughId: this.playthroughId,

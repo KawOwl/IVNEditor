@@ -17,6 +17,7 @@ import type { Memory, CreateMemoryOptions } from './types';
 import { LegacyMemory } from './legacy/manager';
 import { truncatingCompressFn } from './legacy/compress';
 import { LLMSummarizerMemory } from './llm-summarizer/manager';
+import { Mem0Memory } from './mem0/adapter';
 
 export async function createMemory(options: CreateMemoryOptions): Promise<Memory> {
   const kind = options.config.provider ?? 'legacy';
@@ -33,9 +34,19 @@ export async function createMemory(options: CreateMemoryOptions): Promise<Memory
       }
       return new LLMSummarizerMemory(options.config, options.llmClient);
 
-    case 'mem0':
-      // Phase 3
-      throw new Error('Memory provider "mem0" not implemented yet (Phase 3)');
+    case 'mem0': {
+      // apiKey 由 server 侧（session-manager）从 env 读后透传进来。
+      // providerOptions.apiKey 允许剧本级覆盖（剧本作者想绑定自己的 mem0 账号）。
+      const apiKey =
+        (options.config.providerOptions?.apiKey as string | undefined) ??
+        options.mem0ApiKey;
+      if (!apiKey) {
+        throw new Error(
+          'Memory provider "mem0" requires MEM0_API_KEY (set in server env) or providerOptions.apiKey',
+        );
+      }
+      return new Mem0Memory(options.scope, options.config, apiKey);
+    }
 
     default:
       throw new Error(`Unknown memory provider: ${String(kind)}`);

@@ -221,6 +221,8 @@ export interface RestoreConfig {
   currentScene?: SceneState | null;
   /** 场景默认值，当没有 currentScene 快照时用 */
   defaultScene?: SceneState;
+  /** mem0 adapter 的 API key —— server 从 env 读后注入 */
+  mem0ApiKey?: string;
 }
 
 export interface GameSessionConfig {
@@ -242,6 +244,8 @@ export interface GameSessionConfig {
   tracing?: SessionTracing;          // 可选可观测性（远程模式接 Langfuse）
   /** VN 模式首次开始时 currentScene 的初值（M3）。剧本 manifest.defaultScene 透传过来。 */
   defaultScene?: SceneState;
+  /** mem0 adapter 的 API key —— server 从 env 读后注入（前端不读 env） */
+  mem0ApiKey?: string;
 }
 
 // ============================================================================
@@ -351,6 +355,7 @@ export class GameSession {
         },
         config: config.memoryConfig,
         llmClient: this.llmClient,
+        mem0ApiKey: config.mem0ApiKey,
       });
       this.segments = config.segments;
       this.enabledTools = config.enabledTools ?? [];
@@ -404,6 +409,7 @@ export class GameSession {
         },
         config: config.memoryConfig,
         llmClient: this.llmClient,
+        mem0ApiKey: config.mem0ApiKey,
       });
       this.segments = config.segments;
       this.enabledTools = config.enabledTools ?? [];
