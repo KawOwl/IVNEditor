@@ -137,6 +137,19 @@ function buildAllSections(
     stability: 'dynamic',
   });
 
+  // --- Virtual: Scene Context（Focus Injection，MVP）---
+  sections.push({
+    id: VIRTUAL_IDS.SCENE_CONTEXT,
+    label: 'Scene Context (Focus)',
+    source: '引擎自动生成 · 按 current_scene 动态排序',
+    role: 'engine',
+    content: '[Current Focus scene + 相关 segment 列表 — 运行时动态填充]',
+    tokenCount: 0,
+    injected: true,
+    virtual: true,
+    stability: 'dynamic',
+  });
+
   // --- Virtual: Memory Summaries ---
   sections.push({
     id: VIRTUAL_IDS.MEMORY,
@@ -211,6 +224,7 @@ function getDefaultOrder(sections: PreviewSection[]): string[] {
   return [
     ...systemSegs.map((s) => s.id),
     VIRTUAL_IDS.STATE,
+    VIRTUAL_IDS.SCENE_CONTEXT,
     VIRTUAL_IDS.MEMORY,
     ...contextSegs.map((s) => s.id),
     VIRTUAL_IDS.RULES,
@@ -235,8 +249,13 @@ function getOptimalOrder(sections: PreviewSection[]): string[] {
     return (a.priority ?? 99) - (b.priority ?? 99);
   });
 
-  // Within dynamic: state → memory → history (natural order)
-  const dynamicOrder: string[] = [VIRTUAL_IDS.STATE, VIRTUAL_IDS.MEMORY, VIRTUAL_IDS.HISTORY];
+  // Within dynamic: state → scene_context → memory → history (natural order)
+  const dynamicOrder: string[] = [
+    VIRTUAL_IDS.STATE,
+    VIRTUAL_IDS.SCENE_CONTEXT,
+    VIRTUAL_IDS.MEMORY,
+    VIRTUAL_IDS.HISTORY,
+  ];
   dynamic.sort((a, b) => {
     const ia = dynamicOrder.indexOf(a.id);
     const ib = dynamicOrder.indexOf(b.id);

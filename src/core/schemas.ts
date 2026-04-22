@@ -38,6 +38,12 @@ export const injectionRuleSchema = z.object({
   condition: z.string(),
 });
 
+export const focusTagsSchema = z.object({
+  scene: z.string().optional(),
+  chars: z.array(z.string()).optional(),
+  stage: z.string().optional(),
+});
+
 export const promptSegmentSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -49,6 +55,7 @@ export const promptSegmentSchema = z.object({
   role: z.enum(['system', 'context', 'draft']),
   priority: z.number(),
   injectionRule: injectionRuleSchema.optional(),
+  focusTags: focusTagsSchema.optional(),
   tokenCount: z.number().int().nonnegative(),
 });
 

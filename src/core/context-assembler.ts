@@ -14,12 +14,14 @@
 
 import type {
   PromptSegment,
+  FocusState,
 } from './types';
 import type { Memory } from './memory/types';
 import type { StateStore } from './state-store';
 import { serializeStateVars } from './state-store';
 import { estimateTokens } from './tokens';
 import { ENGINE_RULES_CONTENT } from './engine-rules';
+import { rankSegments } from './focus';
 
 // ============================================================================
 // Types
@@ -63,6 +65,12 @@ export interface AssembleOptions {
    * 空字符串合法：adapter 自己兜底（legacy → entries 空数组；mem0 按策略）。
    */
   currentQuery: string;
+  /**
+   * 当前 focus 状态，由 game-session 通过 computeFocus(stateVars) 推断传入。
+   * 用于生成 `_engine_scene_context` section（focus 元信号 + top N 相关 segment IDs）。
+   * 省略或空对象 → section 不生成，向后兼容。
+   */
+  focus?: FocusState;
   assemblyOrder?: string[]; // 自定义组装顺序（section ID 列表，含虚拟 section）
   disabledSections?: string[]; // 被禁用的 section ID 列表（不参与组装）
 }
@@ -112,6 +120,8 @@ function evaluateCondition(
 export const VIRTUAL_IDS = {
   STATE: '_engine_state',
   MEMORY: '_engine_memory',
+  /** Focus Injection（见 src/core/focus.ts）：focus 元信号 + top N 相关 segment IDs */
+  SCENE_CONTEXT: '_engine_scene_context',
   HISTORY: '_engine_history',
   RULES: '_engine_rules',
   INITIAL_PROMPT: '_initial_prompt',
@@ -140,6 +150,7 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
     tokenBudget,
     outputReserve = 4096,
     currentQuery,
+    focus,
     assemblyOrder,
     disabledSections,
   } = options;
@@ -163,8 +174,14 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
   const sectionTokens = new Map<string, number>();
 
   // User segments (use derivedContent if useDerived)
+  //
+  // 每段用 `--- [${label}] ---\n<body>` 包裹，作为 Focus Injection 的 ID
+  // 锚点 —— `_engine_scene_context` 里提到的 segment ID/label 能让 LLM 找到
+  // 对应段落。label 为空时 fallback 到 id。
   for (const seg of activeSegments) {
-    const content = (seg.useDerived && seg.derivedContent) ? seg.derivedContent : seg.content;
+    const body = (seg.useDerived && seg.derivedContent) ? seg.derivedContent : seg.content;
+    const labelHeader = `--- [${seg.label || seg.id}] ---`;
+    const content = `${labelHeader}\n${body}`;
     const tokens = estimateTokens(content);
     sectionContent.set(seg.id, content);
     sectionTokens.set(seg.id, tokens);
@@ -176,6 +193,36 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
     const stateTokenCount = estimateTokens(stateSection);
     sectionContent.set(VIRTUAL_IDS.STATE, stateSection);
     sectionTokens.set(VIRTUAL_IDS.STATE, stateTokenCount);
+  }
+
+  // Focus Injection（见 src/core/focus.ts 和 .claude/plans/focus-injection.md）
+  //
+  // 放在 STATE 之后、MEMORY 之前 —— 给 LLM 先呈现"此刻在哪、关注谁/啥"的
+  // focus 元信号，再让它看 memory 里相关记忆。
+  //
+  // A1 + B1 模式：不改注入决策，只提供焦点指示。top N 的 segment label 列表
+  // 让 LLM 知道"这几段现在最相关"，配合每段注入加的 `--- [label] ---` header
+  // 可以锚回原文。
+  //
+  // 生成条件：focus 非空且有至少一维有值、且 top N > 0（至少有一个 segment 匹配）。
+  // 否则跳过 section，向后兼容（剧本没打 focusTags 时零破坏）。
+  if (!disabledSet.has(VIRTUAL_IDS.SCENE_CONTEXT) && focus) {
+    const ranked = rankSegments(activeSegments, focus, 5);
+    const focusLines: string[] = [];
+    if (focus.scene) focusLines.push(`scene: ${focus.scene}`);
+    // v2: characters / stage
+    if (focusLines.length > 0 && ranked.length > 0) {
+      const lines = [
+        '[Current Focus]',
+        ...focusLines,
+        '',
+        'Most relevant segments:',
+        ...ranked.map((s) => ` - ${s.label || s.id}`),
+      ];
+      const content = `---\n${lines.join('\n')}\n---`;
+      sectionContent.set(VIRTUAL_IDS.SCENE_CONTEXT, content);
+      sectionTokens.set(VIRTUAL_IDS.SCENE_CONTEXT, estimateTokens(content));
+    }
   }
 
   // Memory summaries (can be disabled)
@@ -222,6 +269,7 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
     orderedIds = [
       ...systemSegs.map((s) => s.id),
       ...(sectionContent.has(VIRTUAL_IDS.STATE) ? [VIRTUAL_IDS.STATE] : []),
+      ...(sectionContent.has(VIRTUAL_IDS.SCENE_CONTEXT) ? [VIRTUAL_IDS.SCENE_CONTEXT] : []),
       ...(sectionContent.has(VIRTUAL_IDS.MEMORY) ? [VIRTUAL_IDS.MEMORY] : []),
       ...contextSegs.map((s) => s.id),
       ...(sectionContent.has(VIRTUAL_IDS.RULES) ? [VIRTUAL_IDS.RULES] : []),
@@ -260,6 +308,7 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
     else if (seg?.role === 'context') contextTokens += tokens;
     else if (id === VIRTUAL_IDS.STATE) stateTokensFinal = tokens;
     else if (id === VIRTUAL_IDS.MEMORY) summaryTokensFinal = tokens;
+    else if (id === VIRTUAL_IDS.SCENE_CONTEXT) systemTokens += tokens;
     else if (id === VIRTUAL_IDS.RULES) systemTokens += tokens;
   }
 

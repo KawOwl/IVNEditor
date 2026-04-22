@@ -30,6 +30,7 @@ import type { Memory } from './memory/types';
 import { createMemory } from './memory/factory';
 import { estimateTokens } from './tokens';
 import { assembleContext } from './context-assembler';
+import { computeFocus } from './focus';
 import { createTools, getEnabledTools } from './tool-executor';
 import type { SignalInputOptions } from './tool-executor';
 import { LLMClient } from './llm-client';
@@ -615,6 +616,7 @@ export class GameSession {
         const enabledToolSet = getEnabledTools(allTools, this.enabledTools);
 
         // Assemble context
+        const focus = computeFocus(this.stateStore.getAll());
         const context = await assembleContext({
           segments: this.segments,
           stateStore: this.stateStore,
@@ -622,6 +624,7 @@ export class GameSession {
           tokenBudget: this.tokenBudget,
           initialPrompt: this.initialPrompt,
           currentQuery: await this.buildRetrievalQuery(),
+          focus,
           assemblyOrder: this.assemblyOrder,
           disabledSections: this.disabledSections,
         });
@@ -943,22 +946,31 @@ export class GameSession {
   /**
    * 为本轮 generate 构造 Memory.retrieve 的 query。
    *
-   * Phase 1 版本：直接返回最近一次玩家输入（submitInput 时写入的 lastPlayerInput）。
+   * v1.1 版本（Focus Injection MVP）：拼接"当前 focus.scene + 最近玩家输入"。
+   *   - scene 来自 state_vars.current_scene（由 computeFocus 推断）
+   *   - lastPlayerInput 是 submitInput 写入的
    *
-   * ⚠ 这里**故意**留一个扩展点。未来可能升级为：
-   *   - 用便宜 LLM 根据当前 state + 最近 N 轮叙事生成检索 query
-   *   - 拼接 state 里关键变量（角色名、场景、物品）作为 query
+   * 为什么拼 focus：给 Memory.retrieve 更结构化的信号，让 mem0 这类语义
+   * 检索能找到"此场景下发生过的事"而不只是"玩家话里提到的关键词"。
+   * legacy / llm-summarizer 下 query 对 summary 影响不大，但无害。
+   *
+   * ⚠ 扩展点保留。未来可能升级为：
+   *   - 加 chars / stage 维度
+   *   - 用便宜 LLM 根据 state + 最近叙事生成更精炼的 query
    *   - 多 query 并行 retrieve 合并结果
    *
-   * 升级时只改这个函数，assembleContext / Memory.retrieve 完全不动。
-   *
-   * **不要**把这个生成逻辑内联到 assembleContext 调用处 —— 扩展点的
-   * 价值就是"一个函数管所有 query 策略"。
+   * 升级只改这个函数，assembleContext / Memory.retrieve 完全不动。
    *
    * 空字符串合法：adapter 按契约兜底（legacy → entries 空数组；mem0 按策略）。
    */
   private async buildRetrievalQuery(): Promise<string> {
-    return this.lastPlayerInput;
+    const focus = computeFocus(this.stateStore.getAll());
+    const parts: string[] = [];
+    if (focus.scene) parts.push(focus.scene);
+    // v2: if (focus.stage) parts.push(focus.stage);
+    // v2: if (focus.characters?.length) parts.push(focus.characters.join(', '));
+    if (this.lastPlayerInput) parts.push(this.lastPlayerInput);
+    return parts.join('. ');
   }
 
   /** 创建 waitForPlayerInput 回调，供 signal_input_needed 的 execute 使用 */

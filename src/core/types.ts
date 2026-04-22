@@ -70,11 +70,38 @@ export interface PromptSegment {
   priority: number;           // 组装时的优先级（数字越小优先级越高）
   assemblyOrder?: number;     // 组装顺序（用于 prompt 前缀缓存优化，越小越前）
   injectionRule?: InjectionRule;
+  /**
+   * Focus Injection 标签（见 src/core/focus.ts 和 .claude/plans/focus-injection.md）
+   * 运行时用来匹配当前 focus（scene / chars / stage），排到 _engine_scene_context
+   * section 里作为"最相关 segments"提示 LLM 重点关注。
+   * MVP 只消费 scene 字段；chars / stage 先预留不使用。
+   */
+  focusTags?: FocusTags;
   tokenCount: number;
   /** LLM 改写后的衍生内容（仅 system segment 可用） */
   derivedContent?: string;
   /** 组装时使用衍生版本还是原文 */
   useDerived?: boolean;
+}
+
+/**
+ * Focus Injection 标签结构。每个字段都是可选 —— 空值等于"对该维度无要求"，
+ * 不参与该维度的匹配（但其他维度仍参与）。
+ */
+export interface FocusTags {
+  scene?: string;
+  chars?: string[];   // v2 用
+  stage?: string;     // v2 用
+}
+
+/**
+ * 当前 focus 状态，由 computeFocus(stateVars) 运行时推断。
+ * MVP 只读 scene；v2 扩展 characters 和 stage。
+ */
+export interface FocusState {
+  scene?: string;
+  characters?: string[];
+  stage?: string;
 }
 
 export interface InjectionRule {

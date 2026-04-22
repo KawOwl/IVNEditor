@@ -58,6 +58,8 @@ interface EditorDocument {
   priority: number;
   injectionCondition: string;   // empty = always inject
   injectionDescription: string;
+  /** Focus Injection 的 scene 标签（MVP 一维）。空 = 无 focus tag = 全局 segment */
+  focusScene: string;
   derivedContent?: string;      // LLM 改写的衍生版本
   useDerived?: boolean;         // 组装时使用衍生版本
 }
@@ -87,6 +89,7 @@ function docToSegment(doc: EditorDocument): PromptSegment {
     injectionRule: doc.injectionCondition
       ? { description: doc.injectionDescription || doc.injectionCondition, condition: doc.injectionCondition }
       : undefined,
+    focusTags: doc.focusScene ? { scene: doc.focusScene } : undefined,
     tokenCount: estimateTokens(doc.content),
     derivedContent: doc.derivedContent,
     useDerived: doc.useDerived,
@@ -109,6 +112,7 @@ function manifestToDocuments(manifest: ScriptManifest): EditorDocument[] {
         priority: seg.priority,
         injectionCondition: seg.injectionRule?.condition ?? '',
         injectionDescription: seg.injectionRule?.description ?? '',
+        focusScene: seg.focusTags?.scene ?? '',
         derivedContent: seg.derivedContent,
         useDerived: seg.useDerived,
       });
@@ -781,6 +785,7 @@ export function EditorPage() {
       priority: 5,
       injectionCondition: '',
       injectionDescription: '',
+      focusScene: '',
     };
     setDocuments((prev) => [...prev, doc]);
     setSelectedDocId(doc.id);
@@ -838,6 +843,7 @@ export function EditorPage() {
         priority,
         injectionCondition,
         injectionDescription,
+        focusScene: '',
       });
     }
 
@@ -888,7 +894,7 @@ export function EditorPage() {
 
   const handleDocMetaChange = useCallback((
     id: string,
-    field: 'role' | 'priority' | 'injectionCondition' | 'injectionDescription' | 'filename' | 'useDerived',
+    field: 'role' | 'priority' | 'injectionCondition' | 'injectionDescription' | 'focusScene' | 'filename' | 'useDerived',
     value: string | number | boolean,
   ) => {
     setDocuments((prev) =>
@@ -1536,7 +1542,7 @@ function DocMetaBar({
 }: {
   doc: EditorDocument;
   onMetaChange: (
-    field: 'role' | 'priority' | 'injectionCondition' | 'injectionDescription' | 'useDerived',
+    field: 'role' | 'priority' | 'injectionCondition' | 'injectionDescription' | 'focusScene' | 'useDerived',
     value: string | number | boolean,
   ) => void;
   onRewrite?: () => void;
@@ -1626,6 +1632,19 @@ function DocMetaBar({
           onChange={(e) => onMetaChange('injectionCondition', e.target.value)}
           placeholder="空 = 始终注入"
           className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-zinc-300 text-xs font-mono placeholder:text-zinc-600 focus:outline-none"
+        />
+      </label>
+
+      {/* Focus Scene tag —— Focus Injection MVP 一维 */}
+      <label className="flex items-center gap-1 text-zinc-500 min-w-0">
+        Scene:
+        <input
+          type="text"
+          value={doc.focusScene}
+          onChange={(e) => onMetaChange('focusScene', e.target.value)}
+          placeholder="空 = 全局"
+          className="w-28 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-zinc-300 text-xs font-mono placeholder:text-zinc-600 focus:outline-none"
+          title="只在 state.current_scene 等于此值时，被标记为当前 focus 的相关 segment"
         />
       </label>
 
