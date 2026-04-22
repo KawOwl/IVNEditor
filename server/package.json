@@ -18,6 +18,7 @@
     "test:watch": "bun test --watch"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.71",
     "@ai-sdk/openai-compatible": "^2.0.41",
     "@aws-sdk/client-s3": "^3.1033.0",
     "@aws-sdk/lib-storage": "^3.1033.0",
@@ -29,6 +30,7 @@
     "drizzle-orm": "^0.45.2",
     "elysia": "^1.2.25",
     "langfuse": "^3.38.20",
+    "mem0ai": "^3.0.1",
     "pg": "^8.20.0",
     "zod": "^4.3.6"
   },
