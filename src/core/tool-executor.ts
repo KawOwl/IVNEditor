@@ -17,7 +17,7 @@
 
 import { z } from 'zod/v4';
 import type { StateStore } from './state-store';
-import type { MemoryManager } from './memory';
+import type { Memory } from './memory/types';
 import type { PromptSegment } from './types';
 import { requireToolMetadata } from './tool-catalog';
 
@@ -39,7 +39,7 @@ export interface SignalInputOptions {
 
 export interface ToolExecutorContext {
   stateStore: StateStore;
-  memory: MemoryManager;
+  memory: Memory;
   segments: PromptSegment[];
   /** 挂起模式：返回 Promise，等玩家输入后 resolve */
   waitForPlayerInput?: (options: SignalInputOptions) => Promise<string>;
@@ -207,9 +207,9 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
       content: z.string().describe('The important content to remember'),
       tags: z.array(z.string()).optional().describe('Optional tags for categorization'),
     }),
-    (args) => {
+    async (args) => {
       const { content, tags } = args as { content: string; tags?: string[] };
-      const entry = ctx.memory.pin(content, tags);
+      const entry = await ctx.memory.pin(content, tags);
       return { success: true, id: entry.id };
     },
   );
@@ -219,15 +219,20 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
     z.object({
       query: z.string().describe('Search keywords'),
     }),
-    (args) => {
+    async (args) => {
       const { query } = args as { query: string };
-      const results = ctx.memory.query(query);
-      return results.slice(0, 5).map((e) => ({
-        turn: e.turn,
-        role: e.role,
-        content: e.content.slice(0, 500),
-        pinned: e.pinned,
-      }));
+      // Memory.retrieve 返回 { summary, entries } —— summary 本就会出现在
+      // _engine_memory section，这里 LLM 主动查时把相关 entries 返回给它看。
+      const retrieval = await ctx.memory.retrieve(query);
+      return {
+        summary: retrieval.summary.slice(0, 1000),
+        entries: (retrieval.entries ?? []).slice(0, 5).map((e) => ({
+          turn: e.turn,
+          role: e.role,
+          content: e.content.slice(0, 500),
+          pinned: e.pinned,
+        })),
+      };
     },
   );
 

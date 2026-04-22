@@ -164,7 +164,13 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
             wrapper.start();
             break;
           case 'input':
-            wrapper.submitInput(data.text);
+            // submitInput 现在是 async（记忆模块重构后需要 await memory.appendTurn / snapshot）。
+            // WS message handler 保持 sync，用 fire-and-forget + .catch 兜底，
+            // 避免未处理 rejection 冒泡。
+            wrapper.submitInput(data.text).catch((err) => {
+              console.error('[WS] submitInput failed:', err);
+              ws.send(JSON.stringify({ type: 'error', error: String(err) }));
+            });
             break;
           case 'stop':
             wrapper.stop();

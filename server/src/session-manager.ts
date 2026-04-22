@@ -100,6 +100,11 @@ export class GameSessionWrapper {
 
     const base = this.buildConfig();
     const restoreConfig: RestoreConfig = {
+      // Memory scope —— 让 restore 路径也能构造 Memory adapter
+      playthroughId: base.playthroughId,
+      userId: base.userId,
+      chapterId: base.chapterId,
+
       segments: base.segments,
       stateSchema: base.stateSchema,
       memoryConfig: base.memoryConfig,
@@ -120,8 +125,8 @@ export class GameSessionWrapper {
     this.gameSession.restore(restoreConfig);
   }
 
-  submitInput(text: string): void {
-    this.gameSession?.submitInput(text);
+  async submitInput(text: string): Promise<void> {
+    await this.gameSession?.submitInput(text);
   }
 
   stop(): void {
@@ -159,7 +164,11 @@ export class GameSessionWrapper {
     const allSegments: PromptSegment[] = manifest.chapters.flatMap((ch) => ch.segments);
 
     return {
+      // Memory scope —— 构造 Memory adapter 时绑定
+      playthroughId: this.playthroughId,
+      userId: this.userId,
       chapterId: manifest.chapters[0]?.id ?? 'ch1',
+
       segments: allSegments,
       stateSchema: manifest.stateSchema,
       memoryConfig: manifest.memoryConfig,

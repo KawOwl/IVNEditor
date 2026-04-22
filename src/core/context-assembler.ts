@@ -15,7 +15,7 @@
 import type {
   PromptSegment,
 } from './types';
-import type { MemoryManager } from './memory';
+import type { Memory } from './memory/types';
 import type { StateStore } from './state-store';
 import { serializeStateVars } from './state-store';
 import { estimateTokens } from './tokens';
@@ -49,10 +49,20 @@ export interface TokenBreakdown {
 export interface AssembleOptions {
   segments: PromptSegment[];
   stateStore: StateStore;
-  memory: MemoryManager;
+  memory: Memory;
   tokenBudget: number;
   outputReserve?: number;   // tokens reserved for LLM output (default: 4096)
   initialPrompt?: string;   // 首轮 user message（等效于 prompt.txt）
+  /**
+   * Memory.retrieve 的 query hint。
+   *
+   * 由 game-session.buildRetrievalQuery() 生成 —— 这是个**刻意的扩展点**，
+   * Phase 1 简单返回最近玩家输入；未来可以升级为 LLM 动态生成检索 query，
+   * 升级时 assembleContext / Memory.retrieve 的签名不变。
+   *
+   * 空字符串合法：adapter 自己兜底（legacy → entries 空数组；mem0 按策略）。
+   */
+  currentQuery: string;
   assemblyOrder?: string[]; // 自定义组装顺序（section ID 列表，含虚拟 section）
   disabledSections?: string[]; // 被禁用的 section ID 列表（不参与组装）
 }
@@ -122,13 +132,14 @@ export function buildStateSection(vars: Record<string, unknown>): string {
 // ENGINE_RULES_CONTENT 现在在 ./engine-rules.ts 单独维护，
 // 玩家侧运行时 + 编剧侧 AI 改写都从那里 import，保持单一真源。
 
-export function assembleContext(options: AssembleOptions): AssembledContext {
+export async function assembleContext(options: AssembleOptions): Promise<AssembledContext> {
   const {
     segments,
     stateStore,
     memory,
     tokenBudget,
     outputReserve = 4096,
+    currentQuery,
     assemblyOrder,
     disabledSections,
   } = options;
@@ -168,16 +179,15 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
   }
 
   // Memory summaries (can be disabled)
+  // 内容由 Memory.retrieve 产出：legacy 下是 summaries + pinned（修复了原 bug：
+  // pinned entries 原本漏读不在 section 里）；mem0 下是向量检索的相关记忆。
   if (!disabledSet.has(VIRTUAL_IDS.MEMORY)) {
-    const summaryParts: string[] = [];
-    const inherited = memory.getInheritedSummary();
-    if (inherited) summaryParts.push(`[Previous Chapter Summary]\n${inherited}`);
-    for (const summary of memory.getSummaries()) summaryParts.push(summary);
-    const summaryContent = summaryParts.length > 0
-      ? `---\n[Memory Summary]\n${summaryParts.join('\n\n')}\n---`
+    const retrieval = await memory.retrieve(currentQuery);
+    const summaryContent = retrieval.summary
+      ? `---\n[Memory Summary]\n${retrieval.summary}\n---`
       : '';
-    const summaryTokenCount = summaryContent ? estimateTokens(summaryContent) : 0;
     if (summaryContent) {
+      const summaryTokenCount = estimateTokens(summaryContent);
       sectionContent.set(VIRTUAL_IDS.MEMORY, summaryContent);
       sectionTokens.set(VIRTUAL_IDS.MEMORY, summaryTokenCount);
     }
@@ -256,21 +266,15 @@ export function assembleContext(options: AssembleOptions): AssembledContext {
   const systemPrompt = systemPromptSections.join('\n\n');
 
   // --- 5. Recent history (always after system prompt, as messages) ---
-  let historyTokens = 0;
-  const recentEntries = memory.getRecent();
-  const historyMessages: ChatMessage[] = [];
-
-  for (const entry of recentEntries) {
-    if (usedTokens + entry.tokenCount > availableBudget) break;
-    historyMessages.push({
-      role: entry.role === 'receive' ? 'user' : 'assistant',
-      content: entry.content,
-    });
-    historyTokens += entry.tokenCount;
-    usedTokens += entry.tokenCount;
-  }
+  // role 翻译 + budget cap 的职责从这里挪进 Memory adapter 内部，
+  // assembler 一行调用拿到 ChatMessage[]。
+  const budgetRemaining = availableBudget - usedTokens;
+  const { messages: historyMessages, tokensUsed: historyTokens } =
+    await memory.getRecentAsMessages({ budget: budgetRemaining });
+  usedTokens += historyTokens;
 
   // AI SDK requires at least one message — use initialPrompt or fallback
+  // 这是对 AI SDK "messages 不能为空" 约束的兜底，不归 Memory 接口管。
   if (historyMessages.length === 0) {
     historyMessages.push({
       role: 'user',

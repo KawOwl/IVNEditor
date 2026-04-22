@@ -26,7 +26,8 @@ import type {
   MemoryConfig,
 } from './types';
 import { StateStore } from './state-store';
-import { MemoryManager } from './memory';
+import type { Memory } from './memory/types';
+import { createMemory } from './memory/factory';
 import { estimateTokens } from './tokens';
 import { assembleContext } from './context-assembler';
 import { createTools, getEnabledTools } from './tool-executor';
@@ -190,6 +191,11 @@ export interface SessionTracing {
  * RestoreConfig — 从持久化快照恢复会话所需的数据
  */
 export interface RestoreConfig {
+  /** Memory.scope 字段 —— 构造 Memory adapter 时绑定 */
+  playthroughId: string;
+  userId: string;
+  chapterId: string;
+
   segments: PromptSegment[];
   stateSchema: StateSchema;
   memoryConfig: MemoryConfig;
@@ -204,7 +210,7 @@ export interface RestoreConfig {
   // 恢复数据
   stateVars: Record<string, unknown>;
   turn: number;
-  memoryEntries: unknown[];       // MemoryEntry[] from DB (JSONB)
+  memoryEntries: unknown[];       // MemoryEntry[] from DB (JSONB) —— Commit 4 会改成 memorySnapshot
   memorySummaries: string[];
   status: string;                 // 恢复时的状态
   inputHint?: string | null;
@@ -217,14 +223,17 @@ export interface RestoreConfig {
 }
 
 export interface GameSessionConfig {
+  /** Memory.scope 字段 —— 构造 Memory adapter 时绑定 */
+  playthroughId: string;
+  userId: string;
   chapterId: string;
+
   segments: PromptSegment[];
   stateSchema: StateSchema;
   memoryConfig: MemoryConfig;
   llmConfig: LLMConfig;
   enabledTools?: string[];       // optional tool names to enable
   tokenBudget?: number;          // context window budget (default: 120000)
-  inheritedSummary?: string;     // from previous chapter
   initialPrompt?: string;        // 首轮 user message（等效于 prompt.txt）
   assemblyOrder?: string[];      // 自定义 prompt 组装顺序
   disabledSections?: string[];   // 被禁用的 section ID 列表
@@ -242,7 +251,15 @@ export class GameSession {
   private emitter: SessionEmitter;
 
   private stateStore!: StateStore;
-  private memory!: MemoryManager;
+  private memory!: Memory;
+
+  /**
+   * 最近一次玩家输入 —— 作为 Memory.retrieve 的 default query 来源。
+   *
+   * 由 submitInput 写入，在下一次 assembleContext 时被 buildRetrievalQuery 读。
+   * 挂起路径（signal_input_needed）的玩家输入也走 submitInput，所以统一捕获。
+   */
+  private lastPlayerInput: string = '';
   private llmClient!: LLMClient;
   private segments!: PromptSegment[];
   private enabledTools!: string[];
@@ -302,13 +319,8 @@ export class GameSession {
   // 用于中断进行中的 generate()（停止/重置时防挂死）
   private abortController: AbortController | null = null;
 
-  // Compress function for memory
-  private compressFn = async (entries: import('./types').MemoryEntry[]): Promise<string> => {
-    // Simple concatenation fallback — in production, this would use LLM
-    return entries
-      .map((e) => `[${e.role}] ${e.content.slice(0, 200)}`)
-      .join('\n');
-  };
+  // compressFn 从 game-session 移除 —— 现在由 Memory adapter 构造时注入
+  // （Legacy 用 truncatingCompressFn，LLMSummarizer 用真 LLM）
 
   constructor(emitter: SessionEmitter) {
     this.emitter = emitter;
@@ -327,7 +339,14 @@ export class GameSession {
     try {
       // Initialize core modules
       this.stateStore = new StateStore(config.stateSchema);
-      this.memory = new MemoryManager(config.memoryConfig);
+      this.memory = await createMemory({
+        scope: {
+          playthroughId: config.playthroughId,
+          userId: config.userId,
+          chapterId: config.chapterId,
+        },
+        config: config.memoryConfig,
+      });
       this.llmClient = new LLMClient(config.llmConfig);
       this.segments = config.segments;
       this.enabledTools = config.enabledTools ?? [];
@@ -338,16 +357,14 @@ export class GameSession {
       this.persistence = config.persistence;
       this.tracing = config.tracing;
 
-      if (config.inheritedSummary) {
-        this.memory.setInheritedSummary(config.inheritedSummary);
-      }
+      // inheritedSummary 已从架构里移除：章节不再是 memory 生命周期事件。
 
       // M3: 初始化 currentScene —— 用剧本 defaultScene，否则空
       this.currentScene = config.defaultScene ?? { background: null, sprites: [] };
       this.emitter.emitSceneChange(this.currentScene);
 
       // Sync initial state to UI
-      this.syncDebugState();
+      await this.syncDebugState();
 
       // Start core loop
       this.active = true;
@@ -373,7 +390,14 @@ export class GameSession {
     try {
       // 初始化核心模块（同 start）
       this.stateStore = new StateStore(config.stateSchema);
-      this.memory = new MemoryManager(config.memoryConfig);
+      this.memory = await createMemory({
+        scope: {
+          playthroughId: config.playthroughId,
+          userId: config.userId,
+          chapterId: config.chapterId,
+        },
+        config: config.memoryConfig,
+      });
       this.llmClient = new LLMClient(config.llmConfig);
       this.segments = config.segments;
       this.enabledTools = config.enabledTools ?? [];
@@ -386,10 +410,16 @@ export class GameSession {
 
       // 注入持久化快照
       this.stateStore.restore(config.stateVars, config.turn);
-      this.memory.restore(
-        config.memoryEntries as import('./types').MemoryEntry[],
-        config.memorySummaries,
-      );
+      // DB 里目前还是两列格式（Commit 4 会合并为单列 memorySnapshot）。
+      // 这里重组成 legacy-v1 snapshot 再喂给 LegacyMemory.restore。
+      const memoryEntries = config.memoryEntries as import('./types').MemoryEntry[];
+      await this.memory.restore({
+        kind: 'legacy-v1',
+        entries: memoryEntries,
+        summaries: config.memorySummaries,
+        // watermark 原代码也是从最后一条 entry.turn 重算，行为等价
+        watermark: memoryEntries[memoryEntries.length - 1]?.turn ?? 0,
+      });
 
       // M3: 恢复 currentScene —— 优先 DB 快照，其次 manifest 默认，最后空
       this.currentScene =
@@ -399,7 +429,7 @@ export class GameSession {
       this.emitter.emitSceneChange(this.currentScene);
 
       // 同步 UI
-      this.syncDebugState();
+      await this.syncDebugState();
 
       // 可观测性：恢复标记，方便 Langfuse UI 中识别"断点"
       this.tracing?.markSessionRestored(config.turn, {
@@ -432,18 +462,19 @@ export class GameSession {
 
         if (inputText) {
           this.emitter.appendEntry({ role: 'receive', content: inputText });
-          this.memory.appendTurn({
+          await this.memory.appendTurn({
             turn: config.turn,
             role: 'receive',
             content: inputText,
             tokenCount: estimateTokens(inputText),
           });
+          const memSnap = await this.memory.snapshot();
           await this.persistence?.onReceiveComplete({
             entry: { role: 'receive', content: inputText },
             stateVars: this.stateStore.getAll(),
             turn: config.turn,
-            memoryEntries: this.memory.getAllEntries(),
-            memorySummaries: this.memory.getSummaries(),
+            memoryEntries: memSnap.entries as unknown[],
+            memorySummaries: (memSnap.summaries as string[]) ?? [],
           }).catch((e) => console.error('[Persistence] onReceiveComplete (restore) failed:', e));
         }
 
@@ -464,7 +495,10 @@ export class GameSession {
   }
 
   /** Submit player input — 分两路：挂起中（signal_input_needed）或外循环（Receive 阶段） */
-  submitInput(text: string): void {
+  async submitInput(text: string): Promise<void> {
+    // 捕获本次 player input 作为下一次 Memory.retrieve 的 default query
+    this.lastPlayerInput = text;
+
     if (this.signalInputResolve) {
       // 挂起模式：signal_input_needed 正在等玩家输入
       const resolve = this.signalInputResolve;
@@ -480,7 +514,7 @@ export class GameSession {
 
       // 记录到记忆
       const turn = this.stateStore.getTurn();
-      this.memory.appendTurn({
+      await this.memory.appendTurn({
         turn,
         role: 'receive',
         content: text,
@@ -492,12 +526,13 @@ export class GameSession {
 
       // 持久化：把玩家输入写入 narrative_entries，并清理输入状态。
       // 这个分支之前漏掉了持久化，导致挂起模式下的玩家消息重启后丢失。
+      const memSnap = await this.memory.snapshot();
       this.persistence?.onReceiveComplete({
         entry: { role: 'receive', content: text },
         stateVars: this.stateStore.getAll(),
         turn,
-        memoryEntries: this.memory.getAllEntries(),
-        memorySummaries: this.memory.getSummaries(),
+        memoryEntries: memSnap.entries as unknown[],
+        memorySummaries: (memSnap.summaries as string[]) ?? [],
       }).catch((e) => console.error('[Persistence] onReceiveComplete (signal) failed:', e));
 
       // resolve → agentic loop 继续
@@ -575,12 +610,13 @@ export class GameSession {
         const enabledToolSet = getEnabledTools(allTools, this.enabledTools);
 
         // Assemble context
-        const context = assembleContext({
+        const context = await assembleContext({
           segments: this.segments,
           stateStore: this.stateStore,
           memory: this.memory,
           tokenBudget: this.tokenBudget,
           initialPrompt: this.initialPrompt,
+          currentQuery: await this.buildRetrievalQuery(),
           assemblyOrder: this.assemblyOrder,
           disabledSections: this.disabledSections,
         });
@@ -774,7 +810,7 @@ export class GameSession {
         //
         // 没有 signal 的场景：currentNarrativeBuffer 就是全量文本，和 result.text 一样。
         if (this.currentNarrativeBuffer) {
-          this.memory.appendTurn({
+          await this.memory.appendTurn({
             turn,
             role: 'generate',
             content: this.currentNarrativeBuffer,
@@ -796,22 +832,23 @@ export class GameSession {
         }
 
         // 同步 memory 快照和 preview
+        const memSnapGen = await this.memory.snapshot();
         await this.persistence?.onGenerateComplete({
-          memoryEntries: this.memory.getAllEntries(),
-          memorySummaries: this.memory.getSummaries(),
+          memoryEntries: memSnapGen.entries as unknown[],
+          memorySummaries: (memSnapGen.summaries as string[]) ?? [],
           preview: result.text ? result.text.slice(0, 80).replace(/\n/g, ' ') : null,
           // M3: 持久化 VN 当前场景，断线重连时可恢复视觉状态
           currentScene: this.currentScene,
         }).catch((e) => console.error('[Persistence] onGenerateComplete failed:', e));
 
-        // Check if memory needs compression
-        if (this.memory.needsCompression()) {
-          this.emitter.setStatus('compressing');
-          await this.memory.compress(this.compressFn);
-        }
+        // 让 adapter 自己决定是否真压缩：legacy 查 token 阈值、mem0 批量 flush 等。
+        // 状态 bar 仅在 legacy/LLMSummarizer 真的跑压缩时切到 'compressing' 比较准，
+        // 目前简化：调用前先切，无操作也不伤害。
+        this.emitter.setStatus('compressing');
+        await this.memory.maybeCompact();
 
         // Sync debug state
-        this.syncDebugState();
+        await this.syncDebugState();
 
         // 🔭 可观测性：结束这一轮 trace
         traceHandle?.end({ text: result.text, finishReason: result.finishReason });
@@ -854,12 +891,13 @@ export class GameSession {
 
         // ③ 持久化：进入等待输入（外循环 receive phase）
         // 同样保存 memoryEntries，断线重连时不丢失
+        const memSnapWait = await this.memory.snapshot();
         await this.persistence?.onWaitingInput({
           hint: null,
           inputType: 'freetext',
           choices: null,
-          memoryEntries: this.memory.getAllEntries(),
-          memorySummaries: this.memory.getSummaries(),
+          memoryEntries: memSnapWait.entries as unknown[],
+          memorySummaries: (memSnapWait.summaries as string[]) ?? [],
         }).catch((e) => console.error('[Persistence] onWaitingInput failed:', e));
 
         const inputText = await this.waitForInput();
@@ -872,7 +910,7 @@ export class GameSession {
         if (inputText) {
           this.emitter.appendEntry({ role: 'receive', content: inputText });
 
-          this.memory.appendTurn({
+          await this.memory.appendTurn({
             turn,
             role: 'receive',
             content: inputText,
@@ -880,12 +918,13 @@ export class GameSession {
           });
 
           // ④ 持久化：receive 完成
+          const memSnapRx = await this.memory.snapshot();
           await this.persistence?.onReceiveComplete({
             entry: { role: 'receive', content: inputText },
             stateVars: this.stateStore.getAll(),
             turn,
-            memoryEntries: this.memory.getAllEntries(),
-            memorySummaries: this.memory.getSummaries(),
+            memoryEntries: memSnapRx.entries as unknown[],
+            memorySummaries: (memSnapRx.summaries as string[]) ?? [],
           }).catch((e) => console.error('[Persistence] onReceiveComplete failed:', e));
         }
 
@@ -898,6 +937,27 @@ export class GameSession {
   // ============================================================================
   // Helpers
   // ============================================================================
+
+  /**
+   * 为本轮 generate 构造 Memory.retrieve 的 query。
+   *
+   * Phase 1 版本：直接返回最近一次玩家输入（submitInput 时写入的 lastPlayerInput）。
+   *
+   * ⚠ 这里**故意**留一个扩展点。未来可能升级为：
+   *   - 用便宜 LLM 根据当前 state + 最近 N 轮叙事生成检索 query
+   *   - 拼接 state 里关键变量（角色名、场景、物品）作为 query
+   *   - 多 query 并行 retrieve 合并结果
+   *
+   * 升级时只改这个函数，assembleContext / Memory.retrieve 完全不动。
+   *
+   * **不要**把这个生成逻辑内联到 assembleContext 调用处 —— 扩展点的
+   * 价值就是"一个函数管所有 query 策略"。
+   *
+   * 空字符串合法：adapter 按契约兜底（legacy → entries 空数组；mem0 按策略）。
+   */
+  private async buildRetrievalQuery(): Promise<string> {
+    return this.lastPlayerInput;
+  }
 
   /** 创建 waitForPlayerInput 回调，供 signal_input_needed 的 execute 使用 */
   private createWaitForPlayerInput(): (options: SignalInputOptions) => Promise<string> {
@@ -926,7 +986,7 @@ export class GameSession {
           console.error('[Persistence] onNarrativeSegmentFinalized (signal) failed:', e),
         );
         // 写 memory（LLM context 用）
-        this.memory.appendTurn({
+        await this.memory.appendTurn({
           turn: this.stateStore.getTurn(),
           role: 'generate',
           content: this.currentNarrativeBuffer,
@@ -947,12 +1007,13 @@ export class GameSession {
 
       // ③ 持久化：signal_input_needed 触发的等待输入
       // 同时保存最新的 memoryEntries 快照 → 断线重连后 memory 不空
+      const memSnapSignal = await this.memory.snapshot();
       await this.persistence?.onWaitingInput({
         hint: options.hint ?? null,
         inputType: options.choices?.length ? 'choice' : 'freetext',
         choices: options.choices ?? null,
-        memoryEntries: this.memory.getAllEntries(),
-        memorySummaries: this.memory.getSummaries(),
+        memoryEntries: memSnapSignal.entries as unknown[],
+        memorySummaries: (memSnapSignal.summaries as string[]) ?? [],
       }).catch((e) => console.error('[Persistence] onWaitingInput (signal) failed:', e));
 
       // 返回挂起 Promise，等 submitInput() 调用时 resolve
@@ -973,12 +1034,18 @@ export class GameSession {
     });
   }
 
-  private syncDebugState(): void {
+  private async syncDebugState(): Promise<void> {
+    // memoryEntryCount / memorySummaryCount 纯诊断用，从 snapshot 拆。
+    // Legacy 下 snapshot 同步完成；mem0 下是网络请求但数值不是热路径，
+    // 可接受。如果后续发现压力就改为 adapter 暴露一个 stats() 轻量方法。
+    const memSnap = await this.memory.snapshot();
+    const entries = (memSnap.entries as unknown[] | undefined) ?? [];
+    const summaries = (memSnap.summaries as string[] | undefined) ?? [];
     this.emitter.updateDebug({
       stateVars: this.stateStore.getAll(),
       totalTurns: this.stateStore.getTurn(),
-      memoryEntryCount: this.memory.getAllEntries().length,
-      memorySummaryCount: this.memory.getSummaries().length,
+      memoryEntryCount: entries.length,
+      memorySummaryCount: summaries.length,
     });
   }
 
