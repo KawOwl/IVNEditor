@@ -110,6 +110,17 @@ export interface MemoryConfig {
   recencyWindow: number;          // 保留最近 N 条原文
   compressionHints?: string;      // 自然语言的压缩指导
   crossChapterInheritance?: CrossChapterConfig;
+
+  /**
+   * Memory adapter 选择（见 src/core/memory/factory.ts）
+   * - 'legacy'（默认）：原 MemoryManager 等价行为，截断拼接式"压缩"
+   * - 'llm-summarizer'（Phase 2）：真 LLM 摘要
+   * - 'mem0'（Phase 3）：mem0 托管向量检索
+   */
+  provider?: 'legacy' | 'llm-summarizer' | 'mem0';
+
+  /** Adapter 特定参数（mem0 的 topK / filter 等，Phase 3 定义） */
+  providerOptions?: Record<string, unknown>;
 }
 
 export interface CrossChapterConfig {
@@ -248,12 +259,17 @@ export interface ChangelogFilter {
 // Cross-Chapter Inheritance Snapshot — 跨章继承快照
 // ============================================================================
 
+/**
+ * Cross-chapter inheritance 的 state-only 快照。
+ *
+ * 记忆继承已从 Memory 接口剥离（章节不是 memory 生命周期事件），
+ * 这里只记录 state 迁移结果。原 `summary` 字段删除。
+ */
 export interface InheritanceSnapshot {
   fromChapter: string;
   toChapter: string;
   timestamp: number;
-  fields: Record<string, unknown>;  // 继承的字段及其值
-  summary: string;                   // 继承的记忆摘要
+  fields: Record<string, unknown>;  // 继承的 state 字段及其值
 }
 
 // ============================================================================

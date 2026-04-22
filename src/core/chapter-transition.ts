@@ -1,12 +1,17 @@
 /**
- * Chapter Transition — 跨章继承
+ * Chapter Transition — 跨章继承（state only）
  *
- * Step 4.3: 三层 fallback 机制 + 继承快照。
- *   1. 编剧显式声明（inherit/exclude 列表）— 最高优先级
- *   2. Architect Agent 自动推断（同名字段默认继承）— 兜底
- *   3. GM 运行时补充（通过 pin_memory 标记）— 可选补充
+ * 三层 fallback 机制继续保留（显式 inherit/exclude + Architect 自动推断 +
+ * GM 运行时补充），但**只作用于 state**，不再管 memory。
  *
- * 继承快照保存在 SaveData 中，可回溯。
+ * 为什么不管 memory：
+ *   - 章节不是 memory 的生命周期事件
+ *   - 记忆压缩节奏完全由 adapter 内部按 budget 自决
+ *   - 如果外部确实希望"章节切换清空记忆"，显式在章节切换逻辑里调
+ *     newMemory.reset()（激进）或继续累积（默认）
+ *
+ * Note: 本函数目前在仓库里**从未被调用**（审计报告 2026-04-19），是死代码。
+ * 保留定义作为未来章节切换 state 迁移的占位实现。
  */
 
 import type {
@@ -15,7 +20,6 @@ import type {
   InheritanceSnapshot,
 } from './types';
 import type { StateStore } from './state-store';
-import type { MemoryManager, CompressFn } from './memory';
 
 // ============================================================================
 // Types
@@ -24,21 +28,15 @@ import type { MemoryManager, CompressFn } from './memory';
 export interface ChapterTransitionInput {
   /** Previous chapter's state store */
   prevState: StateStore;
-  /** Previous chapter's memory manager */
-  prevMemory: MemoryManager;
   /** New chapter's state schema */
   nextStateSchema: StateSchema;
   /** Cross-chapter config (from Architect Agent + editor confirmation) */
   crossChapterConfig: CrossChapterConfig;
-  /** Compress function for memory summarization */
-  compressFn: CompressFn;
 }
 
 export interface ChapterTransitionResult {
   /** Inherited state variables (key → value) */
   inheritedState: Record<string, unknown>;
-  /** Inherited memory summary */
-  inheritedMemorySummary: string;
   /** Snapshot for archival */
   snapshot: InheritanceSnapshot;
 }
@@ -52,10 +50,8 @@ export async function executeChapterTransition(
 ): Promise<ChapterTransitionResult> {
   const {
     prevState,
-    prevMemory,
     nextStateSchema,
     crossChapterConfig,
-    compressFn,
   } = input;
 
   // --- Layer 1: Explicit declaration ---
@@ -78,31 +74,16 @@ export async function executeChapterTransition(
     }
   }
 
-  // --- Layer 3: Memory inheritance ---
-  // Compress all memory from previous chapter into a summary
-  await prevMemory.compressAll(compressFn);
-  const summaries = prevMemory.getSummaries();
-  const pinnedEntries = prevMemory.getPinnedEntries();
-
-  // Build inherited summary: summaries + pinned items
-  const summaryParts = [
-    ...summaries,
-    ...pinnedEntries.map((e) => `[重要] ${e.content}`),
-  ];
-  const inheritedMemorySummary = summaryParts.join('\n\n');
-
   // --- Build snapshot ---
   const snapshot: InheritanceSnapshot = {
     fromChapter: 'prev', // Will be set by caller with actual chapter ID
     toChapter: 'next',   // Will be set by caller
     timestamp: Date.now(),
     fields: inheritedState,
-    summary: inheritedMemorySummary,
   };
 
   return {
     inheritedState,
-    inheritedMemorySummary,
     snapshot,
   };
 }
@@ -112,18 +93,16 @@ export async function executeChapterTransition(
 // ============================================================================
 
 /**
- * Apply the transition result to a new chapter's state store and memory manager.
+ * Apply the transition result to a new chapter's state store.
+ *
+ * Memory 不再在这里处理。如果外层需要"章节切换时清空 memory"，
+ * 单独调 newMemory.reset()；默认是"memory 跨章继续累积"。
  */
 export function applyTransitionResult(
   result: ChapterTransitionResult,
   newState: StateStore,
-  newMemory: MemoryManager,
 ): void {
-  // Import inherited state
   for (const [key, value] of Object.entries(result.inheritedState)) {
     newState.set(key, value, 'system');
   }
-
-  // Set inherited memory summary
-  newMemory.setInheritedSummary(result.inheritedMemorySummary);
 }
