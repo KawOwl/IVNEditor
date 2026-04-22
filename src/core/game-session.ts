@@ -118,6 +118,45 @@ function findWeakBreak(buf: string, from: number): number {
 }
 
 /**
+ * 旁白累积器 —— 把 NarrativeParser 的 onNarrationChunk 回调攒成段落级 Sentence。
+ *
+ * 作为可独立测试的纯函数抽出来。生产代码在 generate() 闭包里用 emit 回调
+ * 直接发 Sentence；测试代码可以塞个 array 收发出的段落、断言切分粒度。
+ *
+ * 用法：
+ *   const acc = createNarrationAccumulator((para) => emitSentenceFrom(...));
+ *   parser.onNarrationChunk = acc.push;
+ *   // 在 signal 挂起 / scene change / generate 结束时：
+ *   acc.flush();
+ */
+export function createNarrationAccumulator(emit: (para: string) => void) {
+  let buf = '';
+  return {
+    /** 把一个 chunk 塞进累积器，尽可能切出完整段落并 emit */
+    push(text: string): void {
+      buf += text;
+      while (true) {
+        const cut = findNarrationCut(buf);
+        if (cut === null) break;
+        const para = buf.slice(0, cut.end).trim();
+        if (para) emit(para);
+        buf = buf.slice(cut.consume);
+      }
+    },
+    /** 把剩余的 buffer 全部 emit（段落边界不在末尾时） */
+    flush(): void {
+      const trimmed = buf.trim();
+      if (trimmed) emit(trimmed);
+      buf = '';
+    },
+    /** 诊断：当前剩余 buffer 长度 */
+    pending(): number {
+      return buf.length;
+    },
+  };
+}
+
+/**
  * SessionPersistence — 可选的持久化回调接口
  *
  * 远程模式下由 server 注入实现（写 DB），本地模式不传。
@@ -825,31 +864,17 @@ export class GameSession {
         };
 
         // Narration 跨 chunk 累积器：
-        //   parser 修复后每个纯文本 chunk 都会 flush 一次 onNarrationChunk；
-        //   直接每 chunk 一条 Sentence 会导致 VN UI 碎得像连点几十下才读完一段。
-        //   这里在 session 层把连续 narration chunk 攒起来，遇到"段落边界"
-        //   （双换行 \n\n）或者 narration 流被打断（dialogue 开始 / 场景切换 /
-        //   signal 挂起 / generate 结束）时，作为一条 Sentence emit。
-        let pendingNarration = '';
-        const flushPendingNarration = () => {
-          const trimmed = pendingNarration.trim();
-          if (trimmed) emitSentenceFrom({ kind: 'narration', text: trimmed });
-          pendingNarration = '';
-        };
+        //   parser 的 onNarrationChunk 按 chunk 粒度来；游戏 UI 需要段落粒度。
+        //   createNarrationAccumulator 把 chunk 攒起来，遇到段落边界 / 字数阈值
+        //   时 emit 成一条 narration Sentence。在 dialogue 开始 / 场景切换 /
+        //   signal 挂起 / generate 结束这些"叙事切换点"调 flush 把残余吐出。
+        const narrationAcc = createNarrationAccumulator((para) =>
+          emitSentenceFrom({ kind: 'narration', text: para }),
+        );
+        const flushPendingNarration = () => narrationAcc.flush();
 
         const narrativeParser = new NarrativeParser({
-          onNarrationChunk: (text) => {
-            pendingNarration += text;
-            // 段落级切分：优先 `\n\n`（编剧/模型自然的段落边界），
-            // 次选"超过字数阈值后找句末标点切"，防止极端情况下一段太长。
-            while (true) {
-              const nextCut = findNarrationCut(pendingNarration);
-              if (nextCut === null) break;
-              const para = pendingNarration.slice(0, nextCut.end).trim();
-              if (para) emitSentenceFrom({ kind: 'narration', text: para });
-              pendingNarration = pendingNarration.slice(nextCut.consume);
-            }
-          },
+          onNarrationChunk: (text) => narrationAcc.push(text),
           onDialogueStart: () => {
             // 对话开始前把未出口的 narration 先 emit 掉，保证顺序
             flushPendingNarration();

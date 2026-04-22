@@ -65,11 +65,30 @@ export interface GameState {
    * 玩家当前看到的 Sentence 在 parsedSentences 中的索引。
    * null = 还没开始 / 刚重置；0..N-1 = 正常；=== length-1 且后端没新 Sentence 时显示"等待..."
    *
-   * 推进规则（M1 只做 manual）：
+   * 推进规则：
    *   - 玩家点 stage / 按 Space-Enter-→ 时 +1（封顶 length-1）
-   *   - 新 Sentence 到达时游标**不自动前进**（除非游标从未被初始化则初始化为 0）
+   *   - 当 catchUpPending=true 且玩家在末端 + 新 Sentence 到达 → 自动 +1
+   *     （详见 catchUpPending 字段注释）
    */
   visibleSentenceIndex: number | null;
+
+  /**
+   * 是否有一个"追赶"（catch-up）动作待执行。
+   *
+   * 语义：玩家做完一次主动动作后处于"等内容"状态；这时 LLM 吐出的第一条新
+   * Sentence 会把玩家推到它上面（免得玩家盯着空白等）。**只执行一次**，
+   * 之后的新 Sentence 都等玩家手动点。
+   *
+   * 状态转移：
+   *   true  → 任何主动动作：appendSentence 第一次初始化游标 / advanceSentence /
+   *                        setVisibleSentenceIndex / seedOpeningSentences / reset
+   *   false → appendSentence 成功触发一次 catch-up 后
+   *
+   * 像一个 one-shot 的 pending job：
+   *   - 有任务排队（pending=true）→ 条件满足 → 处理掉（pending=false）
+   *   - 没处理掉就一直排着，等条件满足的那一次 appendSentence
+   */
+  catchUpPending: boolean;
 
   // --- Actions ---
   setStatus: (status: GameState['status']) => void;
@@ -141,6 +160,8 @@ const initialState = {
   parsedSentences: [] as Sentence[],
   currentScene: { background: null, sprites: [] } as SceneState,
   visibleSentenceIndex: null as number | null,
+  // 初始 true：剧本刚开始时第一条 Sentence 到达就能自动显示给玩家
+  catchUpPending: true,
   lastSceneTransition: 'fade' as 'fade' | 'cut' | 'dissolve',
 };
 
@@ -168,34 +189,39 @@ export const useGameStore = create<GameState>((set) => ({
       const prev = state.parsedSentences;
       const next = [...prev, sentence];
       let vsi = state.visibleSentenceIndex;
+      let pending = state.catchUpPending;
 
       // 游标初始化：首次追加时从 null → 找第一个非 scene_change 的位置。
       // scene_change 只驱动背景/立绘切换，不应该让玩家看到空白对话框。
       if (vsi === null) {
         const firstNonSC = next.findIndex((s) => s.kind !== 'scene_change');
         vsi = firstNonSC >= 0 ? firstNonSC : null;
-        return { parsedSentences: next, visibleSentenceIndex: vsi };
+        // 初始化已经把玩家推到第一条；catch-up 任务这次就算完成了
+        return { parsedSentences: next, visibleSentenceIndex: vsi, catchUpPending: false };
       }
 
-      // 自动前进：如果玩家已经看到"当前所有 Sentence 的最末非 scene_change 一条"，
-      // 新来一条 Sentence 时自动把游标推到新末尾（跳过 scene_change）。
-      // 这样正在读最新叙事的玩家不会"读到一半卡住，再点一下才有反应"。
-      //
-      // 判断条件：vsi 是 prev 数组里"最后一个非 scene_change 的 index"。
-      // （前面加的那些 scene_change 不影响玩家的"读到末尾"判断。）
+      // catch-up：玩家刚做过主动动作（catchUpPending=true）+ 在末端 + 新 Sentence
+      // 不是 scene_change → 自动把游标推到新末尾，然后把 pending 置 false。
+      // 后续新 Sentence 不再连续自动前进，直到玩家再做主动动作（advance /
+      // setVisibleSentenceIndex）重新置 pending=true。
       let lastReadableInPrev = prev.length - 1;
       while (lastReadableInPrev >= 0 && prev[lastReadableInPrev]?.kind === 'scene_change') {
         lastReadableInPrev--;
       }
       const playerAtTail = vsi === lastReadableInPrev;
-      if (playerAtTail && sentence.kind !== 'scene_change') {
+      const canCatchUp =
+        pending &&
+        playerAtTail &&
+        sentence.kind !== 'scene_change';
+
+      if (canCatchUp) {
         vsi = next.length - 1;
-      } else if (playerAtTail && sentence.kind === 'scene_change') {
-        // 新来的是 scene_change，玩家还在 prev 的末尾，此 scene_change 不该
-        // 让玩家"被迫点一下"—— 不动游标，背景会自动更新
+        pending = false;
       }
-      // 玩家在往回翻（vsi < lastReadableInPrev）：不打扰
-      return { parsedSentences: next, visibleSentenceIndex: vsi };
+      // 其它情况（pending=false / 玩家在往回翻 / 新 Sentence 是 scene_change）
+      // 都不动游标。
+
+      return { parsedSentences: next, visibleSentenceIndex: vsi, catchUpPending: pending };
     }),
 
   setCurrentScene: (scene, transition) =>
@@ -216,12 +242,13 @@ export const useGameStore = create<GameState>((set) => ({
         let last = state.parsedSentences.length - 1;
         while (last >= 0 && state.parsedSentences[last]?.kind === 'scene_change') last--;
         if (last < 0) return state; // 整串都是 scene_change，什么也别动
-        return { visibleSentenceIndex: last };
+        return { visibleSentenceIndex: last, catchUpPending: true };
       }
-      return { visibleSentenceIndex: next };
+      // 玩家主动推进 → re-arm catch-up，下次新 Sentence 来时允许再自动推一次
+      return { visibleSentenceIndex: next, catchUpPending: true };
     }),
 
-  setVisibleSentenceIndex: (n) => set({ visibleSentenceIndex: n }),
+  setVisibleSentenceIndex: (n) => set({ visibleSentenceIndex: n, catchUpPending: true }),
 
   seedOpeningSentences: (messages, scene) =>
     set((state) => {
@@ -239,6 +266,8 @@ export const useGameStore = create<GameState>((set) => ({
         parsedSentences: [...openers, ...state.parsedSentences],
         // 玩家进来看到的第一句就是第一条 opening
         visibleSentenceIndex: 0,
+        // seed 刚刚把玩家推到第 0 条，下次新 Sentence 来时允许 catch-up 到新内容
+        catchUpPending: true,
         // 如果 currentScene 还是 fresh 初值，用 defaultScene 预置，避免黑幕
         currentScene:
           state.currentScene.background === null && state.currentScene.sprites.length === 0
@@ -252,6 +281,7 @@ export const useGameStore = create<GameState>((set) => ({
     parsedSentences: [],
     currentScene: { background: null, sprites: [] },
     visibleSentenceIndex: null,
+    catchUpPending: true,
     lastSceneTransition: 'fade',
   }),
 }));

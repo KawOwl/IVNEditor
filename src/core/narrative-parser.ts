@@ -288,12 +288,14 @@ export class NarrativeParser {
   private flushNarration(): void {
     if (!this.narrationPendingFlush && !this.narrationBuffer) return;
     if (this.narrationBuffer) {
-      // trim 掉 `</d>` 和下一个 `<d>` 之间留下的单独空行 / 前后换行
-      // （.trim() 只剪首尾空白，不动段落内部的 \n\n，所以多段旁白还是多段）
-      const trimmed = this.narrationBuffer.trim();
-      if (trimmed.length > 0) {
-        this.cb.onNarrationChunk?.(trimmed);
-        this.cb.onSentenceComplete?.('narration', trimmed);
+      // 只过滤"纯空白" buffer（dialogue 之间的 `\n\n` 分隔符之类）。
+      // **保留**原文 —— 段落内部的 `\n\n` 是下游段落级切分器识别段落的信号；
+      // 之前用 .trim() 会误把首尾的 `\n\n` 吃掉，导致多段旁白被拼成一段。
+      // 首尾多余的空白由最终 Sentence 下游（game-session 的 accumulator）再
+      // 统一 trim，职责边界更清晰。
+      if (this.narrationBuffer.trim().length > 0) {
+        this.cb.onNarrationChunk?.(this.narrationBuffer);
+        this.cb.onSentenceComplete?.('narration', this.narrationBuffer);
       }
       this.narrationBuffer = '';
     }
