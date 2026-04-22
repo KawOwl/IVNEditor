@@ -162,16 +162,27 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
     model?: string;
     partKinds: string[];
     responseTimestamp?: Date;
+    stepStartAt?: Date;
     stepInputMessages?: Array<{ role: string; content: string }>;
   }): void {
     try {
       // 创建一个已完成的 generation span（创建时即 end）
       // 每个 step 一条独立 span，Langfuse UI 里可以看到完整的 agentic loop 时间线
       //
-      // 时间戳策略：优先用 AI SDK 汇报的 step.response.timestamp
-      const stepTime = step.responseTimestamp ?? new Date();
-      const startTime = stepTime;
-      const endTime = stepTime;
+      // 时间戳策略：
+      //   - startTime  = step.stepStartAt   （onStepStart 捕获的"发 provider 前"瞬间）
+      //   - endTime    = step.responseTimestamp  （LLM 开始响应的瞬间，= TTFT 终点）
+      //   两者配对得到该 step 的 TTFT 时长。不用 onStepFinish 的 Date.now()
+      //   作 endTime，避免被同 step 内 signal_input_needed 挂起（等玩家输入）污染。
+      //   历史上两头都用 responseTimestamp 导致 duration=0 + 时间轴错乱，
+      //   本修复把 startTime 换成真正的 step 起点。
+      const startTime = step.stepStartAt ?? step.responseTimestamp ?? new Date();
+      let endTime = step.responseTimestamp ?? startTime;
+      // 防御：个别 provider 的时钟或 clock skew 可能让 responseTimestamp 早于
+      // stepStartAt。保证 endTime >= startTime 以免 UI 里出现负 duration。
+      if (endTime.getTime() < startTime.getTime()) {
+        endTime = startTime;
+      }
 
       // 确定性地判断该 step 是否包含叙事文本：
       const hasNarrative = step.partKinds.includes('text');

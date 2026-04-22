@@ -52,15 +52,22 @@ export interface StepInfo {
    * 的时间点，在 provider 开始 stream 时就被赋值，不受该 step 内的
    * tool 执行/挂起影响。
    *
-   * 用处：tracing 层用这个作为 generation span 的时间戳，避免出现
-   * "step 带 signal_input_needed 时，onStep 被 tool 挂起延后触发，导致
-   * 记录到的时间是玩家回复之后"的错位问题（见 Langfuse trace 调查）。
+   * 用处：tracing 层把它作为 generation span 的 endTime（time-to-first-token），
+   * 和 stepStartAt 配对得到 TTFT 这段耗时。不用 onStepFinish 时刻避免被
+   * 同 step 内的 signal_input_needed 挂起污染。
    *
    * 某些 provider 不发 response-metadata chunk 时，AI SDK 会 fallback 到
    * streamStep 入口处的 `new Date()`，仍然是"step 开始"而非"step 结束"，
    * 所以这个字段始终可用。
    */
   responseTimestamp?: Date;
+  /**
+   * 本 step 发送到 provider 之前的瞬间（experimental_onStepStart 回调时刻）。
+   * tracing 层用作 generation span 的 startTime，配合 responseTimestamp
+   * 得到 TTFT。避免以前所有 step 的 startTime 都用同一个 responseTimestamp
+   * 导致时间轴错乱、duration=0 的问题。
+   */
+  stepStartAt?: Date;
   /**
    * 该 step 发给 LLM 的**完整 messages 数组**的简化版。
    *
@@ -186,6 +193,8 @@ export class LLMClient {
     // 发给 provider 之前触发，提供该 step 实际看到的完整 messages 数组。
     // 存进 Map，在 onStepFinish 时读出来传给 tracing。
     const stepInputsMap = new Map<number, Array<{ role: string; content: string }>>();
+    // 该 step 的真实"开始发往 provider"瞬间。配合 responseTimestamp 得到 TTFT。
+    const stepStartAtMap = new Map<number, Date>();
 
     // Build AI SDK messages
     const aiMessages: Array<{ role: 'user' | 'assistant'; content: string }> = messages.map((m) => ({
@@ -202,7 +211,9 @@ export class LLMClient {
       maxOutputTokens,
       abortSignal,
       // 捕获每个 step 的完整 input messages（含前序 step 的 tool results）
+      // 以及该 step 开始的真实瞬间（tracing 层用作 generation span startTime）。
       experimental_onStepStart: (event) => {
+        stepStartAtMap.set(event.stepNumber, new Date());
         try {
           const simplified = (event.messages ?? []).map((m) => {
             const role = String(m.role);
@@ -267,8 +278,10 @@ export class LLMClient {
             model: step.model?.modelId,
             partKinds,
             // AI SDK 把 LLM response 开始的时间记在 step.response.timestamp，
-            // 不受 tool 挂起污染。传给 tracing 层作为时间戳正源。
+            // 不受 tool 挂起污染。tracing 层把它作为 generation span 的 endTime。
             responseTimestamp: step.response?.timestamp,
+            // 该 step 送给 provider 之前的瞬间。tracing 层作为 startTime。
+            stepStartAt: stepStartAtMap.get(step.stepNumber),
             // 该 step 实际看到的完整 messages（从 onStepStart 捕获）
             stepInputMessages: stepInputsMap.get(step.stepNumber),
           });

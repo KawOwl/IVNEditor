@@ -150,10 +150,15 @@ export interface GenerateTraceHandle {
     partKinds: string[];
     /**
      * AI SDK 汇报的 step.response.timestamp（LLM 响应开始的时间点）。
-     * tracing 层用它作为 generation span 的时间戳，避免被同 step 内的
+     * tracing 层把它作为 generation span 的 endTime（TTFT 终点），避免被
      * signal_input_needed 挂起污染（见 StepInfo 字段注释）。
      */
     responseTimestamp?: Date;
+    /**
+     * 该 step 送给 provider 之前的瞬间（experimental_onStepStart 时刻）。
+     * tracing 层用作 generation span 的 startTime。
+     */
+    stepStartAt?: Date;
     /**
      * 该 step 发给 LLM 的完整 messages 简化版。
      * tracing 层写进 generation span 的 input，替代初始的 this.initialInput。
@@ -799,6 +804,7 @@ export class GameSession {
               model: step.model,
               partKinds: step.partKinds,
               responseTimestamp: step.responseTimestamp,
+              stepStartAt: step.stepStartAt,
               stepInputMessages: step.stepInputMessages,
             });
           },
