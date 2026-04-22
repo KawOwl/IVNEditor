@@ -1,8 +1,8 @@
 # Focus Injection —— 按当前场景/人物/阶段动态聚焦 Prompt
 
-> Status: **Draft → 开工**
+> Status: **A1+B1 已上线 → B2 升级已上线**
 > Owner: @kawowl
-> 创建日期：2026-04-22
+> 创建日期：2026-04-22 · 最近更新：2026-04-23 (B2)
 
 ---
 
@@ -77,7 +77,25 @@
 
 ---
 
-## 渐进升级路径（A1 + B1 → B2）
+## ✅ B2 升级（已上线，2026-04-23）
+
+实际改动就是 plan 里预见的 10 行（`src/core/context-assembler.ts`）：
+在 step 1 segment filter 里加一条 focus filter —— 有 `focusTags` 的 segment
+必须 `scoreSegment > 0` 才注入；无 tag 仍全局。
+
+同时把 `_engine_scene_context` 的生成条件放宽：focus.scene 有值就输出 focus
+头，即使 ranked 列表为空（避免"scene 被设但 LLM 看不到 scene 信号"的边缘情况）。
+
+**验证**：`src/core/__tests__/focus-injection.test.ts` 9 个 test 覆盖
+（无 focus 全注入 / focus 过滤正确 / label header / section 生成条件 /
+injectionRule 与 focus 正交 / 10 场景段只剩 1 段的 token 节省验证）。
+
+**顺带修**：seed-anjie.ts 的 `chapterSegment` helper 加了 injectionRule
+`chapter === N`，让 ch1/ch2/ch3 的阶段图段按章节过滤，不再跨章节注入。
+
+---
+
+## 渐进升级路径（历史：A1 + B1 → B2）
 
 当前 A1 + B1 做的所有组件都是 B 系列（按标签过滤注入）的必需基础：
 

@@ -21,7 +21,7 @@ import type { StateStore } from './state-store';
 import { serializeStateVars } from './state-store';
 import { estimateTokens } from './tokens';
 import { ENGINE_RULES_CONTENT } from './engine-rules';
-import { rankSegments } from './focus';
+import { rankSegments, scoreSegment } from './focus';
 
 // ============================================================================
 // Types
@@ -160,12 +160,23 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
   let usedTokens = 0;
   const disabledSet = new Set(disabledSections ?? []);
 
-  // --- 1. Filter active segments by injection rules + disabled list ---
+  // --- 1. Filter active segments by injection rules + disabled list + focus (B2) ---
+  //
+  // Focus Injection B2（见 .claude/plans/focus-injection.md 升级路径）：
+  //   - 无 focusTags 的 segment  → 全局注入，不受 focus 影响（world/rules/character cards）
+  //   - 有 focusTags 的 segment  → 只在当前 focus 命中时注入（scene/chars/stage 专属内容）
+  //   - focus 缺省或空 → 不过滤（向后兼容；老剧本没 current_scene 字段时走老逻辑）
+  //
+  // 效果：大剧本里非当前 scene 的 scene 段不再占预算。
+  const focusFilterActive = !!focus && Object.values(focus).some((v) => v !== undefined);
   const activeSegments = segments.filter((seg) => {
     if (seg.role === 'draft') return false;
     if (disabledSet.has(seg.id)) return false;
-    if (!seg.injectionRule) return true;
-    return evaluateCondition(seg.injectionRule.condition, vars);
+    if (seg.injectionRule && !evaluateCondition(seg.injectionRule.condition, vars)) return false;
+    if (focusFilterActive && seg.focusTags) {
+      return scoreSegment(seg, focus!) > 0;
+    }
+    return true;
   });
 
   // --- 2. Build named section content map ---
@@ -200,25 +211,21 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
   // 放在 STATE 之后、MEMORY 之前 —— 给 LLM 先呈现"此刻在哪、关注谁/啥"的
   // focus 元信号，再让它看 memory 里相关记忆。
   //
-  // A1 + B1 模式：不改注入决策，只提供焦点指示。top N 的 segment label 列表
-  // 让 LLM 知道"这几段现在最相关"，配合每段注入加的 `--- [label] ---` header
-  // 可以锚回原文。
+  // B2 模式：step 1 已按 focus 过滤 activeSegments，本段只剩"元信号 + 实际注入
+  // 的匹配段落列表"。ranked 和 activeSegments 里带 focusTags 的那部分重合。
   //
-  // 生成条件：focus 非空且有至少一维有值、且 top N > 0（至少有一个 segment 匹配）。
-  // 否则跳过 section，向后兼容（剧本没打 focusTags 时零破坏）。
+  // 生成条件：focus 有效（至少一维有值）即生成。即使无 segment 匹配当前 focus，
+  // 也输出 focus 头（scene: xxx），让 LLM 明确知道"在某个场景，但没专属内容"。
   if (!disabledSet.has(VIRTUAL_IDS.SCENE_CONTEXT) && focus) {
-    const ranked = rankSegments(activeSegments, focus, 5);
     const focusLines: string[] = [];
     if (focus.scene) focusLines.push(`scene: ${focus.scene}`);
     // v2: characters / stage
-    if (focusLines.length > 0 && ranked.length > 0) {
-      const lines = [
-        '[Current Focus]',
-        ...focusLines,
-        '',
-        'Most relevant segments:',
-        ...ranked.map((s) => ` - ${s.label || s.id}`),
-      ];
+    if (focusLines.length > 0) {
+      const ranked = rankSegments(activeSegments, focus, 5);
+      const lines = ['[Current Focus]', ...focusLines];
+      if (ranked.length > 0) {
+        lines.push('', 'Most relevant segments:', ...ranked.map((s) => ` - ${s.label || s.id}`));
+      }
       const content = `---\n${lines.join('\n')}\n---`;
       sectionContent.set(VIRTUAL_IDS.SCENE_CONTEXT, content);
       sectionTokens.set(VIRTUAL_IDS.SCENE_CONTEXT, estimateTokens(content));
