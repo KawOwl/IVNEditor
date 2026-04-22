@@ -11,6 +11,8 @@
 import { useGameStore } from './game-store';
 import { useRawStreamingStore } from './raw-streaming-store';
 import { ensureSessionId, fetchWithAuth } from './player-session-store';
+import { NarrativeParser } from '../core/narrative-parser';
+import type { Sentence, SceneState } from '../core/types';
 
 // ============================================================================
 // Types
@@ -274,15 +276,73 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
       break;
 
     case 'restored': {
-      // 恢复快照：清空前端 VN 状态，由随后的 scene-change/sentence 事件重放
+      // 恢复快照：清空前端 VN 状态，把 msg.entries（persisted 叙事原文）
+      // 在客户端用 NarrativeParser 回放成 Sentence[]。不依赖服务端再推 sentence 事件。
+      //
+      // 注：sceneRef 能拿到的最好信息是 msg.currentScene（最后一帧），用它兜底；
+      // 未来如果需要 per-turn 精确 sceneRef，可以把 scene 状态随 entries 一起持久化。
       store().reset();
-      // M1 Step 1.7：不再重放老 entries（msg.entries 在 VN UI 下忽略）
+
+      const entries = (msg.entries ?? []) as Array<{
+        role: string;
+        content: string;
+        orderIdx?: number;
+      }>;
+      const sceneRef: SceneState =
+        (msg.currentScene as SceneState | null) ?? { background: null, sprites: [] };
+
+      let globalIndex = 0;
+      let turnNumber = 0;
+      for (const entry of entries) {
+        if (entry.role !== 'generate') {
+          // role='receive' 是玩家输入，不在 VN 叙事层渲染
+          continue;
+        }
+        turnNumber++;
+        const parser = new NarrativeParser({
+          onNarrationChunk: (text) => {
+            const s: Sentence = {
+              kind: 'narration',
+              text,
+              sceneRef,
+              turnNumber,
+              index: globalIndex++,
+            };
+            store().appendSentence(s);
+          },
+          onDialogueEnd: (pf, fullText, truncated) => {
+            const base = {
+              kind: 'dialogue' as const,
+              text: fullText,
+              pf,
+              sceneRef,
+              turnNumber,
+              index: globalIndex++,
+            };
+            const s: Sentence =
+              truncated !== undefined ? { ...base, truncated } : base;
+            store().appendSentence(s);
+          },
+        });
+        parser.push(entry.content);
+        parser.finalize();
+      }
+
+      // 应用最后一帧场景（change_scene 事件不会在 restore 流里重放）
+      store().setCurrentScene(sceneRef);
+
       // 恢复输入状态
       if (msg.inputHint) store().setInputHint(msg.inputHint as string);
       if (msg.inputType === 'choice' && msg.choices) {
         store().setInputType('choice', msg.choices as string[]);
+      } else {
+        store().setInputType('freetext', null);
       }
       store().setStatus(msg.status as any);
+
+      // 把游标落在最后一句，玩家看到的是"你最后停在这里"，而不是从头开始读
+      const total = store().parsedSentences.length;
+      if (total > 0) store().setVisibleSentenceIndex(total - 1);
       break;
     }
 

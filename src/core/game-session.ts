@@ -81,6 +81,12 @@ export interface SessionPersistence {
     choices: string[] | null;
     /** signal 路径传 memory snapshot，让断线重连后 history 不丢 */
     memorySnapshot?: Record<string, unknown>;
+    /**
+     * M3: VN 当前场景快照。signal_input_needed 路径下 generate() 还没返回，
+     * onGenerateComplete 不会触发；挂起前同步持久化 currentScene，
+     * 否则断线重连时 VN 无 background / sprites，看上去像空舞台。
+     */
+    currentScene?: SceneState | null;
   }): Promise<void>;
 
   /** 玩家输入完成 */
@@ -904,6 +910,7 @@ export class GameSession {
           inputType: 'freetext',
           choices: null,
           memorySnapshot: memSnapWait,
+          currentScene: this.currentScene,
         }).catch((e) => console.error('[Persistence] onWaitingInput failed:', e));
 
         const inputText = await this.waitForInput();
@@ -1027,6 +1034,7 @@ export class GameSession {
         inputType: options.choices?.length ? 'choice' : 'freetext',
         choices: options.choices ?? null,
         memorySnapshot: memSnapSignal,
+        currentScene: this.currentScene,
       }).catch((e) => console.error('[Persistence] onWaitingInput (signal) failed:', e));
 
       // 返回挂起 Promise，等 submitInput() 调用时 resolve

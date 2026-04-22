@@ -62,6 +62,9 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
       };
       // signal 路径会带 memorySnapshot —— 断线重连后 memory 不空
       if (data.memorySnapshot) patch.memorySnapshot = data.memorySnapshot;
+      // signal 路径还带 currentScene —— onGenerateComplete 在这个路径下不会触发
+      // （generate() 挂起未返回），所以这里得兜底写 DB，否则重连后舞台是黑的
+      if (data.currentScene !== undefined) patch.currentScene = data.currentScene;
       await playthroughService.updateState(playthroughId, patch);
     },
 
