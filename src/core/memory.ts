@@ -11,6 +11,7 @@
  */
 
 import type { MemoryEntry, MemoryState, MemoryConfig } from './types';
+import { estimateTokens } from './tokens';
 
 // ============================================================================
 // Types
@@ -260,13 +261,4 @@ export class MemoryManager {
   }
 }
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/** Rough token estimate: ~4 chars per token for mixed CJK/English */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
-
-export { estimateTokens };
+// estimateTokens 已迁至 ./tokens；memory.ts 不再作为 source of truth 或 re-export。

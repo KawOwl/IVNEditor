@@ -21,7 +21,7 @@ import { PlayPanel } from '../play/PlayPanel';
 import { LLMSettingsPanel } from '../settings/LLMSettingsPanel';
 import { ScriptInfoPanel } from './ScriptInfoPanel';
 import { VersionHistoryList, type VersionSummary } from './VersionHistoryList';
-import { estimateTokens } from '../../core/memory';
+import { estimateTokens } from '../../core/tokens';
 import { exportScript, parseImportedScript } from '../../core/script-archive';
 import type { ScriptRecord } from '../../core/script-archive';
 import { getBackendUrl } from '../../core/engine-mode';

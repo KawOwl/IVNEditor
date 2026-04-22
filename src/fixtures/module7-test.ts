@@ -27,7 +27,7 @@ import type {
   StateSchema,
   MemoryConfig,
 } from '../core/types';
-import { estimateTokens } from '../core/memory';
+import { estimateTokens } from '../core/tokens';
 
 // ============================================================================
 // Helper — 计算 contentHash（简单哈希）

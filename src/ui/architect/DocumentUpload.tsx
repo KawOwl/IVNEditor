@@ -11,7 +11,7 @@
 import { useCallback, useRef } from 'react';
 import { useArchitectStore } from '../../stores/architect-store';
 import type { DocumentRole, UploadedDocument } from '../../core/architect/types';
-import { estimateTokens } from '../../core/memory';
+import { estimateTokens } from '../../core/tokens';
 import { cn } from '../../lib/utils';
 
 // ============================================================================

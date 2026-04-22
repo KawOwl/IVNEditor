@@ -9,7 +9,7 @@ import { generateObject } from 'ai';
 import { z } from 'zod';
 import type { LanguageModel } from 'ai';
 import type { UploadedDocument, ClassificationResult, DocumentRole } from './types';
-import { estimateTokens } from '../memory';
+import { estimateTokens } from '../tokens';
 
 // ============================================================================
 // Classification Prompt

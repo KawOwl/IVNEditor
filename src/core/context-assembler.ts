@@ -18,7 +18,7 @@ import type {
 import type { MemoryManager } from './memory';
 import type { StateStore } from './state-store';
 import { serializeStateVars } from './state-store';
-import { estimateTokens } from './memory';
+import { estimateTokens } from './tokens';
 import { ENGINE_RULES_CONTENT } from './engine-rules';
 
 // ============================================================================

@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { LanguageModel } from 'ai';
 import type { UploadedDocument, PromptSplitResult } from './types';
 import type { PromptSegment } from '../types';
-import { estimateTokens } from '../memory';
+import { estimateTokens } from '../tokens';
 
 // ============================================================================
 // Hash Helper

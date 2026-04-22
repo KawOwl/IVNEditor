@@ -26,7 +26,8 @@ import type {
   MemoryConfig,
 } from './types';
 import { StateStore } from './state-store';
-import { MemoryManager, estimateTokens } from './memory';
+import { MemoryManager } from './memory';
+import { estimateTokens } from './tokens';
 import { assembleContext } from './context-assembler';
 import { createTools, getEnabledTools } from './tool-executor';
 import type { SignalInputOptions } from './tool-executor';

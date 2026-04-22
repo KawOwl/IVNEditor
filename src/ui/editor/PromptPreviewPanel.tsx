@@ -14,7 +14,7 @@
 
 import { useState, useMemo, useRef, useCallback } from 'react';
 import type { PromptSegment, StateSchema } from '../../core/types';
-import { estimateTokens } from '../../core/memory';
+import { estimateTokens } from '../../core/tokens';
 import { ENGINE_RULES_CONTENT } from '../../core/engine-rules';
 import { VIRTUAL_IDS, buildStateSection } from '../../core/context-assembler';
 import { cn } from '../../lib/utils';
