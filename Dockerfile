@@ -98,6 +98,14 @@ COPY --from=frontend-builder /build/dist ./dist
 COPY src/core/ ./src/core/
 COPY tsconfig.json ./
 
+# /app/src/core/ 里的 TS 代码会 `import 'zod/v4'`、`import 'ai'` 这类 package。
+# bun 按 node resolution 从 import 文件位置向上查 node_modules：
+#   /app/src/core/node_modules → /app/src/node_modules → /app/node_modules
+# 只有 /app/server/node_modules 的话 core 代码加载时会 ENOENT。
+# 做个 symlink 把 server/node_modules 映射到 /app/node_modules，不重复存储
+# （真实文件还在 /app/server/node_modules，Docker layer 只有一个 symlink）。
+RUN ln -s server/node_modules node_modules
+
 # ============================================================
 # 运行时配置
 # ============================================================
