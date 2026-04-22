@@ -223,10 +223,6 @@ const memoryConfig: MemoryConfig = {
 3. 关系阶段变化的触发事件
 4. 收束协议触发记录
 5. 共鸣池中的关键发现和阀门状态`,
-  crossChapterInheritance: {
-    inherit: ['girl_language_level', 'explored_locations', 'sleep_count', 'route'],
-    exclude: ['deviation_count', 'player_mood', 'fall_choice', 'companion_confirmed'],
-  },
 };
 
 // ============================================================================

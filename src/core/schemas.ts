@@ -75,17 +75,11 @@ export const stateSchemaSchema = z.object({
 // Memory Config
 // ============================================================================
 
-export const crossChapterConfigSchema = z.object({
-  inherit: z.array(z.string()),
-  exclude: z.array(z.string()),
-});
-
 export const memoryConfigSchema = z.object({
   contextBudget: z.number().int().positive(),
   compressionThreshold: z.number().int().positive(),
   recencyWindow: z.number().int().positive(),
   compressionHints: z.string().optional(),
-  crossChapterInheritance: crossChapterConfigSchema.optional(),
   // Memory adapter 选择 —— 见 src/core/memory/factory.ts
   provider: z.enum(['legacy', 'llm-summarizer', 'mem0']).optional(),
   providerOptions: z.record(z.string(), z.unknown()).optional(),

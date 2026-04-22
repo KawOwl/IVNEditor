@@ -109,7 +109,6 @@ export interface MemoryConfig {
   compressionThreshold: number;   // 触发压缩的 token 阈值
   recencyWindow: number;          // 保留最近 N 条原文
   compressionHints?: string;      // 自然语言的压缩指导
-  crossChapterInheritance?: CrossChapterConfig;
 
   /**
    * Memory adapter 选择（见 src/core/memory/factory.ts）
@@ -121,11 +120,6 @@ export interface MemoryConfig {
 
   /** Adapter 特定参数（mem0 的 topK / filter 等，Phase 3 定义） */
   providerOptions?: Record<string, unknown>;
-}
-
-export interface CrossChapterConfig {
-  inherit: string[];              // 编剧显式要求继承的字段
-  exclude: string[];              // 编剧显式要求不继承的字段
 }
 
 // ============================================================================
@@ -251,22 +245,9 @@ export interface ChangelogFilter {
   source?: ChangelogEntry['source'];
 }
 
-// ============================================================================
-// Cross-Chapter Inheritance Snapshot — 跨章继承快照
-// ============================================================================
-
-/**
- * Cross-chapter inheritance 的 state-only 快照。
- *
- * 记忆继承已从 Memory 接口剥离（章节不是 memory 生命周期事件），
- * 这里只记录 state 迁移结果。原 `summary` 字段删除。
- */
-export interface InheritanceSnapshot {
-  fromChapter: string;
-  toChapter: string;
-  timestamp: number;
-  fields: Record<string, unknown>;  // 继承的 state 字段及其值
-}
+// 跨章继承（InheritanceSnapshot / CrossChapterConfig / chapter-transition.ts）
+// 已整体删除：原实现从未被任何 caller 触发，记忆模块重构中又确认章节不是
+// memory 生命周期事件。未来若真要做章节边界，重新设计比接通这个骨架更干净。
 
 // ============================================================================
 // Tool System — Agentic 工具系统

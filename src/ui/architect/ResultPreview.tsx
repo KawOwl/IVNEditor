@@ -245,17 +245,6 @@ function MemoryPreview({ result }: { result: ArchitectResult }) {
             <div className="text-zinc-300 text-xs whitespace-pre-wrap">{config.compressionHints}</div>
           </div>
         )}
-        {config.crossChapterInheritance && (
-          <div>
-            <div className="text-zinc-400 mb-1">跨章继承</div>
-            <div className="text-xs text-green-400">
-              继承: {config.crossChapterInheritance.inherit.join(', ') || '无'}
-            </div>
-            <div className="text-xs text-red-400">
-              排除: {config.crossChapterInheritance.exclude.join(', ') || '无'}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

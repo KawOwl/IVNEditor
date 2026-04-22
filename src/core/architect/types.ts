@@ -10,7 +10,6 @@ import type {
   InjectionRule,
   StateSchema,
   MemoryConfig,
-  CrossChapterConfig,
 } from '../types';
 
 // ============================================================================
@@ -75,7 +74,6 @@ export interface ToolEnablementResult {
 
 export interface MemoryStrategyResult {
   config: MemoryConfig;
-  crossChapter?: CrossChapterConfig;
   reasoning: string;
 }
 
