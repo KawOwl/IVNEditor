@@ -53,6 +53,10 @@ function buildManifest(): ScriptManifest {
     cafe_window，结束回忆再切回 cafe_interior。
   - 每轮用 signal_input_needed 给玩家 2–4 个选择继续故事。
   - 如果玩家想结束对话，调 end_scenario。
+  - **调 change_scene 时同步调 update_state({current_scene: ...})**：
+    背景切到 cafe_interior → state.current_scene = "cafe_interior"
+    背景切到 cafe_window → state.current_scene = "cafe_window"
+    保持 VN 视觉和 state 变量一致（Focus Injection 依赖这个同步）。
 
 叙事格式（必须严格遵守）：
   - 旁白 = 裸文本，一行一段。
@@ -76,6 +80,7 @@ function buildManifest(): ScriptManifest {
       variables: [
         { name: 'mood', type: 'string', initial: 'relaxed', description: 'sakuya 当前情绪：relaxed / serious / sad' },
         { name: 'turn', type: 'number', initial: 0, description: '对话轮数' },
+        { name: 'current_scene', type: 'string', initial: 'cafe_interior', description: '当前场景 id（供 Focus Injection 推断）：cafe_interior / cafe_window' },
       ],
     },
     memoryConfig: {
@@ -137,6 +142,47 @@ function buildManifest(): ScriptManifest {
             role: 'system',
             priority: 1,
             tokenCount: Math.ceil(systemPromptContent.length / 2),
+          },
+          // Focus Injection demo：两段带 scene tag 的 supplement，
+          // 运行时按 state.current_scene 匹配到的那段会出现在 _engine_scene_context
+          // section 的 "Most relevant segments" 列表里。
+          {
+            id: 'seg-scene-cafe-interior',
+            label: 'scene_cafe_interior',
+            content: `\`\`\`
+[咖啡馆内景细节 — 仅 cafe_interior 场景]
+- 窗边木桌有一盆小绿植
+- 吧台方向传来磨豆机间歇的响声
+- sakuya 手边的拿铁杯上漂着心形拉花
+- 背景乐是 Norah Jones 的 Don't Know Why
+\`\`\`
+描写对话时适合加入这些细节让场景立体。`,
+            contentHash: '',
+            type: 'content',
+            sourceDoc: 'scene_cafe_interior.md',
+            role: 'context',
+            priority: 5,
+            focusTags: { scene: 'cafe_interior' },
+            tokenCount: 120,
+          },
+          {
+            id: 'seg-scene-cafe-window',
+            label: 'scene_cafe_window',
+            content: `\`\`\`
+[窗外街景细节 — 仅 cafe_window 场景]
+- 街灯是暖黄色老式铸铁路灯
+- 对面是一家面包店，傍晚六点开始打折
+- 一只橘猫经常从咖啡馆门口慢悠悠走过
+- 偶尔有骑单车的上班族按铃
+\`\`\`
+切到这个场景时用这些元素烘托傍晚温暖氛围。`,
+            contentHash: '',
+            type: 'content',
+            sourceDoc: 'scene_cafe_window.md',
+            role: 'context',
+            priority: 5,
+            focusTags: { scene: 'cafe_window' },
+            tokenCount: 110,
           },
         ],
       },
