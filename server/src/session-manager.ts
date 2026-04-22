@@ -84,8 +84,8 @@ export class GameSessionWrapper {
   restore(snapshot: {
     stateVars: Record<string, unknown>;
     turn: number;
-    memoryEntries: unknown[];
-    memorySummaries: string[];
+    /** opaque Memory snapshot，null 表示新 playthrough 还无历史 */
+    memorySnapshot: Record<string, unknown> | null;
     status: string;
     inputHint?: string | null;
     inputType?: string;

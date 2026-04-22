@@ -135,8 +135,8 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
         wrapper.restore({
           stateVars: detail.stateVars ?? {},
           turn: detail.turn,
-          memoryEntries: detail.memoryEntries ?? [],
-          memorySummaries: detail.memorySummaries ?? [],
+          // memorySnapshot 是 opaque JSON，直接透传给 GameSession → Memory.restore
+          memorySnapshot: detail.memorySnapshot,
           status: detail.status,
           inputHint: detail.inputHint,
           inputType: detail.inputType,

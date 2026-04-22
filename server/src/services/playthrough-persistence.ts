@@ -47,8 +47,7 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
      */
     async onGenerateComplete(data): Promise<void> {
       await playthroughService.updateState(playthroughId, {
-        memoryEntries: data.memoryEntries,
-        memorySummaries: data.memorySummaries,
+        memorySnapshot: data.memorySnapshot,
         ...(data.preview !== undefined ? { preview: data.preview } : {}),
         ...(data.currentScene !== undefined ? { currentScene: data.currentScene } : {}),
       });
@@ -61,9 +60,8 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
         inputType: data.inputType,
         choices: data.choices,
       };
-      // signal 路径会带 memoryEntries —— 断线重连后 memory 不空
-      if (data.memoryEntries) patch.memoryEntries = data.memoryEntries;
-      if (data.memorySummaries) patch.memorySummaries = data.memorySummaries;
+      // signal 路径会带 memorySnapshot —— 断线重连后 memory 不空
+      if (data.memorySnapshot) patch.memorySnapshot = data.memorySnapshot;
       await playthroughService.updateState(playthroughId, patch);
     },
 
@@ -79,8 +77,7 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
       await playthroughService.updateState(playthroughId, {
         stateVars: data.stateVars,
         turn: data.turn,
-        memoryEntries: data.memoryEntries,
-        memorySummaries: data.memorySummaries,
+        memorySnapshot: data.memorySnapshot,
         // 清理输入状态
         inputHint: null,
         inputType: 'freetext',

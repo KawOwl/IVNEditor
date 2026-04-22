@@ -66,8 +66,8 @@ export interface SessionPersistence {
 
   /** generate() 全部结束后同步 memory 快照 + preview + VN 场景（不再负责 entry 入库） */
   onGenerateComplete(data: {
-    memoryEntries: unknown[];
-    memorySummaries: string[];
+    /** Memory adapter 自 snapshot() 的 opaque JSON（legacy-v1 / mem0-v1 / ...） */
+    memorySnapshot: Record<string, unknown>;
     preview?: string | null;
     /** M3: VN 当前场景快照，持久化到 playthroughs.current_scene */
     currentScene?: SceneState | null;
@@ -78,9 +78,8 @@ export interface SessionPersistence {
     hint: string | null;
     inputType: string;
     choices: string[] | null;
-    /** signal 路径会传最新 memory 快照，让断线重连后 history 不丢 */
-    memoryEntries?: unknown[];
-    memorySummaries?: string[];
+    /** signal 路径传 memory snapshot，让断线重连后 history 不丢 */
+    memorySnapshot?: Record<string, unknown>;
   }): Promise<void>;
 
   /** 玩家输入完成 */
@@ -88,8 +87,7 @@ export interface SessionPersistence {
     entry: { role: string; content: string };
     stateVars: Record<string, unknown>;
     turn: number;
-    memoryEntries: unknown[];
-    memorySummaries: string[];
+    memorySnapshot: Record<string, unknown>;
   }): Promise<void>;
 
   /**
@@ -210,8 +208,11 @@ export interface RestoreConfig {
   // 恢复数据
   stateVars: Record<string, unknown>;
   turn: number;
-  memoryEntries: unknown[];       // MemoryEntry[] from DB (JSONB) —— Commit 4 会改成 memorySnapshot
-  memorySummaries: string[];
+  /**
+   * Memory adapter 的 opaque snapshot（从 playthroughs.memory_snapshot 直接读）。
+   * 为 null（初次游玩）时传 null，Memory.restore 自己兜底空状态。
+   */
+  memorySnapshot: Record<string, unknown> | null;
   status: string;                 // 恢复时的状态
   inputHint?: string | null;
   inputType?: string;
@@ -410,13 +411,11 @@ export class GameSession {
 
       // 注入持久化快照
       this.stateStore.restore(config.stateVars, config.turn);
-      // DB 里目前还是两列格式（Commit 4 会合并为单列 memorySnapshot）。
-      // 这里重组成 legacy-v1 snapshot 再喂给 LegacyMemory.restore。
-      await this.memory.restore({
-        kind: 'legacy-v1',
-        entries: config.memoryEntries as import('./types').MemoryEntry[],
-        summaries: config.memorySummaries,
-      });
+      // memorySnapshot 是 DB 里 opaque JSON，由 adapter 的 restore 自解释。
+      // null 表示初次游玩（无历史），LegacyMemory.restore 对 undefined entries/summaries 兜底为空。
+      if (config.memorySnapshot) {
+        await this.memory.restore(config.memorySnapshot);
+      }
 
       // M3: 恢复 currentScene —— 优先 DB 快照，其次 manifest 默认，最后空
       this.currentScene =
@@ -431,7 +430,7 @@ export class GameSession {
       // 可观测性：恢复标记，方便 Langfuse UI 中识别"断点"
       this.tracing?.markSessionRestored(config.turn, {
         status: config.status,
-        hasEntries: Array.isArray(config.memoryEntries) && config.memoryEntries.length > 0,
+        hasSnapshot: config.memorySnapshot !== null,
       });
 
       this.active = true;
@@ -470,8 +469,7 @@ export class GameSession {
             entry: { role: 'receive', content: inputText },
             stateVars: this.stateStore.getAll(),
             turn: config.turn,
-            memoryEntries: memSnap.entries as unknown[],
-            memorySummaries: (memSnap.summaries as string[]) ?? [],
+            memorySnapshot: memSnap,
           }).catch((e) => console.error('[Persistence] onReceiveComplete (restore) failed:', e));
         }
 
@@ -528,8 +526,7 @@ export class GameSession {
         entry: { role: 'receive', content: text },
         stateVars: this.stateStore.getAll(),
         turn,
-        memoryEntries: memSnap.entries as unknown[],
-        memorySummaries: (memSnap.summaries as string[]) ?? [],
+        memorySnapshot: memSnap,
       }).catch((e) => console.error('[Persistence] onReceiveComplete (signal) failed:', e));
 
       // resolve → agentic loop 继续
@@ -831,8 +828,7 @@ export class GameSession {
         // 同步 memory 快照和 preview
         const memSnapGen = await this.memory.snapshot();
         await this.persistence?.onGenerateComplete({
-          memoryEntries: memSnapGen.entries as unknown[],
-          memorySummaries: (memSnapGen.summaries as string[]) ?? [],
+          memorySnapshot: memSnapGen,
           preview: result.text ? result.text.slice(0, 80).replace(/\n/g, ' ') : null,
           // M3: 持久化 VN 当前场景，断线重连时可恢复视觉状态
           currentScene: this.currentScene,
@@ -887,14 +883,13 @@ export class GameSession {
         this.emitter.setStatus('waiting-input');
 
         // ③ 持久化：进入等待输入（外循环 receive phase）
-        // 同样保存 memoryEntries，断线重连时不丢失
+        // 同样保存 memory snapshot，断线重连时不丢失
         const memSnapWait = await this.memory.snapshot();
         await this.persistence?.onWaitingInput({
           hint: null,
           inputType: 'freetext',
           choices: null,
-          memoryEntries: memSnapWait.entries as unknown[],
-          memorySummaries: (memSnapWait.summaries as string[]) ?? [],
+          memorySnapshot: memSnapWait,
         }).catch((e) => console.error('[Persistence] onWaitingInput failed:', e));
 
         const inputText = await this.waitForInput();
@@ -920,8 +915,7 @@ export class GameSession {
             entry: { role: 'receive', content: inputText },
             stateVars: this.stateStore.getAll(),
             turn,
-            memoryEntries: memSnapRx.entries as unknown[],
-            memorySummaries: (memSnapRx.summaries as string[]) ?? [],
+            memorySnapshot: memSnapRx,
           }).catch((e) => console.error('[Persistence] onReceiveComplete failed:', e));
         }
 
@@ -1003,14 +997,13 @@ export class GameSession {
       this.emitter.setStatus('waiting-input');
 
       // ③ 持久化：signal_input_needed 触发的等待输入
-      // 同时保存最新的 memoryEntries 快照 → 断线重连后 memory 不空
+      // 同时保存最新的 memory snapshot → 断线重连后 memory 不空
       const memSnapSignal = await this.memory.snapshot();
       await this.persistence?.onWaitingInput({
         hint: options.hint ?? null,
         inputType: options.choices?.length ? 'choice' : 'freetext',
         choices: options.choices ?? null,
-        memoryEntries: memSnapSignal.entries as unknown[],
-        memorySummaries: (memSnapSignal.summaries as string[]) ?? [],
+        memorySnapshot: memSnapSignal,
       }).catch((e) => console.error('[Persistence] onWaitingInput (signal) failed:', e));
 
       // 返回挂起 Promise，等 submitInput() 调用时 resolve

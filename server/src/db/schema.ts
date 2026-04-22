@@ -238,8 +238,14 @@ export const playthroughs = pgTable('playthroughs', {
   status: text('status').notNull().default('idle'),
   turn: integer('turn').notNull().default(0),
   stateVars: jsonb('state_vars').$type<Record<string, unknown>>(),
-  memoryEntries: jsonb('memory_entries').$type<unknown[]>(),
-  memorySummaries: jsonb('memory_summaries').$type<string[]>(),
+  /**
+   * 记忆模块抽象重构后（0009_memory_snapshot）：单列 opaque JSONB。
+   * 内容格式由 Memory adapter 的 kind 字段自解释：
+   *   - legacy:    { kind:'legacy-v1', entries: MemoryEntry[], summaries: string[] }
+   *   - mem0:      { kind:'mem0-v1', ... }（Phase 3 定义）
+   * 未来切换 adapter 时 DB schema 不再变。
+   */
+  memorySnapshot: jsonb('memory_snapshot').$type<Record<string, unknown>>(),
   /**
    * VN 模式当前场景快照（M3）。由 change_scene / change_sprite 工具演进，
    * 结构为 { background: string | null, sprites: SpriteState[] }。

@@ -72,8 +72,11 @@ export interface PlaythroughDetail {
   status: string;
   turn: number;
   stateVars: Record<string, unknown> | null;
-  memoryEntries: unknown[] | null;
-  memorySummaries: string[] | null;
+  /**
+   * Memory adapter 的 opaque snapshot（0009_memory_snapshot 合并后）。
+   * legacy 格式：{ kind:'legacy-v1', entries, summaries }
+   */
+  memorySnapshot: Record<string, unknown> | null;
   inputHint: string | null;
   inputType: string;
   choices: string[] | null;
@@ -182,8 +185,9 @@ export class PlaythroughService {
       status: 'idle',
       turn: 0,
       stateVars: {},
-      memoryEntries: [],
-      memorySummaries: [],
+      // 首次 insert 时不填 snapshot —— LegacyMemory.restore 对 undefined
+      // 或空 object 都能安全兜底为空 entries/summaries。
+      memorySnapshot: null,
     });
 
     return { id, title };
@@ -233,8 +237,7 @@ export class PlaythroughService {
       status: pt.status,
       turn: pt.turn,
       stateVars: pt.stateVars,
-      memoryEntries: pt.memoryEntries,
-      memorySummaries: pt.memorySummaries,
+      memorySnapshot: pt.memorySnapshot,
       inputHint: pt.inputHint,
       inputType: pt.inputType,
       choices: pt.choices,
@@ -326,8 +329,7 @@ export class PlaythroughService {
       status: string;
       turn: number;
       stateVars: Record<string, unknown>;
-      memoryEntries: unknown[];
-      memorySummaries: string[];
+      memorySnapshot: Record<string, unknown>;
       inputHint: string | null;
       inputType: string;
       choices: string[] | null;

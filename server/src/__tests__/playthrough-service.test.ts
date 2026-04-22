@@ -191,8 +191,8 @@ describe('PlaythroughService', () => {
       expect(detail!.status).toBe('idle');
       expect(detail!.turn).toBe(0);
       expect(detail!.stateVars).toEqual({});
-      expect(detail!.memoryEntries).toEqual([]);
-      expect(detail!.memorySummaries).toEqual([]);
+      // 新 playthrough 初始 memorySnapshot 为 null（Memory.restore 自己兜底空状态）
+      expect(detail!.memorySnapshot).toBeNull();
     });
   });
 
@@ -429,13 +429,15 @@ describe('PlaythroughService', () => {
 
     it('should update memory snapshot', async () => {
       const pt = await createTestPlaythrough();
-      const memoryEntries = [{ role: 'generate', content: 'test', turn: 1 }];
-      const memorySummaries = ['summary 1'];
-      await service.updateState(pt.id, { memoryEntries, memorySummaries });
+      const memorySnapshot = {
+        kind: 'legacy-v1',
+        entries: [{ role: 'generate', content: 'test', turn: 1 }],
+        summaries: ['summary 1'],
+      };
+      await service.updateState(pt.id, { memorySnapshot });
 
       const detail = await service.getById(pt.id, pt.userId);
-      expect(detail!.memoryEntries).toEqual(memoryEntries);
-      expect(detail!.memorySummaries).toEqual(memorySummaries);
+      expect(detail!.memorySnapshot).toEqual(memorySnapshot);
     });
 
     it('should update choices and input state', async () => {

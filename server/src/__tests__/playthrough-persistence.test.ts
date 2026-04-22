@@ -247,17 +247,16 @@ describe('PlaythroughPersistence', () => {
       const pt = await createTestPlaythrough();
       const persistence = createPlaythroughPersistence(pt.id);
 
-      const memoryEntries = [{ role: 'generate', content: 'hello', turn: 1 }];
-      const memorySummaries = ['summary 1'];
+      const memorySnapshot = {
+        kind: 'legacy-v1',
+        entries: [{ role: 'generate', content: 'hello', turn: 1 }],
+        summaries: ['summary 1'],
+      };
 
-      await persistence.onGenerateComplete({
-        memoryEntries,
-        memorySummaries,
-      });
+      await persistence.onGenerateComplete({ memorySnapshot });
 
       const detail = await service.getById(pt.id, pt.userId);
-      expect(detail!.memoryEntries).toEqual(memoryEntries);
-      expect(detail!.memorySummaries).toEqual(memorySummaries);
+      expect(detail!.memorySnapshot).toEqual(memorySnapshot);
     });
 
     it('should not create any narrative entries', async () => {
@@ -265,8 +264,7 @@ describe('PlaythroughPersistence', () => {
       const persistence = createPlaythroughPersistence(pt.id);
 
       await persistence.onGenerateComplete({
-        memoryEntries: [],
-        memorySummaries: [],
+        memorySnapshot: { kind: 'legacy-v1', entries: [], summaries: [] },
       });
 
       const detail = await service.getById(pt.id, pt.userId);
@@ -278,8 +276,7 @@ describe('PlaythroughPersistence', () => {
       const persistence = createPlaythroughPersistence(pt.id);
 
       await persistence.onGenerateComplete({
-        memoryEntries: [],
-        memorySummaries: [],
+        memorySnapshot: { kind: 'legacy-v1', entries: [], summaries: [] },
         preview: '自定义 preview',
       });
 
@@ -337,17 +334,20 @@ describe('PlaythroughPersistence', () => {
       const persistence = createPlaythroughPersistence(pt.id);
 
       const stateVars = { trust: 2, explored: ['forest'] };
-      const memoryEntries = [
-        { role: 'generate', content: 'narrative', turn: 1 },
-        { role: 'receive', content: 'player action', turn: 1 },
-      ];
+      const memorySnapshot = {
+        kind: 'legacy-v1',
+        entries: [
+          { role: 'generate', content: 'narrative', turn: 1 },
+          { role: 'receive', content: 'player action', turn: 1 },
+        ],
+        summaries: [],
+      };
 
       await persistence.onReceiveComplete({
         entry: { role: 'receive', content: '我走向那道光' },
         stateVars,
         turn: 1,
-        memoryEntries,
-        memorySummaries: [],
+        memorySnapshot,
       });
 
       const detail = await service.getById(pt.id, pt.userId);
@@ -359,7 +359,7 @@ describe('PlaythroughPersistence', () => {
       // 检查状态更新
       expect(detail!.stateVars).toEqual(stateVars);
       expect(detail!.turn).toBe(1);
-      expect(detail!.memoryEntries).toEqual(memoryEntries);
+      expect(detail!.memorySnapshot).toEqual(memorySnapshot);
 
       // 检查输入状态清理
       expect(detail!.inputHint).toBeNull();
@@ -390,8 +390,11 @@ describe('PlaythroughPersistence', () => {
 
       // ③ Generate 结束同步 memory
       await persistence.onGenerateComplete({
-        memoryEntries: [{ role: 'generate', content: '你醒来了', turn: 1 }],
-        memorySummaries: [],
+        memorySnapshot: {
+          kind: 'legacy-v1',
+          entries: [{ role: 'generate', content: '你醒来了', turn: 1 }],
+          summaries: [],
+        },
       });
       detail = await service.getById(pt.id, pt.userId);
       expect(detail!.entries.length).toBe(1);
@@ -412,11 +415,14 @@ describe('PlaythroughPersistence', () => {
         entry: { role: 'receive', content: '睁开眼睛' },
         stateVars: { awake: true },
         turn: 1,
-        memoryEntries: [
-          { role: 'generate', content: '你醒来了', turn: 1 },
-          { role: 'receive', content: '睁开眼睛', turn: 1 },
-        ],
-        memorySummaries: [],
+        memorySnapshot: {
+          kind: 'legacy-v1',
+          entries: [
+            { role: 'generate', content: '你醒来了', turn: 1 },
+            { role: 'receive', content: '睁开眼睛', turn: 1 },
+          ],
+          summaries: [],
+        },
       });
       detail = await service.getById(pt.id, pt.userId);
       expect(detail!.entries.length).toBe(2);
@@ -437,19 +443,25 @@ describe('PlaythroughPersistence', () => {
         entry: { role: 'generate', content: 'Turn 1 narrative' },
       });
       await persistence.onGenerateComplete({
-        memoryEntries: [{ turn: 1, role: 'generate', content: 'Turn 1' }],
-        memorySummaries: [],
+        memorySnapshot: {
+          kind: 'legacy-v1',
+          entries: [{ turn: 1, role: 'generate', content: 'Turn 1' }],
+          summaries: [],
+        },
       });
       await persistence.onWaitingInput({ hint: null, inputType: 'freetext', choices: null });
       await persistence.onReceiveComplete({
         entry: { role: 'receive', content: 'Player turn 1' },
         stateVars: { turn1done: true },
         turn: 1,
-        memoryEntries: [
-          { turn: 1, role: 'generate', content: 'Turn 1' },
-          { turn: 1, role: 'receive', content: 'Player turn 1' },
-        ],
-        memorySummaries: [],
+        memorySnapshot: {
+          kind: 'legacy-v1',
+          entries: [
+            { turn: 1, role: 'generate', content: 'Turn 1' },
+            { turn: 1, role: 'receive', content: 'Player turn 1' },
+          ],
+          summaries: [],
+        },
       });
 
       // Turn 2
@@ -458,12 +470,15 @@ describe('PlaythroughPersistence', () => {
         entry: { role: 'generate', content: 'Turn 2 narrative' },
       });
       await persistence.onGenerateComplete({
-        memoryEntries: [
-          { turn: 1, role: 'generate', content: 'Turn 1' },
-          { turn: 1, role: 'receive', content: 'Player turn 1' },
-          { turn: 2, role: 'generate', content: 'Turn 2' },
-        ],
-        memorySummaries: [],
+        memorySnapshot: {
+          kind: 'legacy-v1',
+          entries: [
+            { turn: 1, role: 'generate', content: 'Turn 1' },
+            { turn: 1, role: 'receive', content: 'Player turn 1' },
+            { turn: 2, role: 'generate', content: 'Turn 2' },
+          ],
+          summaries: [],
+        },
       });
 
       const detail = await service.getById(pt.id, pt.userId);
@@ -473,7 +488,7 @@ describe('PlaythroughPersistence', () => {
       expect(detail!.entries[1].orderIdx).toBe(1);
       expect(detail!.entries[2].orderIdx).toBe(2);
       expect(detail!.stateVars).toEqual({ turn1done: true });
-      expect(detail!.memoryEntries!.length).toBe(3);
+      expect((detail!.memorySnapshot?.entries as unknown[]).length).toBe(3);
     });
 
     it('should persist narrative when signal_input_needed suspends mid-generate', async () => {
