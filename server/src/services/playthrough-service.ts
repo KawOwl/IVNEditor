@@ -410,7 +410,14 @@ export class PlaythroughService {
   }
 
   /**
-   * 加载 entries（分页，用于恢复）
+   * 分页加载 entries —— **向前**语义（offset=N 跳过最早 N 条，limit=K 取接下来 K 条）。
+   *
+   * 典型用法：WS 'restored' 消息给客户端回放前 N 条叙事做 UI 恢复。
+   *
+   * ⚠️ 不要用这个读"最近 N 条历史"喂 LLM —— 那是 loadLatestEntries 的职责。
+   * 之前 narrative-reader.readRecent 误用了 loadEntries(limit, 0)，结果 LLM
+   * 在长 session 里永远看到的是最早的 N 条（orderIdx 0-N），最近的 turn
+   * 对 LLM 完全不可见（session 85a8c5c0 reload 后"进度丢失"复盘发现）。
    */
   async loadEntries(
     playthroughId: string,
@@ -424,6 +431,28 @@ export class PlaythroughService {
       .orderBy(asc(schema.narrativeEntries.orderIdx))
       .limit(limit)
       .offset(offset) as NarrativeEntryRow[];
+  }
+
+  /**
+   * 加载"最近 N 条"entries（按 orderIdx 升序返回，即 chronological order）。
+   *
+   * 实现：DB 侧 DESC + limit N 拿到最新 N 条，之后在内存反转成 ASC 返回
+   *      —— 下游 messages-builder / memory adapter 都假设输入是 ASC 排序。
+   *
+   * 典型用法：memory.getRecentAsMessages 通过 NarrativeHistoryReader.readRecent
+   *      拉最近 N 条喂 LLM。
+   */
+  async loadLatestEntries(
+    playthroughId: string,
+    limit: number,
+  ): Promise<NarrativeEntryRow[]> {
+    const rows = await db
+      .select()
+      .from(schema.narrativeEntries)
+      .where(eq(schema.narrativeEntries.playthroughId, playthroughId))
+      .orderBy(desc(schema.narrativeEntries.orderIdx))
+      .limit(limit) as NarrativeEntryRow[];
+    return rows.reverse();
   }
 
   /**

@@ -570,6 +570,51 @@ describe('PlaythroughService', () => {
   });
 
   // --------------------------------------------------------------------------
+  // loadLatestEntries
+  // --------------------------------------------------------------------------
+
+  describe('loadLatestEntries', () => {
+    it('should return last N entries in chronological (asc) order', async () => {
+      const pt = await createTestPlaythrough();
+      for (let i = 0; i < 10; i++) {
+        await service.appendNarrativeEntry({
+          playthroughId: pt.id,
+          role: 'generate',
+          content: `Entry ${i}`,
+        });
+      }
+
+      // "Latest 3" should be entries 7, 8, 9 in chronological order
+      const latest = await service.loadLatestEntries(pt.id, 3);
+      expect(latest.length).toBe(3);
+      expect(latest[0].content).toBe('Entry 7');
+      expect(latest[1].content).toBe('Entry 8');
+      expect(latest[2].content).toBe('Entry 9');
+    });
+
+    it('should return all entries if limit exceeds total', async () => {
+      const pt = await createTestPlaythrough();
+      for (let i = 0; i < 3; i++) {
+        await service.appendNarrativeEntry({
+          playthroughId: pt.id,
+          role: 'generate',
+          content: `Entry ${i}`,
+        });
+      }
+
+      const latest = await service.loadLatestEntries(pt.id, 100);
+      expect(latest.length).toBe(3);
+      expect(latest[0].content).toBe('Entry 0');
+      expect(latest[2].content).toBe('Entry 2');
+    });
+
+    it('should return empty array for non-existent playthrough', async () => {
+      const entries = await service.loadLatestEntries('non-existent', 10);
+      expect(entries).toEqual([]);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // migration 0011：batchId + tool_call kind + loadEntriesInRange
   // --------------------------------------------------------------------------
 

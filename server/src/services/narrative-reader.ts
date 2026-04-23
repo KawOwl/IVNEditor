@@ -51,8 +51,13 @@ export function createNarrativeHistoryReader(
 ): NarrativeHistoryReader {
   return {
     async readRecent({ limit, kinds }) {
-      // playthroughService.loadEntries 已经按 orderIdx 升序返回 + 分页
-      const rows = await playthroughService.loadEntries(playthroughId, limit, 0);
+      // 必须用 loadLatestEntries（最近 N 条，DB 侧 DESC + 反转成 ASC 返回），
+      // 不能用 loadEntries（那是向前分页，offset=0 返回最早 N 条）。
+      //
+      // Bug 修复 2026-04-24（session 85a8c5c0 reload 丢进度复盘）：原来
+      // 走 loadEntries(limit, 0) 给 LLM 看到的永远是 orderIdx 0..N-1 的
+      // 最早内容，turn N+ 之后发生的剧情对 LLM 完全不可见。
+      const rows = await playthroughService.loadLatestEntries(playthroughId, limit);
       const entries = rows.map(rowToEntry);
       return kinds && kinds.length > 0
         ? entries.filter((e) => kinds.includes(e.kind))
