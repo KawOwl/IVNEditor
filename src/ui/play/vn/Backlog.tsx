@@ -12,7 +12,7 @@
  * 触发：右上角悬浮按钮「回看」
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useGameStore } from '../../../stores/game-store';
 import type { Sentence, CharacterAsset } from '../../../core/types';
 
@@ -23,6 +23,10 @@ export interface BacklogProps {
 export function Backlog({ characters }: BacklogProps) {
   const [open, setOpen] = useState(false);
   const parsedSentences = useGameStore((s) => s.parsedSentences);
+  // 滚动容器 ref —— 按钮在 DOM 里是 drawer 的兄弟节点（不是孩子），所以光标
+  // 停在按钮上滚轮时，wheel 事件找不到 overflow-y-auto 祖先，会直接"掉空"。
+  // 给按钮挂 onWheel 把 deltaY 手动转发给这个 ref 补上死区。
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   return (
     <>
@@ -31,6 +35,14 @@ export function Backlog({ characters }: BacklogProps) {
         onClick={(e) => {
           e.stopPropagation();
           setOpen((v) => !v);
+        }}
+        onWheel={(e) => {
+          // open 时按钮压在 drawer 顶端，滚轮 deltaY 转发给滚动容器。
+          // 不需要 stopPropagation / preventDefault：按钮的 DOM 祖先链里
+          // 没有 overflow-auto，冒泡本来就不会 hit 其它 scroller。
+          if (open && scrollRef.current) {
+            scrollRef.current.scrollTop += e.deltaY;
+          }
         }}
         className="absolute right-3 top-3 z-40 rounded bg-zinc-900/70 px-3 py-1.5 text-xs text-zinc-300 backdrop-blur-sm hover:bg-zinc-800 transition-colors"
         aria-label="backlog-toggle"
@@ -46,7 +58,7 @@ export function Backlog({ characters }: BacklogProps) {
         onClick={(e) => e.stopPropagation()}
         aria-label="backlog-drawer"
       >
-        <div className="h-full overflow-y-auto px-4 pt-14 pb-4">
+        <div ref={scrollRef} className="h-full overflow-y-auto px-4 pt-14 pb-4">
           {parsedSentences.length === 0 ? (
             <div className="text-center text-sm text-zinc-500 mt-8">还没有内容</div>
           ) : (
