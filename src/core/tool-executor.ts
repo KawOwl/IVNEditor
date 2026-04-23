@@ -41,8 +41,17 @@ export interface ToolExecutorContext {
   stateStore: StateStore;
   memory: Memory;
   segments: PromptSegment[];
-  /** 挂起模式：返回 Promise，等玩家输入后 resolve */
-  waitForPlayerInput?: (options: SignalInputOptions) => Promise<string>;
+  /**
+   * Turn-bounded 模式（方案 B）：signal_input_needed 调用此回调记 pending signal，
+   * execute 立即返回 success:true；LLM 的 stopWhen 在下一 step 之前拦截 → generate()
+   * 返回；外层 coreLoop 读 pendingSignal 更新 UI 并等玩家输入。
+   *
+   * 设计见 .claude/plans/turn-bounded-generate.md。
+   *
+   * 如果未提供此回调，signal_input_needed 会回退到报错（兼容过渡期；以前的挂起
+   * 模式已被方案 B 取代）。
+   */
+  recordPendingSignal?: (options: SignalInputOptions) => void | Promise<void>;
   onSetMood?: (mood: string) => void;
   /**
    * `end_scenario` 工具调用时通知 game-session。
@@ -122,8 +131,12 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
     },
   );
 
-  // signal_input_needed 是挂起工具：execute 返回 Promise，等玩家输入后 resolve。
-  // LLM 调用后 agentic loop 暂停等待 execute 完成，玩家输入作为 tool result 返回给 LLM。
+  // signal_input_needed 是 turn-boundary 工具（方案 B）：execute 只记录 pending
+  // signal，立即返回 success:true；LLM 的 stopWhen: hasToolCall('signal_input_needed')
+  // 会在下一 step 发起之前拦截 → generate() 干净返回。外层 coreLoop 读 pendingSignal
+  // 更新 UI（展选项 / 提示）并等玩家输入。
+  //
+  // 详见 .claude/plans/turn-bounded-generate.md
   tools['signal_input_needed'] = handler(
     'signal_input_needed',
     z.object({
@@ -134,11 +147,14 @@ export function createTools(ctx: ToolExecutorContext): Record<string, ToolHandle
     }),
     async (args) => {
       const { prompt_hint, choices } = args as { prompt_hint: string; choices: string[] };
-      if (!ctx.waitForPlayerInput) {
-        return { success: false, error: 'No input handler registered' };
+      if (!ctx.recordPendingSignal) {
+        // 兼容过渡期：未接入 turn-bounded 的调用方
+        return { success: false, error: 'No signal handler registered' };
       }
-      const playerChoice = await ctx.waitForPlayerInput({ hint: prompt_hint, choices });
-      return { success: true, playerChoice };
+      await ctx.recordPendingSignal({ hint: prompt_hint, choices });
+      // 返回简单的 success —— 玩家实际选择通过下一轮 generate() 的 user message
+      // 体现，不放进 tool_result。see plan doc.
+      return { success: true };
     },
   );
 

@@ -485,8 +485,9 @@ export class GameSession {
   private disabledSections?: string[];
   private persistence?: SessionPersistence;
   private tracing?: SessionTracing;
-  /** 当前 generate 轮次的 trace handle（供 signal_input_needed 路径记录 player_input 事件） */
-  private currentTraceHandle?: GenerateTraceHandle;
+  // （老 currentTraceHandle 字段已删除 —— 方案 B 下 traceHandle 局部变量即可覆盖
+  //  generate trace 的生命周期；之前是为给 signal 挂起路径的 player_input 事件
+  //  记录用，turn-bounded 后没有这个路径）
 
   /**
    * 当前 streaming entry 的叙事文本累积区。
@@ -528,35 +529,37 @@ export class GameSession {
 
   /**
    * 把 generate() 内部 narration 累积 buffer 刷出去。
-   * signal_input_needed 挂起前 createWaitForPlayerInput 调这个，确保玩家在
-   * 看到选项之前先看到最新的旁白 Sentence。generate() 执行期间非 null。
+   * signal_input_needed 的 record-only execute 调这个，确保玩家在看到选项之前
+   * 先看到最新的旁白 Sentence。generate() 执行期间非 null。
    */
   private pendingNarrationFlusher: (() => void) | null = null;
 
-  // 外循环 Receive 阶段的挂起 Promise（LLM 自然停止后等玩家输入）
+  // 外循环 Receive 阶段的挂起 Promise（等玩家输入，signal / natural stop / maxSteps 共用）
   private inputResolve: ((text: string) => void) | null = null;
 
-  // 内循环挂起 Promise（signal_input_needed 等玩家输入）
-  private signalInputResolve: ((text: string) => void) | null = null;
-
   /**
-   * 当前 signal_input_needed 挂起时的 choices（migration 0010 / Step 3）。
-   * submitInput 时拿来和玩家输入 text 匹配，算出 selectedIndex 存到
-   * player_input entry 的 payload 里。restore 路径用 config.choices 同理。
+   * 当前等玩家输入的 signal（方案 B / 2026-04-23 turn-bounded）。
    *
-   * 非 null 表示"正在等玩家答 signal"；submitInput resolve 后清回 null。
+   * 生命周期：
+   *   - signal_input_needed.execute 调 recordPendingSignal 回调时设置
+   *   - generate() 因 stopWhen hit 而返回后，coreLoop 的 Receive 阶段读它决定 UI 模式
+   *   - 玩家输入提交、写完 player_input entry 后清回 null
+   *
+   * null 表示"当前回合没有 signal（LLM 自然停止 / maxSteps / restore 后新一轮）"，
+   * 此时 Receive 阶段走 freetext 路径。
    */
-  private pendingSignalChoices: string[] | null = null;
+  private pendingSignal: {
+    hint: string;
+    choices: string[];
+    /** 发起 signal 的 LLM step 的 batchId，用于 signal_input / narrative / player_input 分组 */
+    batchId: string | null;
+  } | null = null;
 
   /**
    * 当前 LLM step 的 batchId（migration 0011）。onStep 回调里从 StepInfo.batchId
    * 取到并缓存；onSignalInputRecorded / onNarrativeSegmentFinalized 挂起时把它
    * 一并透传给 persistence，让 narrative_entries.batch_id 统一标记"同一次 LLM
    * 响应产出的 entries"。
-   *
-   * 为什么用 instance 字段而不是局部变量：signal_input_needed 的挂起路径里，
-   * `createWaitForPlayerInput` 是 tool-executor 的回调，它脱离 generate() 的
-   * 闭包，必须通过 this.currentStepBatchId 读到当前 step 的 id。
    *
    * 生命周期：onStep 触发时更新；generate() 结束时（finally 块）清空。
    */
@@ -747,60 +750,21 @@ export class GameSession {
     }
   }
 
-  /** Submit player input — 分两路：挂起中（signal_input_needed）或外循环（Receive 阶段） */
+  /**
+   * Submit player input —— 方案 B（turn-bounded）下只有一条路径：
+   * 外循环 Receive 阶段正在 `waitForInput()` 挂起，resolve 它让 coreLoop 继续。
+   * coreLoop 内部根据 `this.pendingSignal` 走 signal 或 freetext 处理。
+   *
+   * 老的挂起模式（signalInputResolve）已删除。
+   */
   async submitInput(text: string): Promise<void> {
     // 捕获本次 player input 作为下一次 Memory.retrieve 的 default query
     this.lastPlayerInput = text;
 
-    if (this.signalInputResolve) {
-      // 挂起模式：signal_input_needed 正在等玩家输入
-      const resolve = this.signalInputResolve;
-      this.signalInputResolve = null;
-      // migration 0010 / Step 3：算 selectedIndex 之前先快照 choices，再清空
-      const choicesAtSubmit = this.pendingSignalChoices;
-      this.pendingSignalChoices = null;
-      const payload = computeReceivePayload(text, choicesAtSubmit);
-
-      // 清 UI 状态，恢复生成中
-      this.emitter.setInputHint(null);
-      this.emitter.setInputType('freetext');
-      this.emitter.setStatus('generating');
-
-      // 显示玩家输入到叙事流（legacy entries channel + VN Sentence channel）
-      this.emitter.appendEntry({ role: 'receive', content: text });
-      this.emitPlayerInputSentence(text, payload.selectedIndex);
-
-      // 记录到记忆
-      const turn = this.stateStore.getTurn();
-      await this.memory.appendTurn({
-        turn,
-        role: 'receive',
-        content: text,
-        tokenCount: estimateTokens(text),
-      });
-
-      // 🔭 可观测性：在当前 trace 上记录 player_input 事件
-      this.currentTraceHandle?.event('player_input', { text }, { via: 'signal', turn });
-
-      // 持久化：把玩家输入写入 narrative_entries，并清理输入状态。
-      // 这个分支之前漏掉了持久化，导致挂起模式下的玩家消息重启后丢失。
-      const memSnap = await this.memory.snapshot();
-      this.persistence?.onReceiveComplete({
-        entry: { role: 'receive', content: text },
-        stateVars: this.stateStore.getAll(),
-        turn,
-        memorySnapshot: memSnap,
-        payload,
-        // migration 0011：玩家一次提交独立 batchId
-        batchId: crypto.randomUUID(),
-      }).catch((e) => console.error('[Persistence] onReceiveComplete (signal) failed:', e));
-
-      // resolve → agentic loop 继续
-      resolve(text);
-    } else if (this.inputResolve) {
-      // 外循环 Receive 阶段
-      this.inputResolve(text);
+    if (this.inputResolve) {
+      const resolve = this.inputResolve;
       this.inputResolve = null;
+      resolve(text);
     }
   }
 
@@ -812,11 +776,7 @@ export class GameSession {
     this.abortController?.abort();
     this.abortController = null;
 
-    // resolve 所有 pending Promise（防挂死）
-    if (this.signalInputResolve) {
-      this.signalInputResolve('');
-      this.signalInputResolve = null;
-    }
+    // resolve 外循环的 waitForInput（防挂死）；方案 B 下没有 signalInputResolve 了
     if (this.inputResolve) {
       this.inputResolve('');
       this.inputResolve = null;
@@ -845,16 +805,17 @@ export class GameSession {
 
       // 🔭 可观测性：为这一轮 generate 开启 trace（在 try 外层定义，catch 也能访问）
       const traceHandle: GenerateTraceHandle | undefined = this.tracing?.startGenerateTrace(turn);
-      this.currentTraceHandle = traceHandle;
       const toolCallStack = new Map<string, ToolCallTraceHandle[]>();
 
       try {
-        // Create tools with suspend-mode waitForPlayerInput
+        // Create tools with turn-bounded recordPendingSignal handler
         const allTools = createTools({
           stateStore: this.stateStore,
           memory: this.memory,
           segments: this.segments,
-          waitForPlayerInput: this.createWaitForPlayerInput(),
+          recordPendingSignal: async (options) => {
+            await this.recordPendingSignal(options);
+          },
           onSetMood: (_mood) => {
             // TODO: connect to UI mood system
           },
@@ -1028,11 +989,11 @@ export class GameSession {
             { turn },
           );
         };
-        // signal_input_needed 挂起前 game-session 需要把攒的 narration emit 给前端。
-        // 把 flush 暴露到实例字段，让 createWaitForPlayerInput 能调用到这个 closure。
+        // signal_input_needed record-only 前 game-session 需要把攒的 narration emit 给前端。
+        // 把 flush 暴露到实例字段，让 recordPendingSignal 能调用到这个 closure。
         this.pendingNarrationFlusher = flushPendingNarration;
 
-        // Call LLM (agentic tool loop — signal_input_needed 会挂起等玩家)
+        // Call LLM (agentic tool loop — stopWhen 在 signal_input_needed / end_scenario 触发时拦截)
         //
         // 推理/叙事分离由 AI SDK 原生通道处理：
         //   - text-delta 事件 → onTextChunk → 叙事正文
@@ -1158,11 +1119,14 @@ export class GameSession {
 
         // Store LLM response in memory.
         //
-        // 注意：如果本轮 generate 内有 signal_input_needed，createWaitForPlayerInput
-        // 已经把 signal 前的叙事段 append 进 memory 了。这里用 currentNarrativeBuffer
-        // （只含 signal 后的增量文本）而不是 result.text（全量文本），避免重复。
+        // 方案 B（turn-bounded）下一次 generate 对应一个玩家回合。如果本轮调了
+        // signal_input_needed，`recordPendingSignal` 已经在 signal 触发时把 signal
+        // 之前的 narrative buffer 写进 memory + narrative_entries 了；currentNarrativeBuffer
+        // 此时一般已清空（signal 之后 stopWhen 拦截直接返回，LLM 没有继续写叙事的
+        // 机会）。所以这里的 if 多半不会 fire。
         //
-        // 没有 signal 的场景：currentNarrativeBuffer 就是全量文本，和 result.text 一样。
+        // 没有 signal 的场景（natural stop / maxSteps）：currentNarrativeBuffer 含全部
+        // 本轮 text，这里统一写进 memory。
         if (this.currentNarrativeBuffer) {
           await this.memory.appendTurn({
             turn,
@@ -1172,8 +1136,9 @@ export class GameSession {
           });
         }
 
-        // ② 持久化：最后一段 streaming entry（generate 自然返回后）
-        //    注：如果中间有 signal_input_needed 挂起，那些段已在 createWaitForPlayerInput 中持久化过了
+        // ② 持久化：最后一段 streaming entry（generate 返回后）
+        //    signal 路径下 recordPendingSignal 已经处理了 signal 之前的叙事；
+        //    这里只处理 signal 之后（或无 signal 时的整段）
         if (this.currentNarrativeBuffer) {
           await this.persistence?.onNarrativeSegmentFinalized({
             entry: {
@@ -1222,7 +1187,6 @@ export class GameSession {
         this.emitter.setError(error instanceof Error ? error.message : String(error));
         // Fall through to Receive Phase — player can re-send to retry
       } finally {
-        this.currentTraceHandle = undefined;
         // migration 0011：本轮 generate 彻底结束，清 batchId 防下一轮串台
         this.currentStepBatchId = null;
       }
@@ -1239,20 +1203,31 @@ export class GameSession {
         break;
       }
 
-      // --- Receive Phase (fallback) ---
-      // LLM 自然停止后（没有通过 signal_input_needed 请求输入），等玩家输入再开始下一轮。
-      // 如果 LLM 在 generate 过程中已经通过 signal_input_needed 获取了玩家输入，
-      // 这里仍然需要等——因为 LLM 停下意味着这一轮叙事结束了，需要玩家推动下一轮。
+      // --- Receive Phase ---
+      // 方案 B（turn-bounded）下所有 generate() 返回后都走这里等输入：
+      //   - pendingSignal 非空：LLM 调 signal_input_needed → stopWhen 拦截 → 用 signal
+      //     的 hint/choices 做 UI（choice 或 freetext，看 choices 长度）
+      //   - pendingSignal 空：LLM 自然停止 / maxSteps 触发 → 用 freetext UI 兜底
+      // 玩家输入后 clear pendingSignal，next iteration 开新 generate()。
       if (this.active) {
+        // Snapshot pendingSignal 副本：recordPendingSignal 已经完事，
+        // 我们在 coreLoop 内消费。下一轮 generate 开始前清零。
+        const signal = this.pendingSignal;
+        const waitingHint = signal?.hint ?? null;
+        const waitingChoices = signal?.choices && signal.choices.length > 0 ? signal.choices : null;
+        const waitingInputType = waitingChoices ? 'choice' : 'freetext';
+
+        // UI 状态：hint + input-type（以及可选 choices）
+        this.emitter.setInputHint(waitingHint);
+        this.emitter.setInputType(waitingInputType, waitingChoices);
         this.emitter.setStatus('waiting-input');
 
-        // ③ 持久化：进入等待输入（外循环 receive phase）
-        // 同样保存 memory snapshot，断线重连时不丢失
+        // ③ 持久化：onWaitingInput 快照（signal / freetext 统一调一次）
         const memSnapWait = await this.memory.snapshot();
         await this.persistence?.onWaitingInput({
-          hint: null,
-          inputType: 'freetext',
-          choices: null,
+          hint: waitingHint,
+          inputType: waitingInputType,
+          choices: waitingChoices,
           memorySnapshot: memSnapWait,
           currentScene: this.currentScene,
         }).catch((e) => console.error('[Persistence] onWaitingInput failed:', e));
@@ -1265,8 +1240,13 @@ export class GameSession {
         this.emitter.setError(null);
 
         if (inputText) {
+          // 方案 B：pendingSignal 的 choices 拿来算 selectedIndex（命中 → choice）
+          const payload = signal
+            ? computeReceivePayload(inputText, signal.choices)
+            : ({ inputType: 'freetext' as const });
+
           this.emitter.appendEntry({ role: 'receive', content: inputText });
-          this.emitPlayerInputSentence(inputText);
+          this.emitPlayerInputSentence(inputText, payload.selectedIndex);
 
           await this.memory.appendTurn({
             turn,
@@ -1276,19 +1256,20 @@ export class GameSession {
           });
 
           // ④ 持久化：receive 完成
-          // 外循环 Receive 路径：无 signal_input_needed 上下文，永远 freetext
           const memSnapRx = await this.memory.snapshot();
           await this.persistence?.onReceiveComplete({
             entry: { role: 'receive', content: inputText },
             stateVars: this.stateStore.getAll(),
             turn,
             memorySnapshot: memSnapRx,
-            payload: { inputType: 'freetext' },
-            // migration 0011：玩家一次提交独立 batchId
+            payload,
+            // migration 0011：玩家一次提交独立 batchId（未来多模态一次提交多 entry 共享）
             batchId: crypto.randomUUID(),
           }).catch((e) => console.error('[Persistence] onReceiveComplete failed:', e));
         }
 
+        // 清状态：下一 iteration 从全新 generate 开始
+        this.pendingSignal = null;
         this.emitter.setInputHint(null);
         this.emitter.setInputType('freetext');
       }
@@ -1329,7 +1310,6 @@ export class GameSession {
     return parts.join('. ');
   }
 
-  /** 创建 waitForPlayerInput 回调，供 signal_input_needed 的 execute 使用 */
   /**
    * 把玩家输入 emit 成一条 `player_input` Sentence，让 VN UI（对话框 / backlog）
    * 能显示"玩家的回复气泡"。
@@ -1375,109 +1355,76 @@ export class GameSession {
     });
   }
 
-  private createWaitForPlayerInput(): (options: SignalInputOptions) => Promise<string> {
-    return async (options: SignalInputOptions) => {
-      // ★ signal 挂起前先把 narration 累积 buffer 推给前端：
-      //   parser 层已经 flush 出 onNarrationChunk，session 层的
-      //   pendingNarrationFlusher 再把攒着的段落拼成 Sentence 推出去。
-      //   否则"完全不带 XML 标签的段落"在本轮会滞留到 generate 结束，
-      //   玩家先看到选项再看到叙事（或根本看不到叙事）。
-      this.pendingNarrationFlusher?.();
+  /**
+   * 方案 B（turn-bounded）：signal_input_needed 的 record-only handler。
+   *
+   * 触发路径：LLM 调 signal_input_needed → tool.execute 调 ctx.recordPendingSignal →
+   * 此方法。**不挂起 Promise**，做完就 return；后续流程：
+   *   1. AI SDK 把 tool_result `{success:true}` 回给 LLM
+   *   2. 本 step 结束时 stopWhen 检测到 hasToolCall('signal_input_needed') → generate() 返回
+   *   3. 外层 coreLoop 看到 this.pendingSignal 非空，进入 Receive 阶段等玩家输入
+   *
+   * 本方法内部做的事：
+   *   - flush 当前 narration buffer → 玩家先看到 GM 的叙事再看到选项
+   *   - 把当前 narrative buffer 写进 narrative_entries + memory（挂当前 step batchId）
+   *   - 写一条 signal_input entry 进 narrative_entries（供 restore / backlog）
+   *   - emit signal_input Sentence 到 VN UI
+   *   - 设 this.pendingSignal 供 coreLoop 读
+   *
+   * 不做的事（区别于老挂起模式）：
+   *   - 不设 UI 状态为 waiting-input（generate 还在 generating，stopWhen 拦截后 coreLoop 切 UI）
+   *   - 不调 onWaitingInput（由 coreLoop 在 generate 返回后统一调）
+   *   - 不 return Promise（execute 的 async 立即 resolve → tool_result success:true 可用）
+   */
+  private async recordPendingSignal(options: SignalInputOptions): Promise<void> {
+    const hint = options.hint ?? '';
+    const choices = options.choices ?? [];
 
-      // ★ 挂起前把当前叙事段同时写入两个地方：
-      //   1. narrative_entries 表（DB 叙事记录，供 UI 恢复显示）
-      //   2. MemoryManager entries（供下一次 assembleContext 拿 recent history）
-      //
-      // 为什么两个都要：
-      //   - onNarrativeSegmentFinalized 只写 narrative_entries，不写 memory_entries
-      //   - memory.appendTurn 只改内存，不写 DB
-      //   - generate() 返回后的 memory.appendTurn(result.text) 会包含 ALL text，
-      //     但在 signal 挂起期间 generate() 还没返回，memory 里看不到本段叙事。
-      //     如果此时断线重连，memory 就是空的 → LLM 没有 recent history。
-      //
-      // 为了避免 generate() 返回后重复 append 整段 text，这里 append 后设
-      // 标记，post-generate 只 append 剩余的新增部分。
-      if (this.currentNarrativeBuffer) {
-        // 写 narrative_entries（UI 显示用）
-        // migration 0011：挂上当前 step 的 batchId，让 signal_input entry 和同批
-        // narrative / tool_call 进到一个 assistant message
-        await this.persistence?.onNarrativeSegmentFinalized({
-          entry: {
-            role: 'generate',
-            content: this.currentNarrativeBuffer,
-          },
-          batchId: this.currentStepBatchId,
-        }).catch((e) =>
-          console.error('[Persistence] onNarrativeSegmentFinalized (signal) failed:', e),
-        );
-        // 写 memory（LLM context 用）
-        await this.memory.appendTurn({
-          turn: this.stateStore.getTurn(),
+    // ★ 1. flush 累积的 narration 段落 Sentence，让玩家先看到叙事再看到选项
+    this.pendingNarrationFlusher?.();
+
+    // ★ 2. 把当前 narrative buffer 同步写 narrative_entries + memory
+    if (this.currentNarrativeBuffer) {
+      await this.persistence?.onNarrativeSegmentFinalized({
+        entry: {
           role: 'generate',
           content: this.currentNarrativeBuffer,
-          tokenCount: estimateTokens(this.currentNarrativeBuffer),
-        });
-        this.currentNarrativeBuffer = '';
-      }
-
-      // 将当前 streaming entry 标记为完成
-      this.emitter.finalizeStreamingEntry();
-
-      // 更新 UI：显示选项和提示
-      this.emitter.setInputHint(options.hint ?? null);
-      if (options.choices && options.choices.length > 0) {
-        this.emitter.setInputType('choice', options.choices);
-      }
-      this.emitter.setStatus('waiting-input');
-
-      // 缓存 choices 供 submitInput 算 selectedIndex（migration 0010 / Step 3）
-      this.pendingSignalChoices = options.choices ?? null;
-
-      // ③ 持久化：
-      //
-      //   (a) 先写一条结构化 signal_input 事件到 narrative_entries（0010+）
-      //       —— 这是不可变历史，让 backlog 能回看"第 N 步 GM 问了什么 / 给了哪些选项"
-      //   (b) 再 upsert playthroughs 的"当前状态"快照（input_hint/choices/memory/scene）
-       //      —— 这是断线重连 O(1) 恢复 UI 用的，只保存最新一条
-      //
-      // 顺序：先 append 事件，再写 snapshot。两者都失败也不影响 generate 挂起
-      // 本身 —— catch 住 error，UI 依然能继续等玩家输入（不过下次 restore 会不一致）。
-      const hint = options.hint ?? null;
-      const choices = options.choices ?? [];
-      // narrative_entries.content NOT NULL —— 只有 hint 非空才写 signal_input entry。
-      // choices 允许为空（LLM 只要自由输入也是合法的 signal 事件）。
-      if (hint) {
-        // 1. VN Sentence 流里放一条 signal_input 供 backlog 回看（migration 0010 / Step 4）
-        this.emitSignalInputSentence(hint, choices);
-        // 2. 持久化成 narrative_entry（下次 restore 重放）
-        //    migration 0011：挂当前 step 的 batchId
-        await this.persistence?.onSignalInputRecorded?.({
-          hint,
-          choices,
-          batchId: this.currentStepBatchId,
-        }).catch((e) => console.error('[Persistence] onSignalInputRecorded failed:', e));
-      }
-      // 同时保存最新的 memory snapshot → 断线重连后 memory 不空
-      const memSnapSignal = await this.memory.snapshot();
-      await this.persistence?.onWaitingInput({
-        hint,
-        inputType: choices.length ? 'choice' : 'freetext',
-        choices: choices.length ? choices : null,
-        memorySnapshot: memSnapSignal,
-        currentScene: this.currentScene,
-      }).catch((e) => console.error('[Persistence] onWaitingInput (signal) failed:', e));
-
-      // 返回挂起 Promise，等 submitInput() 调用时 resolve
-      return new Promise<string>((resolve) => {
-        this.signalInputResolve = (text: string) => {
-          // 玩家输入后，开始新的 streaming entry 接收 LLM 后续输出
-          this.currentNarrativeBuffer = '';
-          this.emitter.beginStreamingEntry();
-          resolve(text);
-        };
+        },
+        batchId: this.currentStepBatchId,
+      }).catch((e) =>
+        console.error('[Persistence] onNarrativeSegmentFinalized (signal) failed:', e),
+      );
+      await this.memory.appendTurn({
+        turn: this.stateStore.getTurn(),
+        role: 'generate',
+        content: this.currentNarrativeBuffer,
+        tokenCount: estimateTokens(this.currentNarrativeBuffer),
       });
+      this.currentNarrativeBuffer = '';
+    }
+
+    // ★ 3. 缓存 pendingSignal 供 coreLoop Receive 阶段读（hint + choices + batchId）
+    this.pendingSignal = {
+      hint,
+      choices,
+      batchId: this.currentStepBatchId,
     };
+
+    // ★ 4. VN Sentence + DB signal_input entry（供 backlog / restore）
+    //    narrative_entries.content NOT NULL —— 只有 hint 非空才写 entry。
+    //    choices 允许为空（freetext 模式 signal 也是合法事件）。
+    if (hint) {
+      this.emitSignalInputSentence(hint, choices);
+      await this.persistence?.onSignalInputRecorded?.({
+        hint,
+        choices,
+        batchId: this.currentStepBatchId,
+      }).catch((e) => console.error('[Persistence] onSignalInputRecorded failed:', e));
+    }
+
+    // 方法到此结束 —— execute 立即 resolve tool_result success:true，stopWhen 在下一 step 前拦截
   }
+
 
   private waitForInput(): Promise<string> {
     return new Promise<string>((resolve) => {

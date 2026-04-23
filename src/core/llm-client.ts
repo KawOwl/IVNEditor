@@ -4,11 +4,17 @@
  * Wraps Vercel AI SDK's streamText with tool support.
  * Handles the agentic loop: text → tool_call → execute → continue → text.
  *
- * signal_input_needed 使用挂起模式：execute 返回 Promise，等玩家输入后 resolve，
- * LLM 拿到 tool result 后自然继续生成。不需要 hasToolCall 终止。
+ * Turn-bounded 模式（方案 B，2026-04-23 起）：
+ *   - 每次 generate() 对应**一个玩家回合**
+ *   - stopWhen 同时拦截 maxSteps / signal_input_needed / end_scenario 三种情况
+ *   - signal_input_needed 的 execute 改为 record-only，下一 step 前 stopWhen 触发
+ *     让 generate() 干净返回；玩家输入通过下一次 generate() 的 user message 进入
+ *   - 删除了老的"挂起模式"分支（createWaitForPlayerInput 等）
+ *
+ * 详见 .claude/plans/turn-bounded-generate.md 和 .claude/plans/messages-model.md。
  */
 
-import { streamText, stepCountIs, tool, zodSchema, type ToolSet } from 'ai';
+import { streamText, stepCountIs, hasToolCall, tool, zodSchema, type ToolSet } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import type { ToolHandler } from './tool-executor';
@@ -229,7 +235,8 @@ export class LLMClient {
       systemPrompt,
       messages,
       tools: toolHandlers,
-      maxSteps = 30,
+      // turn-bounded 模式下每回合预算：典型 3-5 步，留 4x 余量
+      maxSteps = 20,
       maxOutputTokens = this.config.maxOutputTokens,
       abortSignal,
       onTextChunk,
@@ -273,7 +280,15 @@ export class LLMClient {
       system: systemPrompt,
       messages: aiMessages,
       tools: aiTools,
-      stopWhen: [stepCountIs(maxSteps)],
+      // 方案 B：三种停止条件
+      //   - stepCountIs(maxSteps)：每回合 step 预算上限（默认 20）
+      //   - hasToolCall('signal_input_needed')：LLM 请求玩家输入 → 当回合结束
+      //   - hasToolCall('end_scenario')：LLM 终止剧情 → 退出整局
+      stopWhen: [
+        stepCountIs(maxSteps),
+        hasToolCall('signal_input_needed'),
+        hasToolCall('end_scenario'),
+      ],
       maxOutputTokens,
       abortSignal,
       // Focus Injection D：per-step system prompt 覆盖。每个 step 开始前，
