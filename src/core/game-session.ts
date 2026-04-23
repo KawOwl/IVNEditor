@@ -175,7 +175,7 @@ export interface SessionPersistence {
    * 每次调用保存一条独立的 narrative_entry 到 DB。
    */
   onNarrativeSegmentFinalized(data: {
-    entry: { role: string; content: string; reasoning?: string; toolCalls?: unknown[]; finishReason?: string };
+    entry: { role: string; content: string; reasoning?: string; finishReason?: string };
   }): Promise<void>;
 
   /** generate() 全部结束后同步 memory 快照 + preview + VN 场景（不再负责 entry 入库） */

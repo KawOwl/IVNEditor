@@ -496,21 +496,38 @@ describe('PlaythroughService', () => {
       expect(entries[2].orderIdx).toBe(2);
     });
 
-    it('should store optional fields', async () => {
+    it('should store optional fields (kind + payload + reasoning + finishReason)', async () => {
       const pt = await createTestPlaythrough();
+      // 0010: kind + payload 替代 dead toolCalls 列。
+      // 这里用 signal_input kind 验证结构化 payload 能落地。
       await service.appendNarrativeEntry({
         playthroughId: pt.id,
-        role: 'generate',
-        content: 'narrative',
+        role: 'system',
+        kind: 'signal_input',
+        content: '你想做什么？',
+        payload: { choices: ['前进', '后退'] },
         reasoning: 'thinking...',
-        toolCalls: [{ name: 'update_state', args: {}, result: 'ok' }],
         finishReason: 'stop',
       });
 
       const entries = await service.loadEntries(pt.id, 1);
+      expect(entries[0].kind).toBe('signal_input');
+      expect(entries[0].payload).toEqual({ choices: ['前进', '后退'] });
       expect(entries[0].reasoning).toBe('thinking...');
-      expect(entries[0].toolCalls).toEqual([{ name: 'update_state', args: {}, result: 'ok' }]);
       expect(entries[0].finishReason).toBe('stop');
+    });
+
+    it('should default kind to narrative when not specified', async () => {
+      const pt = await createTestPlaythrough();
+      await service.appendNarrativeEntry({
+        playthroughId: pt.id,
+        role: 'generate',
+        content: 'just narrative',
+      });
+
+      const entries = await service.loadEntries(pt.id, 1);
+      expect(entries[0].kind).toBe('narrative');
+      expect(entries[0].payload).toBeNull();
     });
 
     it('should return entry id', async () => {

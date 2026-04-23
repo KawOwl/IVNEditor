@@ -100,9 +100,16 @@ export interface NarrativeEntryRow {
   id: string;
   playthroughId: string;
   role: string;
+  /**
+   * 事件类别（migration 0010）：
+   *   'narrative' | 'signal_input' | 'player_input'
+   * 见 .claude/plans/conversation-persistence.md
+   */
+  kind: string;
   content: string;
   reasoning: string | null;
-  toolCalls: unknown[] | null;
+  /** 按 kind 自描述的结构化载荷（migration 0010 取代 tool_calls dead column） */
+  payload: Record<string, unknown> | null;
   finishReason: string | null;
   orderIdx: number;
   createdAt: Date;
@@ -351,13 +358,17 @@ export class PlaythroughService {
 
   /**
    * 追加叙事条目
+   *
+   * kind 默认 'narrative'。signal_input / player_input 条目走同一个入口，
+   * 只是 kind + payload 不同，见 .claude/plans/conversation-persistence.md。
    */
   async appendNarrativeEntry(entry: {
     playthroughId: string;
     role: string;
+    kind?: string;                       // 默认 'narrative'（migration 0010）
     content: string;
     reasoning?: string | null;
-    toolCalls?: unknown[] | null;
+    payload?: Record<string, unknown> | null;  // migration 0010 取代 tool_calls
     finishReason?: string | null;
   }): Promise<string> {
     const id = crypto.randomUUID();
@@ -375,9 +386,10 @@ export class PlaythroughService {
         id,
         playthroughId: entry.playthroughId,
         role: entry.role,
+        kind: entry.kind ?? 'narrative',
         content: entry.content,
         reasoning: entry.reasoning ?? null,
-        toolCalls: entry.toolCalls ?? null,
+        payload: entry.payload ?? null,
         finishReason: entry.finishReason ?? null,
         orderIdx: nextIdx,
       });

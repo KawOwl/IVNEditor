@@ -192,7 +192,7 @@ describe('PlaythroughPersistence', () => {
       expect(detail!.entries.length).toBe(0);
     });
 
-    it('should save reasoning and toolCalls', async () => {
+    it('should save reasoning + default kind=narrative', async () => {
       const pt = await createTestPlaythrough();
       const persistence = createPlaythroughPersistence(pt.id);
 
@@ -201,14 +201,15 @@ describe('PlaythroughPersistence', () => {
           role: 'generate',
           content: 'narrative text',
           reasoning: 'thinking about what to say...',
-          toolCalls: [{ name: 'update_state', args: { key: 'trust', value: 2 } }],
-          finishReason: 'tool_calls',
+          finishReason: 'stop',
         },
       });
 
       const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.entries[0].reasoning).toBe('thinking about what to say...');
-      expect(detail!.entries[0].toolCalls).toEqual([{ name: 'update_state', args: { key: 'trust', value: 2 } }]);
+      // 0010: onNarrativeSegmentFinalized 走默认 kind='narrative'，payload null
+      expect(detail!.entries[0].kind).toBe('narrative');
+      expect(detail!.entries[0].payload).toBeNull();
     });
 
     it('should append multiple segments in order', async () => {

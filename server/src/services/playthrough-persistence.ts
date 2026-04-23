@@ -30,9 +30,9 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
       await playthroughService.appendNarrativeEntry({
         playthroughId,
         role: data.entry.role,
+        // kind 默认 'narrative'（onNarrativeSegmentFinalized 的语义就是常规叙事段）
         content: data.entry.content,
         reasoning: data.entry.reasoning,
-        toolCalls: data.entry.toolCalls,
         finishReason: data.entry.finishReason,
       });
 

@@ -285,9 +285,21 @@ export const narrativeEntries = pgTable('narrative_entries', {
     .notNull()
     .references(() => playthroughs.id, { onDelete: 'cascade' }),
   role: text('role').notNull(), // 'generate' | 'receive' | 'system'
+  /**
+   * 事件类别（0010 加入）。见 .claude/plans/conversation-persistence.md
+   *   'narrative'    旁白+对话混合（role='generate' 的常规条目）
+   *   'signal_input' 一次 signal_input_needed 调用（role='system'，content=hint，payload={choices}）
+   *   'player_input' 玩家输入（role='receive'，payload={selectedIndex?, inputType}）
+   * 旧行默认 'narrative'，兼容 0009 之前的数据。
+   */
+  kind: text('kind').notNull().default('narrative'),
   content: text('content').notNull(),
   reasoning: text('reasoning'),
-  toolCalls: jsonb('tool_calls').$type<unknown[]>(),
+  /**
+   * 按 kind 自描述的结构化载荷（0010 加入）。
+   * tool_calls 列已删除：定义以来从未被生产代码写入，属 dead schema。
+   */
+  payload: jsonb('payload').$type<Record<string, unknown>>(),
   finishReason: text('finish_reason'),
   orderIdx: integer('order_idx').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
