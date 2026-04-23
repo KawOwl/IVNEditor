@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'bun:test';
 import { buildMessagesFromEntries } from '../messages-builder';
 import type { NarrativeEntry } from '../persistence-entry';
-import type { AssistantModelMessage, ToolModelMessage, UserModelMessage } from '@ai-sdk/provider-utils';
+import type { AssistantModelMessage, ToolModelMessage, UserModelMessage } from 'ai';
 
 // ============================================================================
 // Helpers

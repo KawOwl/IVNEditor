@@ -11,6 +11,10 @@
  * 典型消费者：memory adapter 的 getRecentAsMessages() 内部（不是 coreLoop 直接调）。
  */
 
+// 这些类型由 `ai` 从 @ai-sdk/provider-utils 重新导出 —— 直接从 provider-utils
+// 导入会在 Docker build（pnpm 严格模式）下挂掉："Cannot find module '@ai-sdk/provider-utils'"，
+// 因为它是 `ai` 的传递依赖，没列在我们的 package.json 里。Bun/node 的宽松解析器可以
+// 走 hoisted layout 拿到，pnpm 不行。走 `ai` 这一层最稳。
 import type {
   ModelMessage,
   AssistantModelMessage,
@@ -19,7 +23,7 @@ import type {
   TextPart,
   ToolCallPart,
   ToolResultPart,
-} from '@ai-sdk/provider-utils';
+} from 'ai';
 
 import {
   isNarrativeEntry,
