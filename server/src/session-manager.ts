@@ -123,6 +123,14 @@ export class GameSessionWrapper {
       tracing: base.tracing,
       // mem0 key 从 base 带过来（base 已经从 env 读好了）
       mem0ApiKey: base.mem0ApiKey,
+      // 🐛 FIX 2026-04-24（session 85a8c5c0 / 1e5f07db reload 100% 丢进度复盘）：
+      // narrativeReader 原来漏在 restore 路径没传，createMemory 拿到 reader=undefined，
+      // adapter 的 getRecentAsMessages 每次返回空 —— reload 后 LLM 看不到任何历史，
+      // assembler 塞 initialPrompt 兜底，LLM 被诱导"从头开始"。
+      //
+      // start() 走 buildConfig() 整包传所以没踩；restore() 手工挑字段漏了这个。
+      // 下次新增 GameSessionConfig 字段要警惕这里同步更新，或者干脆直接 `...base`。
+      narrativeReader: base.narrativeReader,
       ...snapshot,
       // M3: currentScene 从 snapshot 取，defaultScene 从 manifest 取（restore 时用作 fallback）
       defaultScene: base.defaultScene,
