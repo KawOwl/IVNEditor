@@ -20,7 +20,7 @@
 
 import { estimateTokens } from '../../tokens';
 import type { MemoryEntry, MemoryConfig } from '../../types';
-import type { ChatMessage } from '../../context-assembler';
+import { buildMessagesFromEntries, capMessagesByBudgetFromTail } from '../../messages-builder';
 import type {
   Memory,
   MemoryRetrieval,
@@ -147,7 +147,22 @@ export class LegacyMemory implements Memory {
   }
 
   /**
-   * 从 reader 读最近 recencyWindow 条 → 映射成 MemoryEntry → role 翻译 + budget cap。
+   * 从 reader 读最近 recencyWindow 条 entries，投影成 AI SDK 原生 ModelMessage[]
+   * （含 tool-call / tool-result parts），然后从尾部按 budget 裁剪。
+   *
+   * 2026-04-24 重写：
+   *   - 之前 `kinds: ['narrative', 'player_input']` 过滤掉了 tool_call /
+   *     signal_input，LLM 看不到自己过去 turn 的工具调用历史。放开 kinds
+   *     白名单（不传 = 全部 kinds），让 messages-builder 能正确投影完整历史。
+   *   - 预算裁剪从"头部累积直到溢出"改成"尾部累积保留最新"。原逻辑在 budget
+   *     紧时会丢掉**最近**的对话（保留最早的 N 条），对 LLM 注意力是反直觉的；
+   *     capMessagesByBudgetFromTail 从尾部往前算，保留最新的若干条，并保护
+   *     `[assistant(含 tool-call), tool(含 tool-result)]` 配对不被切断。
+   *
+   * recencyWindow 的语义不变：先限制到最近 N 条 entry，再做预算裁剪。
+   * N 目前是 20 —— tool history 进来后一条 assistant 可能带 2-3 个 tool-call
+   * + 相应 tool message，token 密度比只存 narration 高约 10-30%。如果上线后
+   * budget 频繁顶满导致裁剪激进，考虑把 recencyWindow 从 20 调到 12-15。
    */
   async getRecentAsMessages(
     opts: { budget: number },
@@ -156,23 +171,13 @@ export class LegacyMemory implements Memory {
     if (!this.reader) {
       return { messages: [], tokensUsed: 0 };
     }
-    const raw = await this.reader.readRecent({
-      limit: window,
-      kinds: ['narrative', 'player_input'],
-    });
-    const entries = narrativeEntriesToMemoryEntries(raw);
+    const raw = await this.reader.readRecent({ limit: window });
 
-    const messages: ChatMessage[] = [];
-    let used = 0;
-    for (const e of entries) {
-      if (used + e.tokenCount > opts.budget) break;
-      messages.push({
-        role: e.role === 'receive' ? 'user' : 'assistant',
-        content: e.content,
-      });
-      used += e.tokenCount;
-    }
-    return { messages, tokensUsed: used };
+    // 投影（orderIdx 排序 + batchId 分组 + tool-call/tool-result 配对）已由
+    // messages-builder 负责，legacy 这里只要拿住 entries 丢给它即可
+    const projected = buildMessagesFromEntries(raw);
+
+    return capMessagesByBudgetFromTail(projected, opts.budget);
   }
 
   // ─── Lifecycle ────────────────────────────────────────────────────

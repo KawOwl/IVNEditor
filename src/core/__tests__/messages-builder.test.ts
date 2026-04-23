@@ -6,9 +6,13 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { buildMessagesFromEntries } from '../messages-builder';
+import {
+  buildMessagesFromEntries,
+  capMessagesByBudgetFromTail,
+  serializeMessagesForDebug,
+} from '../messages-builder';
 import type { NarrativeEntry } from '../persistence-entry';
-import type { AssistantModelMessage, ToolModelMessage, UserModelMessage } from 'ai';
+import type { AssistantModelMessage, ModelMessage, ToolModelMessage, UserModelMessage } from 'ai';
 
 // ============================================================================
 // Helpers
@@ -414,5 +418,109 @@ describe('buildMessagesFromEntries', () => {
     expect(parts[0].type).toBe('tool-call');
     expect(parts[0].toolName).toBe('signal_input_needed');
     expect(msgs[2]!.role).toBe('tool');
+  });
+});
+
+// ============================================================================
+// capMessagesByBudgetFromTail
+// ============================================================================
+
+describe('capMessagesByBudgetFromTail', () => {
+  const mkUser = (s: string): ModelMessage => ({ role: 'user', content: s });
+  const mkAsst = (s: string): ModelMessage => ({ role: 'assistant', content: s });
+
+  it('budget 充足 → 全部保留', () => {
+    const msgs = [mkUser('a'), mkAsst('b'), mkUser('c')];
+    const r = capMessagesByBudgetFromTail(msgs, 10000);
+    expect(r.messages).toEqual(msgs);
+  });
+
+  it('budget = 0 → 返回空', () => {
+    const r = capMessagesByBudgetFromTail([mkUser('a')], 0);
+    expect(r.messages).toEqual([]);
+    expect(r.tokensUsed).toBe(0);
+  });
+
+  it('空输入 → 空输出', () => {
+    const r = capMessagesByBudgetFromTail([], 100);
+    expect(r.messages).toEqual([]);
+  });
+
+  it('预算紧 → 从尾部保留最新的若干条', () => {
+    // 4 条消息，每条约 11 字 → token ~3/条；budget=8 → 大约保留最后 2 条
+    const msgs = [
+      mkUser('msg-oldest-1'),
+      mkAsst('msg-old-2'),
+      mkUser('msg-new-3'),
+      mkAsst('msg-newest-4'),
+    ];
+    const r = capMessagesByBudgetFromTail(msgs, 6);
+    // 保留最后几条，第一条"oldest-1"一定被丢弃
+    expect(r.messages[r.messages.length - 1]).toEqual(mkAsst('msg-newest-4'));
+    expect(r.messages.find((m) => m.content === 'msg-oldest-1')).toBeUndefined();
+  });
+
+  it('孤悬 tool 消息 → 往后挪 cutoff 剪掉', () => {
+    // 构造场景：budget 恰好切出"仅留 tool 没留它之前的 assistant"的边界
+    const assistant: AssistantModelMessage = {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'long long long narrative here ' + 'x'.repeat(100) },
+        { type: 'tool-call', toolCallId: 'tc1', toolName: 'foo', input: { k: 'v' } },
+      ],
+    };
+    const tool: ToolModelMessage = {
+      role: 'tool',
+      content: [
+        { type: 'tool-result', toolCallId: 'tc1', toolName: 'foo', output: { type: 'json', value: { ok: true } } },
+      ],
+    };
+    const user: ModelMessage = { role: 'user', content: 'short' };
+
+    // budget 足够留 tool + user，但不够 assistant → 预期孤悬 tool 被剔，只留 user
+    const r = capMessagesByBudgetFromTail([assistant, tool, user], 10);
+    // 头部不应该是 tool
+    expect(r.messages[0]?.role).not.toBe('tool');
+    // user 一定保住
+    expect(r.messages[r.messages.length - 1]).toEqual(user);
+  });
+});
+
+// ============================================================================
+// serializeMessagesForDebug
+// ============================================================================
+
+describe('serializeMessagesForDebug', () => {
+  it('纯文本 assistant → {role, content: string}', () => {
+    const out = serializeMessagesForDebug([{ role: 'assistant', content: '纯叙事' }]);
+    expect(out).toEqual([{ role: 'assistant', content: '纯叙事' }]);
+  });
+
+  it('assistant 带 TextPart + ToolCallPart → text 拼行 + [tool-call] 行', () => {
+    const msg: AssistantModelMessage = {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: '叙事正文' },
+        { type: 'tool-call', toolCallId: 't1', toolName: 'change_scene', input: { bg: 'plaza' } },
+      ],
+    };
+    const [out] = serializeMessagesForDebug([msg]);
+    expect(out!.role).toBe('assistant');
+    expect(out!.content).toContain('叙事正文');
+    expect(out!.content).toContain('[tool-call]');
+    expect(out!.content).toContain('change_scene');
+  });
+
+  it('tool role → 逐 part 标 [tool-result]', () => {
+    const msg: ToolModelMessage = {
+      role: 'tool',
+      content: [
+        { type: 'tool-result', toolCallId: 't1', toolName: 'change_scene', output: { type: 'json', value: { ok: true } } },
+      ],
+    };
+    const [out] = serializeMessagesForDebug([msg]);
+    expect(out!.role).toBe('tool');
+    expect(out!.content).toContain('[tool-result]');
+    expect(out!.content).toContain('change_scene');
   });
 });

@@ -10,7 +10,7 @@
 
 import { estimateTokens } from '../../tokens';
 import type { MemoryEntry, MemoryConfig } from '../../types';
-import type { ChatMessage } from '../../context-assembler';
+import { buildMessagesFromEntries, capMessagesByBudgetFromTail } from '../../messages-builder';
 import type { LLMClient } from '../../llm-client';
 import type {
   Memory,
@@ -123,23 +123,11 @@ export class LLMSummarizerMemory implements Memory {
     if (!this.reader) {
       return { messages: [], tokensUsed: 0 };
     }
-    const raw = await this.reader.readRecent({
-      limit: window,
-      kinds: ['narrative', 'player_input'],
-    });
-    const entries = narrativeEntriesToMemoryEntries(raw);
-
-    const messages: ChatMessage[] = [];
-    let used = 0;
-    for (const e of entries) {
-      if (used + e.tokenCount > opts.budget) break;
-      messages.push({
-        role: e.role === 'receive' ? 'user' : 'assistant',
-        content: e.content,
-      });
-      used += e.tokenCount;
-    }
-    return { messages, tokensUsed: used };
+    const raw = await this.reader.readRecent({ limit: window });
+    // 详见 legacy/manager.ts 同名方法的注释 —— 开放 kinds + tail-based budget cap
+    // + messages-builder 投影 tool-call parts。两个 adapter 保持语义一致。
+    const projected = buildMessagesFromEntries(raw);
+    return capMessagesByBudgetFromTail(projected, opts.budget);
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────────

@@ -35,9 +35,9 @@
  */
 
 import MemoryClient from 'mem0ai';
+import type { ModelMessage } from 'ai';
 import { estimateTokens } from '../../tokens';
 import type { MemoryEntry, MemoryConfig } from '../../types';
-import type { ChatMessage } from '../../context-assembler';
 import type {
   Memory,
   MemoryRetrieval,
@@ -234,7 +234,15 @@ export class Mem0Memory implements Memory {
     const window = this.config.recencyWindow;
     const recent = this.state.recentEntries.slice(-window);
 
-    const messages: ChatMessage[] = [];
+    // 注意：mem0 adapter 仅从本地 `recentEntries` 缓存读（MemoryEntry 只有
+    // {role, content: string}），没接 NarrativeHistoryReader，所以**本版本
+    // 还拿不到 tool-call 历史**。返回类型升级到 ModelMessage[] 让接口统一，
+    // 但实际消息仍然只有纯文本 narration + player_input。
+    //
+    // TODO（后续）：给 Mem0 也注入 NarrativeHistoryReader，用 messages-builder
+    // 投影 tool-call parts，达到和 legacy / llm-summarizer 一致的行为。当前
+    // Mem0 不是默认 provider，临时保留 string-only 行为不影响生产。
+    const messages: ModelMessage[] = [];
     let used = 0;
     for (const e of recent) {
       if (used + e.tokenCount > opts.budget) break;

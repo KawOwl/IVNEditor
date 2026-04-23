@@ -13,8 +13,8 @@
  *   - retrieve 允许空 query，adapter 自行兜底
  */
 
+import type { ModelMessage } from 'ai';
 import type { MemoryEntry, MemoryConfig } from '../types';
-import type { ChatMessage } from '../context-assembler';
 
 /**
  * Memory scope —— 绑定到具体的 playthrough
@@ -46,9 +46,14 @@ export interface MemoryRetrieval {
 
 /**
  * getRecentAsMessages 的返回
+ *
+ * `messages` 是 AI SDK 原生 ModelMessage —— assistant 可能带 ToolCallPart[]，
+ * 一条 tool-role 消息可能紧跟其后带 ToolResultPart[]（见 messages-builder）。
+ * 2026-04-24 前是本地 ChatMessage（string content only），adapter 把 tool_call
+ * / signal_input entries 过滤掉，导致 LLM 看不到自己的工具调用历史。
  */
 export interface RecentMessagesResult {
-  messages: ChatMessage[];
+  messages: ModelMessage[];
   tokensUsed: number;
 }
 

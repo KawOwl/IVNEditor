@@ -24,6 +24,7 @@ import type {
   ToolCallPart,
   ToolResultPart,
 } from 'ai';
+import { estimateTokens } from './tokens';
 
 import {
   isNarrativeEntry,
@@ -234,4 +235,106 @@ function buildAssistantAndToolMessages(
     out.push(toolMessage);
   }
   return out;
+}
+
+// ============================================================================
+// Budget cap + orphan-tool pruning
+// ============================================================================
+
+/**
+ * 按 token 预算从**尾部**（最新）往前裁，保留最新 N 条。
+ *
+ * 为什么从尾部裁：LLM context 里最相关的是最新的历史 —— 如果 budget 不够，
+ * 丢最早的、留最晚的最符合注意力预期（老代码从头裁是 bug，budget 紧时会丢
+ * 最近发生的对话，in-context learning 失效）。
+ *
+ * 孤悬 tool 处理：`messages-builder` 保证 `[assistant(含 tool-call), tool(含
+ * tool-result)]` 是连续的一对。从尾部裁时如果 cutoff 恰好在这对的中间（只
+ * 留了 tool 没留它前面的 assistant），provider 会抛 `MissingToolResultsError`
+ * —— 我们把孤悬的 tool message 往后挪一格剪掉，保证返回的 messages[0].role
+ * 永远不是 'tool'。
+ *
+ * estimateTokens 走 JSON.stringify 的粗估：tool-call parts 里的 input JSON
+ * 也算进预算。真实 token 数 provider 侧还会差一点，留 outputReserve buffer。
+ */
+export function capMessagesByBudgetFromTail(
+  messages: ModelMessage[],
+  budget: number,
+): { messages: ModelMessage[]; tokensUsed: number } {
+  if (messages.length === 0 || budget <= 0) {
+    return { messages: [], tokensUsed: 0 };
+  }
+
+  // 预算粗估：每条 message 序列化后算一次；可以被 assertion test 复算
+  const msgTokens = messages.map((m) => estimateTokensForMessage(m));
+
+  let used = 0;
+  let startIdx = messages.length; // exclusive；最终保留 messages[startIdx..]
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const cost = msgTokens[i]!;
+    if (used + cost > budget) break;
+    used += cost;
+    startIdx = i;
+  }
+
+  // 孤悬 tool：如果切出来的头是 role='tool'，它对应的 assistant 没被留住 ——
+  // 往后挪 cutoff 跳过这个孤 tool（兜底；budget 正常的话走不到这里）
+  while (startIdx < messages.length && messages[startIdx]!.role === 'tool') {
+    used -= msgTokens[startIdx]!;
+    startIdx++;
+  }
+
+  return { messages: messages.slice(startIdx), tokensUsed: used };
+}
+
+/**
+ * 估算一条 ModelMessage 的 token 成本。
+ *
+ * 选择走 `JSON.stringify` 是因为 ModelMessage 的 content 可能是 string，
+ * 也可能是 `[TextPart, ToolCallPart, ...]` 或 `[ToolResultPart, ...]` —— 统一
+ * 序列化后再 estimateTokens 比逐 part 累加简单可靠；tool-call 的 input JSON
+ * 也被自然算进去。
+ */
+function estimateTokensForMessage(msg: ModelMessage): number {
+  if (typeof msg.content === 'string') {
+    return estimateTokens(msg.content);
+  }
+  // content 是 ContentPart[]
+  return estimateTokens(JSON.stringify(msg.content));
+}
+
+// ============================================================================
+// Debug serialization —— flatten ModelMessage → {role, content: string}
+// ============================================================================
+
+/**
+ * 把 ModelMessage[] 拍平成 `{role, content: string}[]`，给 UI 调试面板 /
+ * tracing 用。tool-call parts 序列化成可读 JSON，tool-result parts 一样。
+ *
+ * 目的：让 EditorDebugPanel 这种"只会渲染 string content"的消费者不用改，
+ * 同时保留 tool history 的可见性（展开 JSON 一眼能看到 change_scene 传了啥）。
+ */
+export function serializeMessagesForDebug(
+  messages: ModelMessage[],
+): Array<{ role: string; content: string }> {
+  return messages.map((m) => ({
+    role: m.role,
+    content: serializeContent(m.content),
+  }));
+}
+
+function serializeContent(content: ModelMessage['content']): string {
+  if (typeof content === 'string') return content;
+  // ContentPart[] —— 逐 part 按可读性重组
+  const lines: string[] = [];
+  for (const part of content) {
+    if ((part as { type: string }).type === 'text') {
+      lines.push((part as { text: string }).text);
+    } else {
+      // tool-call / tool-result / 其它：整 part JSON 序列化，开头标 type 方便扫
+      const p = part as { type: string };
+      lines.push(`[${p.type}] ${JSON.stringify(part)}`);
+    }
+  }
+  return lines.join('\n');
 }

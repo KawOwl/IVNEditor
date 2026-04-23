@@ -14,11 +14,10 @@
  * 详见 .claude/plans/turn-bounded-generate.md 和 .claude/plans/messages-model.md。
  */
 
-import { streamText, stepCountIs, hasToolCall, tool, zodSchema, type ToolSet } from 'ai';
+import { streamText, stepCountIs, hasToolCall, tool, zodSchema, type ToolSet, type ModelMessage } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import type { ToolHandler } from './tool-executor';
-import type { ChatMessage } from './context-assembler';
 
 // ============================================================================
 // Types
@@ -113,7 +112,12 @@ export interface StepInfo {
 
 export interface GenerateOptions {
   systemPrompt: string;
-  messages: ChatMessage[];
+  /**
+   * AI SDK 原生 ModelMessage —— 允许 assistant 带 ToolCallPart[]，以及
+   * 独立的 tool role 消息带 ToolResultPart[]。LLMClient 直接透传给 streamText，
+   * 不做任何 flatten / 序列化。
+   */
+  messages: ModelMessage[];
   tools: Record<string, ToolHandler>;
   maxSteps?: number;         // max agentic steps (default: 30)
   maxOutputTokens?: number;   // max output tokens
@@ -269,16 +273,14 @@ export class LLMClient {
     // 值在 tool 回调里都是当前 step 的 stepNumber。
     let currentStepNumber = 0;
 
-    // Build AI SDK messages
-    const aiMessages: Array<{ role: 'user' | 'assistant'; content: string }> = messages.map((m) => ({
-      role: m.role === 'system' ? 'user' as const : m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
-
+    // messages 已经是 AI SDK 原生 ModelMessage —— 直接透传，不再 flatten。
+    // 之前这里做 `.map({role, content: m.content})` 把 assistant content 强制
+    // 转 string，路径上任何 ToolCallPart[] 都会被丢掉。现在上游 messages-builder
+    // 按 batchId 正确投影 tool-call / tool-result，透传给 streamText 即可。
     const result = streamText({
       model: this.getModel(),
       system: systemPrompt,
-      messages: aiMessages,
+      messages,
       tools: aiTools,
       // 方案 B：三种停止条件
       //   - stepCountIs(maxSteps)：每回合 step 预算上限（默认 20）

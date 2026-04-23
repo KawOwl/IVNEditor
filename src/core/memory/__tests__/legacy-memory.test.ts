@@ -89,20 +89,59 @@ describe('LegacyMemory · reader-based', () => {
       ]);
     });
 
-    it('跳过 signal_input / tool_call（不进 messages）', async () => {
+    it('signal_input / tool_call 作为 ToolCallPart 进 assistant message + 对应 tool message', async () => {
+      // 2026-04-24 重写：之前 legacy 把 tool_call / signal_input 过滤掉，LLM 看不到
+      // 自己的工具调用历史。现在走 messages-builder 按 batchId 分组投影成
+      // [assistant(含 tool-call parts), tool(含 tool-result parts)] 对。
       const reader = fakeReader([
-        mkEntry({ kind: 'narrative', content: '旁白', orderIdx: 0 }),
-        mkEntry({ kind: 'signal_input', role: 'system', content: 'Q?', payload: { choices: ['A'] }, orderIdx: 1 }),
-        mkEntry({ kind: 'tool_call', role: 'system', content: 'update_state', payload: { input: {}, output: {} }, orderIdx: 2 }),
-        mkEntry({ kind: 'player_input', content: '回答', orderIdx: 3 }),
+        mkEntry({ kind: 'narrative', content: '旁白', orderIdx: 0, batchId: 'b1' }),
+        mkEntry({
+          kind: 'signal_input',
+          role: 'system',
+          content: 'Q?',
+          payload: { choices: ['A', 'B'] },
+          orderIdx: 1,
+          batchId: 'b1',
+        }),
+        mkEntry({
+          kind: 'tool_call',
+          role: 'system',
+          content: 'update_state',
+          payload: { input: { foo: 1 }, output: { ok: true } },
+          orderIdx: 2,
+          batchId: 'b1',
+        }),
+        mkEntry({ kind: 'player_input', content: '回答', orderIdx: 3, batchId: 'b2' }),
       ]);
       const mem = new LegacyMemory(baseConfig, noopCompress, reader);
       const { messages } = await mem.getRecentAsMessages({ budget: 100000 });
 
-      expect(messages).toEqual([
-        { role: 'assistant', content: '旁白' },
-        { role: 'user', content: '回答' },
+      // b1 组：1 条 assistant（text + 2 tool-calls）+ 1 条 tool（2 tool-results）
+      // b2 组：1 条 user
+      expect(messages).toHaveLength(3);
+      expect(messages[0]!.role).toBe('assistant');
+      expect(Array.isArray(messages[0]!.content)).toBe(true);
+
+      const asstParts = messages[0]!.content as Array<{ type: string; toolName?: string }>;
+      const toolNames = asstParts
+        .filter((p) => p.type === 'tool-call')
+        .map((p) => p.toolName);
+      expect(toolNames).toEqual(['signal_input_needed', 'update_state']);
+      // 叙事正文保留
+      const textPart = asstParts.find((p) => p.type === 'text') as { text: string } | undefined;
+      expect(textPart?.text).toBe('旁白');
+
+      // tool message 配对
+      expect(messages[1]!.role).toBe('tool');
+      expect(Array.isArray(messages[1]!.content)).toBe(true);
+      const toolResults = messages[1]!.content as Array<{ type: string; toolName: string }>;
+      expect(toolResults.map((r) => r.toolName)).toEqual([
+        'signal_input_needed',
+        'update_state',
       ]);
+
+      // 玩家输入
+      expect(messages[2]).toEqual({ role: 'user', content: '回答' });
     });
 
     it('reader 未注入（legacy 单测场景）→ 返回空', async () => {
@@ -111,14 +150,49 @@ describe('LegacyMemory · reader-based', () => {
       expect(messages).toEqual([]);
     });
 
-    it('recencyWindow 生效', async () => {
+    it('recencyWindow 生效（只投影最近 N 条 entry）', async () => {
+      // 10 条连续 narrative entries，recencyWindow=3 只能拿到 n7/n8/n9。
+      // messages-builder 的启发式分组会把连续非 player_input 合并成一条 assistant
+      // message —— 所以最终是 1 条 assistant，content 是 "n7n8n9"。
       const entries = Array.from({ length: 10 }, (_, i) =>
         mkEntry({ kind: 'narrative', content: `n${i}`, orderIdx: i }),
       );
       const reader = fakeReader(entries);
       const mem = new LegacyMemory({ ...baseConfig, recencyWindow: 3 }, noopCompress, reader);
       const { messages } = await mem.getRecentAsMessages({ budget: 100000 });
-      expect(messages.map((m) => m.content)).toEqual(['n7', 'n8', 'n9']);
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.role).toBe('assistant');
+      expect(messages[0]!.content).toBe('n7n8n9');
+    });
+
+    it('budget 从尾部裁，保留最新 + 不留孤悬 tool', async () => {
+      // 5 turn，每 turn 一条 narrative；budget 只够 2-3 turn
+      const entries = Array.from({ length: 5 }, (_, i) => [
+        mkEntry({
+          kind: 'narrative',
+          content: `narr-${i}-` + 'x'.repeat(40),
+          orderIdx: i * 2,
+          batchId: `gen-${i}`,
+        }),
+        mkEntry({
+          kind: 'player_input',
+          content: `reply-${i}`,
+          orderIdx: i * 2 + 1,
+          batchId: `rcv-${i}`,
+        }),
+      ]).flat();
+      const reader = fakeReader(entries);
+      const mem = new LegacyMemory(baseConfig, noopCompress, reader);
+      // 算一下：每条 narrative ~11 token，每条 player_input ~2 token。总共约 65 token。
+      // 设 budget=40，从尾部算大概能留最后 3-4 条 message。
+      const { messages, tokensUsed } = await mem.getRecentAsMessages({ budget: 40 });
+
+      // 一定保留最新那条 user
+      expect(messages[messages.length - 1]).toEqual({ role: 'user', content: 'reply-4' });
+      // 不能多过预算太多
+      expect(tokensUsed).toBeLessThanOrEqual(40);
+      // 头部不能是 tool role（orphan tool pruning 兜底；本例本来也不会触发）
+      expect(messages[0]!.role).not.toBe('tool');
     });
   });
 

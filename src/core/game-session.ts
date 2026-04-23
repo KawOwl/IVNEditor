@@ -37,6 +37,7 @@ import { LLMClient } from './llm-client';
 import type { LLMConfig } from './llm-client';
 import type { SessionEmitter } from './session-emitter';
 import { NarrativeParser, extractPlainText } from './narrative-parser';
+import { serializeMessagesForDebug } from './messages-builder';
 import type { Sentence, ParticipationFrame, SceneState } from './types';
 
 // ============================================================================
@@ -898,11 +899,17 @@ export class GameSession {
           })
           .map((s) => s.id);
 
+        // context.messages 是 ModelMessage[]（可能含 tool-call / tool-result parts）。
+        // emitter / tracing 的消费者期望 {role, content: string} 扁平结构 —— 用
+        // serializeMessagesForDebug 把 parts 序列化为可读的 "[tool-call] {...json...}"
+        // 行。EditorDebugPanel 和 Langfuse trace.input 直接展示就行。
+        const debugMessages = serializeMessagesForDebug(context.messages);
+
         // Update global debug state
         this.emitter.updateDebug({
           tokenBreakdown: context.tokenBreakdown,
           assembledSystemPrompt: context.systemPrompt,
-          assembledMessages: context.messages.map((m) => ({ role: m.role, content: m.content })),
+          assembledMessages: debugMessages,
           activeSegmentIds,
         });
 
@@ -910,7 +917,7 @@ export class GameSession {
         this.emitter.stagePendingDebug({
           promptSnapshot: {
             systemPrompt: context.systemPrompt,
-            messages: context.messages.map((m) => ({ role: m.role, content: m.content })),
+            messages: debugMessages,
             tokenBreakdown: context.tokenBreakdown,
             activeSegmentIds,
           },
@@ -926,7 +933,7 @@ export class GameSession {
         // 🔭 可观测性：设置 trace 初始上下文（展示 LLM 看到的 prompt）
         traceHandle?.setInput({
           systemPrompt: context.systemPrompt,
-          messages: context.messages.map((m) => ({ role: m.role, content: m.content })),
+          messages: debugMessages,
         });
 
         // M3: 为本轮创建 XML-lite Narrative Parser
