@@ -226,6 +226,15 @@ export interface SessionPersistence {
      * 否则断线重连时 VN 无 background / sprites，看上去像空舞台。
      */
     currentScene?: SceneState | null;
+    /**
+     * 2026-04-24：state 变量快照。LLM 在本轮 generate() 里通过 update_state
+     * 改动过的 state（比如章节切换 chapter=2）必须在这里持久化，否则断线重连
+     * 时 DB 的 state_vars 滞后一个回合（chapter 还是 1 但 history 已在 ch2），
+     * restore 后 LLM 看到的 state 和历史不一致。
+     *
+     * 这个字段和 currentScene 的持久化时机对称：generate 返回后、等玩家输入前。
+     */
+    stateVars?: Record<string, unknown>;
   }): Promise<void>;
 
   /**
@@ -1235,6 +1244,9 @@ export class GameSession {
         this.emitter.setStatus('waiting-input');
 
         // ③ 持久化：onWaitingInput 快照（signal / freetext 统一调一次）
+        //    2026-04-24：stateVars 也在这一刻持久化 —— 本轮 LLM update_state
+        //    改动的 state（比如 chapter 切换）必须立即入库，否则断线重连时
+        //    DB state 滞后一个回合（history 在 ch2、state_vars 仍 ch1）
         const memSnapWait = await this.memory.snapshot();
         await this.persistence?.onWaitingInput({
           hint: waitingHint,
@@ -1242,6 +1254,7 @@ export class GameSession {
           choices: waitingChoices,
           memorySnapshot: memSnapWait,
           currentScene: this.currentScene,
+          stateVars: this.stateStore.getAll(),
         }).catch((e) => console.error('[Persistence] onWaitingInput failed:', e));
 
         const inputText = await this.waitForInput();

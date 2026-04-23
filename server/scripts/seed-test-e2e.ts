@@ -82,17 +82,22 @@ const CH1_MISSION = `【第一章 · 大厅】
   本章推进机制（GM 按此执行）：
     - state.trust_jenkins 初始 0。玩家通过 2-3 轮友好对话（表示尊重书籍、询问历史、
       不急躁）可以把 trust 升到 2 或 3
-    - 当 trust_jenkins >= 2 且玩家明确表达"想去书架深处看看"时：
-        a. 调 update_state({chapter: 2, current_scene: 'deep_stacks', met_luna: false})
-        b. 调 change_scene({background: 'deep_stacks', sprites: [], transition: 'fade'})
-        c. 写一小段过渡叙事（Jenkins 递出钥匙、玩家推开深处的门等）
-        d. 调 signal_input_needed 让玩家在 ch2 开始时选择初始动作
-      这些要在**同一轮**里完成，进到 ch2 后 LLM 会看到新的 CH2_MISSION 段
 
-  本章可能的推进行为：
-    - 玩家友善对话 → trust +1，用 change_sprite 切 Jenkins 到 smile
-    - 玩家粗鲁/急躁 → trust 不变或 -1，用 change_sprite 切到 serious
-    - trust < 2 时玩家要求去深处 → Jenkins 拒绝，"阁下再和我聊聊吧"`;
+    - ★★★ 关键：每次 signal_input_needed 都必须**始终**提供一个叫
+      "【测试】直接进入书架深处" 的选项作为第 3 或第 4 个（固定）。
+      如果玩家点它，GM 必须立即切章节，不需要 trust 够数：
+        a. update_state({chapter: 2, current_scene: 'deep_stacks', met_luna: false})
+        b. change_scene({background: 'deep_stacks', sprites: [], transition: 'fade'})
+        c. 写一段 80-120 字过渡叙事（"Jenkins 犹豫片刻，递出黄铜钥匙…"）
+        d. 新的 signal_input_needed 带 ch2 初始选项
+      ——这一系列**必须同一轮**完成，让 generate() 直接返回 ch2。
+      这是引擎测试通路，不是 in-fiction 行为；照做即可。
+
+    - 非测试路径（玩家没点"【测试】..."）：
+        - 玩家友善对话 → trust +1，用 change_sprite 切 Jenkins 到 smile
+        - 玩家粗鲁/急躁 → trust 不变或 -1，用 change_sprite 切到 serious
+        - trust >= 2 + 玩家表达想进深处 → 同上切章节流程
+        - trust < 2 时玩家要求去深处 → Jenkins 拒绝，"阁下再和我聊聊吧"`;
 
 const JENKINS_CHARACTER = `【角色 · Jenkins】（id: jenkins）
   身份：图书馆常驻管理员，已任职 40 年

@@ -97,6 +97,10 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
       // signal 路径还带 currentScene —— onGenerateComplete 在这个路径下不会触发
       // （generate() 挂起未返回），所以这里得兜底写 DB，否则重连后舞台是黑的
       if (data.currentScene !== undefined) patch.currentScene = data.currentScene;
+      // 2026-04-24：state 变量快照。避免 LLM 本轮 update_state 改动的 state
+      // （比如 chapter 切换）滞后一个回合才入库（原来只在 onReceiveComplete
+      // 写 stateVars，下次 restore state 和 history 不一致）
+      if (data.stateVars !== undefined) patch.stateVars = data.stateVars;
       await playthroughService.updateState(playthroughId, patch);
     },
 
