@@ -512,8 +512,26 @@ function SentenceRow({ sentence }: { sentence: import('../../stores/game-store')
       <div className="border-l-2 border-sky-700 pl-2 py-0.5">
         <div className="text-[9px] text-zinc-600">
           #{sentence.index} · player_input · turn {sentence.turnNumber}
+          {sentence.selectedIndex !== undefined && (
+            <span className="ml-1 text-amber-500">[choice {sentence.selectedIndex}]</span>
+          )}
         </div>
         <div className="text-sky-200 whitespace-pre-wrap text-[11px]">{sentence.text}</div>
+      </div>
+    );
+  }
+  if (sentence.kind === 'signal_input') {
+    return (
+      <div className="border-l-2 border-amber-700 pl-2 py-0.5">
+        <div className="text-[9px] text-zinc-600">
+          #{sentence.index} · signal_input · turn {sentence.turnNumber} · {sentence.choices.length} choice(s)
+        </div>
+        <div className="text-amber-300 text-[11px] whitespace-pre-wrap">{sentence.hint}</div>
+        {sentence.choices.length > 0 && (
+          <div className="text-[10px] text-zinc-500">
+            {sentence.choices.map((c, i) => `${i + 1}. ${c}`).join(' / ')}
+          </div>
+        )}
       </div>
     );
   }

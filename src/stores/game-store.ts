@@ -191,34 +191,38 @@ export const useGameStore = create<GameState>((set) => ({
       let vsi = state.visibleSentenceIndex;
       let pending = state.catchUpPending;
 
-      // 游标初始化：首次追加时从 null → 找第一个非 scene_change 的位置。
-      // scene_change 只驱动背景/立绘切换，不应该让玩家看到空白对话框。
+      // "跳过型" Sentence —— 不占对话框 click 次数：
+      //   scene_change  视觉切换帧
+      //   signal_input  选项事件（live 下由 choices 面板承担交互，backlog 下仅回看）
+      const isSkippable = (s: Sentence) => s.kind === 'scene_change' || s.kind === 'signal_input';
+
+      // 游标初始化：首次追加时从 null → 找第一个非跳过型的位置。
       if (vsi === null) {
-        const firstNonSC = next.findIndex((s) => s.kind !== 'scene_change');
-        vsi = firstNonSC >= 0 ? firstNonSC : null;
+        const firstReadable = next.findIndex((s) => !isSkippable(s));
+        vsi = firstReadable >= 0 ? firstReadable : null;
         // 初始化已经把玩家推到第一条；catch-up 任务这次就算完成了
         return { parsedSentences: next, visibleSentenceIndex: vsi, catchUpPending: false };
       }
 
       // catch-up：玩家刚做过主动动作（catchUpPending=true）+ 在末端 + 新 Sentence
-      // 不是 scene_change → 自动把游标推到新末尾，然后把 pending 置 false。
+      // 不是跳过型 → 自动把游标推到新末尾，然后把 pending 置 false。
       // 后续新 Sentence 不再连续自动前进，直到玩家再做主动动作（advance /
       // setVisibleSentenceIndex）重新置 pending=true。
       let lastReadableInPrev = prev.length - 1;
-      while (lastReadableInPrev >= 0 && prev[lastReadableInPrev]?.kind === 'scene_change') {
+      while (lastReadableInPrev >= 0 && isSkippable(prev[lastReadableInPrev]!)) {
         lastReadableInPrev--;
       }
       const playerAtTail = vsi === lastReadableInPrev;
       const canCatchUp =
         pending &&
         playerAtTail &&
-        sentence.kind !== 'scene_change';
+        !isSkippable(sentence);
 
       if (canCatchUp) {
         vsi = next.length - 1;
         pending = false;
       }
-      // 其它情况（pending=false / 玩家在往回翻 / 新 Sentence 是 scene_change）
+      // 其它情况（pending=false / 玩家在往回翻 / 新 Sentence 是 scene_change / signal_input）
       // 都不动游标。
 
       return { parsedSentences: next, visibleSentenceIndex: vsi, catchUpPending: pending };
@@ -231,17 +235,19 @@ export const useGameStore = create<GameState>((set) => ({
   advanceSentence: () =>
     set((state) => {
       if (state.parsedSentences.length === 0) return state;
+      // scene_change + signal_input 都属"跳过型" Sentence（不占 click）
+      const isSkippable = (s: Sentence) => s.kind === 'scene_change' || s.kind === 'signal_input';
       let next = (state.visibleSentenceIndex ?? -1) + 1;
-      // 连续跳过 scene_change（VN 的"场景切换帧"不占 click 次数）
-      while (next < state.parsedSentences.length && state.parsedSentences[next]?.kind === 'scene_change') {
+      // 连续跳过跳过型 Sentence（VN 的"场景切换帧 / signal_input 事件"不占 click 次数）
+      while (next < state.parsedSentences.length && isSkippable(state.parsedSentences[next]!)) {
         next += 1;
       }
-      // 越界（全部都是 scene_change 或已经在末尾）→ 找最后一个非 scene_change 的 index 停住，
+      // 越界 → 找最后一个非跳过型的 index 停住，
       // 不要推到 length，避免 DialogBox 显示空白 "…" 让玩家以为还有后文。
       if (next >= state.parsedSentences.length) {
         let last = state.parsedSentences.length - 1;
-        while (last >= 0 && state.parsedSentences[last]?.kind === 'scene_change') last--;
-        if (last < 0) return state; // 整串都是 scene_change，什么也别动
+        while (last >= 0 && isSkippable(state.parsedSentences[last]!)) last--;
+        if (last < 0) return state; // 整串都跳过型，什么也别动
         return { visibleSentenceIndex: last, catchUpPending: true };
       }
       // 玩家主动推进 → re-arm catch-up，下次新 Sentence 来时允许再自动推一次

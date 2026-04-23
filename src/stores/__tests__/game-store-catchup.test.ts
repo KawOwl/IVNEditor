@@ -24,6 +24,10 @@ function sceneChange(i: number): Sentence {
   return { kind: 'scene_change', scene, turnNumber: 0, index: i };
 }
 
+function signalInput(i: number, hint = 'pick one', choices = ['A', 'B']): Sentence {
+  return { kind: 'signal_input', hint, choices, sceneRef: scene, turnNumber: 0, index: i };
+}
+
 describe('game-store · catchUpPending', () => {
   beforeEach(() => {
     useGameStore.getState().reset();
@@ -105,6 +109,33 @@ describe('game-store · catchUpPending', () => {
     // catch-up 到新末尾 vsi=2
     expect(useGameStore.getState().visibleSentenceIndex).toBe(2);
     expect(useGameStore.getState().catchUpPending).toBe(false);
+  });
+
+  it('signal_input 不触发 catch-up（migration 0010 / Step 4）', () => {
+    const { appendSentence, advanceSentence } = useGameStore.getState();
+    appendSentence(narration(0));
+    advanceSentence(); // pending=true
+
+    appendSentence(signalInput(1));
+    // signal_input 属"跳过型"，pending 保持 true，vsi 不动
+    expect(useGameStore.getState().visibleSentenceIndex).toBe(0);
+    expect(useGameStore.getState().catchUpPending).toBe(true);
+
+    appendSentence(narration(2));
+    // 下一条 narration：pending=true + 玩家 vsi=0 仍被视为末端（signal_input 不占） → catch-up
+    expect(useGameStore.getState().visibleSentenceIndex).toBe(2);
+    expect(useGameStore.getState().catchUpPending).toBe(false);
+  });
+
+  it('advanceSentence 自动跳过 signal_input（和 scene_change 同级）', () => {
+    const { appendSentence, advanceSentence } = useGameStore.getState();
+    appendSentence(narration(0));
+    appendSentence(signalInput(1));
+    appendSentence(narration(2));
+
+    // 玩家在 vsi=0 点击推进 → 跨过 signal_input 到 narration(2)
+    advanceSentence();
+    expect(useGameStore.getState().visibleSentenceIndex).toBe(2);
   });
 
   it('玩家往回翻（vsi < 末端）：新 Sentence 来不打扰', () => {

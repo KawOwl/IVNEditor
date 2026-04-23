@@ -53,7 +53,17 @@ export function Backlog({ characters }: BacklogProps) {
             <ol className="space-y-3">
               {parsedSentences.map((s, i) => (
                 <li key={i}>
-                  <BacklogEntry sentence={s} characters={characters} />
+                  <BacklogEntry
+                    sentence={s}
+                    characters={characters}
+                    // 如果下一条是玩家输入，把它的 selectedIndex 传进来高亮选项
+                    nextSelectedIndex={
+                      s.kind === 'signal_input' &&
+                      parsedSentences[i + 1]?.kind === 'player_input'
+                        ? (parsedSentences[i + 1] as { selectedIndex?: number }).selectedIndex
+                        : undefined
+                    }
+                  />
                 </li>
               ))}
             </ol>
@@ -67,9 +77,12 @@ export function Backlog({ characters }: BacklogProps) {
 function BacklogEntry({
   sentence,
   characters,
+  nextSelectedIndex,
 }: {
   sentence: Sentence;
   characters: CharacterAsset[];
+  /** 若此 Sentence 是 signal_input，且紧随其后是 player_input，则传对应 selectedIndex 来高亮 */
+  nextSelectedIndex?: number;
 }) {
   if (sentence.kind === 'scene_change') {
     const bg = sentence.scene.background ?? '（无背景）';
@@ -77,6 +90,34 @@ function BacklogEntry({
     return (
       <div className="rounded border border-zinc-800 bg-zinc-900/50 px-3 py-2 font-mono text-[11px] text-zinc-500">
         〔场景 → {bg} / {sprites}〕
+      </div>
+    );
+  }
+
+  if (sentence.kind === 'signal_input') {
+    // 📍 signal_input_needed 一次调用（migration 0010 / Step 4）：GM 问 + 选项清单
+    return (
+      <div className="rounded border border-amber-900/30 bg-amber-950/20 px-3 py-2">
+        <div className="text-[10px] font-semibold text-amber-400/70 mb-1">📍 询问</div>
+        <div className="text-sm leading-relaxed text-amber-100/80 whitespace-pre-wrap mb-1.5">
+          {sentence.hint}
+        </div>
+        {sentence.choices.length > 0 && (
+          <ol className="text-xs space-y-0.5 mt-1">
+            {sentence.choices.map((c, i) => {
+              const picked = i === nextSelectedIndex;
+              return (
+                <li
+                  key={i}
+                  className={`pl-4 ${picked ? 'text-sky-300 font-medium' : 'text-zinc-500'}`}
+                >
+                  {picked ? '→ ' : `${i + 1}. `}
+                  {c}
+                </li>
+              );
+            })}
+          </ol>
+        )}
       </div>
     );
   }
@@ -90,6 +131,8 @@ function BacklogEntry({
   }
 
   if (sentence.kind === 'player_input') {
+    // 如果 player_input 有 selectedIndex，说明是从 signal_input 的 choices 里选的；
+    // 前面的 signal_input entry 已经高亮了对应选项，这里仍然完整显示玩家文本
     return (
       <div className="border-l-2 border-sky-400/40 pl-2">
         <div className="text-xs font-semibold text-sky-300/90">我</div>

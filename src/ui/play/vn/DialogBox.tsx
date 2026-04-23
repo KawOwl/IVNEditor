@@ -79,10 +79,13 @@ function renderBody(
     );
   }
 
-  if (sentence.kind === 'scene_change') {
-    // 场景切换不在对话框显示；调用方（VNStage）应跳过这种 Sentence 或让它的视觉
-    // 效果通过 SceneBackground/SpriteLayer 呈现。此处兜底留空。
-    return <div className="min-h-[2rem]" aria-label="dialog-scene-change" />;
+  if (sentence.kind === 'scene_change' || sentence.kind === 'signal_input') {
+    // 场景切换 / signal_input 事件不在对话框显示；
+    //   - scene_change 的视觉由 SceneBackground/SpriteLayer 呈现
+    //   - signal_input 的交互由 game-store.choices 面板承担；backlog 才展示历史
+    // game-store 的 advanceSentence 已自动跳过这两种 kind，通常走不到这里。
+    // 兜底留空，以防上游游标意外停在这里（避免 runtime 崩）。
+    return <div className="min-h-[2rem]" aria-label={`dialog-${sentence.kind}`} />;
   }
 
   // 打字机：如果 displayText 传了且 kind 是 narration/dialogue，用它；

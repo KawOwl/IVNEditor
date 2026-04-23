@@ -671,8 +671,10 @@ export class GameSession {
         if (!this.active) return;
 
         if (inputText) {
+          // restore 路径下玩家刚从 DB 恢复的 choices 里选 → 算 selectedIndex
+          const payload = computeReceivePayload(inputText, config.choices ?? null);
           this.emitter.appendEntry({ role: 'receive', content: inputText });
-          this.emitPlayerInputSentence(inputText);
+          this.emitPlayerInputSentence(inputText, payload.selectedIndex);
           await this.memory.appendTurn({
             turn: config.turn,
             role: 'receive',
@@ -685,8 +687,7 @@ export class GameSession {
             stateVars: this.stateStore.getAll(),
             turn: config.turn,
             memorySnapshot: memSnap,
-            // restore 路径下玩家刚从 DB 恢复的 choices 里选 → 算 selectedIndex
-            payload: computeReceivePayload(inputText, config.choices ?? null),
+            payload,
           }).catch((e) => console.error('[Persistence] onReceiveComplete (restore) failed:', e));
         }
 
@@ -718,6 +719,7 @@ export class GameSession {
       // migration 0010 / Step 3：算 selectedIndex 之前先快照 choices，再清空
       const choicesAtSubmit = this.pendingSignalChoices;
       this.pendingSignalChoices = null;
+      const payload = computeReceivePayload(text, choicesAtSubmit);
 
       // 清 UI 状态，恢复生成中
       this.emitter.setInputHint(null);
@@ -726,7 +728,7 @@ export class GameSession {
 
       // 显示玩家输入到叙事流（legacy entries channel + VN Sentence channel）
       this.emitter.appendEntry({ role: 'receive', content: text });
-      this.emitPlayerInputSentence(text);
+      this.emitPlayerInputSentence(text, payload.selectedIndex);
 
       // 记录到记忆
       const turn = this.stateStore.getTurn();
@@ -748,7 +750,7 @@ export class GameSession {
         stateVars: this.stateStore.getAll(),
         turn,
         memorySnapshot: memSnap,
-        payload: computeReceivePayload(text, choicesAtSubmit),
+        payload,
       }).catch((e) => console.error('[Persistence] onReceiveComplete (signal) failed:', e));
 
       // resolve → agentic loop 继续
@@ -1276,10 +1278,33 @@ export class GameSession {
    * 序列里，只需要全局单调即可（前端按 parsedSentences 数组顺序渲染，index 字段
    * 只是 React key 和诊断标识）。
    */
-  private emitPlayerInputSentence(text: string): void {
+  private emitPlayerInputSentence(text: string, selectedIndex?: number): void {
     this.emitter.appendSentence({
       kind: 'player_input',
       text,
+      ...(selectedIndex !== undefined ? { selectedIndex } : {}),
+      sceneRef: { ...this.currentScene },
+      turnNumber: this.stateStore.getTurn(),
+      index: Date.now(),
+    });
+  }
+
+  /**
+   * 把 signal_input_needed 事件 emit 成一条 `signal_input` Sentence（migration
+   * 0010 / Step 4），让 backlog 回看时能看到"GM 问了什么、给了哪些选项"。
+   *
+   * 对话框里不占 click（game-store 的 advanceSentence 自动跳过）；live 交互
+   * 由 game-store.choices 面板承担。
+   *
+   * 和 `onSignalInputRecorded` DB 写入配对，两者同时调用：
+   *   - appendSentence → WS 'sentence' 事件 → game-store.parsedSentences
+   *   - onSignalInputRecorded → narrative_entries 表（供下次 restore 重放）
+   */
+  private emitSignalInputSentence(hint: string, choices: string[]): void {
+    this.emitter.appendSentence({
+      kind: 'signal_input',
+      hint,
+      choices,
       sceneRef: { ...this.currentScene },
       turnNumber: this.stateStore.getTurn(),
       index: Date.now(),
@@ -1355,6 +1380,9 @@ export class GameSession {
       // narrative_entries.content NOT NULL —— 只有 hint 非空才写 signal_input entry。
       // choices 允许为空（LLM 只要自由输入也是合法的 signal 事件）。
       if (hint) {
+        // 1. VN Sentence 流里放一条 signal_input 供 backlog 回看（migration 0010 / Step 4）
+        this.emitSignalInputSentence(hint, choices);
+        // 2. 持久化成 narrative_entry（下次 restore 重放）
         await this.persistence?.onSignalInputRecorded?.({
           hint,
           choices,

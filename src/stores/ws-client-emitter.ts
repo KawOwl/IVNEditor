@@ -285,7 +285,11 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
 
       const entries = (msg.entries ?? []) as Array<{
         role: string;
+        /** migration 0010：'narrative' | 'signal_input' | 'player_input'（老数据默认 'narrative'） */
+        kind?: string;
         content: string;
+        /** migration 0010：按 kind 自描述的结构化载荷 */
+        payload?: Record<string, unknown> | null;
         orderIdx?: number;
       }>;
       const sceneRef: SceneState =
@@ -294,11 +298,32 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
       let globalIndex = 0;
       let turnNumber = 0;
       for (const entry of entries) {
+        // migration 0010: signal_input 事件（hint + choices）
+        if (entry.kind === 'signal_input') {
+          const choices = Array.isArray((entry.payload as { choices?: unknown } | null)?.choices)
+            ? ((entry.payload as { choices?: string[] }).choices as string[])
+            : [];
+          const s: Sentence = {
+            kind: 'signal_input',
+            hint: entry.content,
+            choices,
+            sceneRef,
+            turnNumber,
+            index: globalIndex++,
+          };
+          store().appendSentence(s);
+          continue;
+        }
         if (entry.role === 'receive') {
           // 玩家的回复气泡 —— 合成一条 player_input Sentence 让 backlog 能重现
+          // migration 0010: payload.selectedIndex 让 backlog 知道"选的是第几个选项"
+          const selectedIndex = typeof (entry.payload as { selectedIndex?: unknown } | null)?.selectedIndex === 'number'
+            ? ((entry.payload as { selectedIndex: number }).selectedIndex)
+            : undefined;
           const s: Sentence = {
             kind: 'player_input',
             text: entry.content,
+            ...(selectedIndex !== undefined ? { selectedIndex } : {}),
             sceneRef,
             turnNumber,
             index: globalIndex++,

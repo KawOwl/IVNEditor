@@ -438,12 +438,33 @@ export type Sentence =
     }
   | {
       /**
+       * signal_input_needed 被 LLM 调用的一次事件（migration 0010）。
+       * 在 backlog 里渲染成"📍 GM 问了 X，给了选项 [A, B, C]"，玩家之后的
+       * player_input Sentence 的 selectedIndex 会高亮对应选项。
+       *
+       * 对话框里**不占 click**（和 scene_change 同级，advanceSentence 自动跳过），
+       * 因为 live 交互由 game-store.choices 驱动的选项面板承担。
+       */
+      kind: 'signal_input';
+      hint: string;
+      choices: string[];
+      sceneRef: SceneState;
+      turnNumber: number;
+      index: number;
+    }
+  | {
+      /**
        * 玩家的输入（signal_input_needed 里选的选项 / 自由输入）。
        * VN UI 会把它以"玩家回复气泡"形式显示在 backlog + 对话框里。
        * 由 game-session.submitInput 触发 appendSentence，而不是来自 LLM。
+       *
+       * selectedIndex（migration 0010）：如果玩家从 signal_input 的 choices 里
+       * 选了一个，保存 0-based 下标；自由输入时 undefined。供 backlog 对照前置
+       * signal_input Sentence 的 choices 数组高亮显示。
        */
       kind: 'player_input';
       text: string;
+      selectedIndex?: number;
       sceneRef: SceneState;
       turnNumber: number;
       index: number;
