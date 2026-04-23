@@ -37,10 +37,12 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
   const isDisabled = status !== 'waiting-input';
   const hasChoices = inputType === 'choice' && choices && choices.length > 0;
 
-  // 是否已读到最末有效 Sentence（跳过 scene_change）
+  // 是否已读到最末有效 Sentence（跳过 scene_change + signal_input —— 跳过型 Sentence
+  // 不占 click，和 game-store.advanceSentence 保持一致的 skippable 定义）
   const lastDisplayableIdx = (() => {
     for (let i = parsedSentences.length - 1; i >= 0; i--) {
-      if (parsedSentences[i]?.kind !== 'scene_change') return i;
+      const kind = parsedSentences[i]?.kind;
+      if (kind !== 'scene_change' && kind !== 'signal_input') return i;
     }
     return -1;
   })();

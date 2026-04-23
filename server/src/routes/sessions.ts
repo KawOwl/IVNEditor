@@ -129,6 +129,10 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
           entries: detail.entries,
           totalEntries: detail.totalEntries,
           hasMore: detail.hasMore,
+          // M3：VN 当前场景快照。client ws-client-emitter 'restored' handler
+          // 用它给每条合成的 Sentence 设 sceneRef，并 setCurrentScene 驱动
+          // VN stage 渲染背景/立绘。不传 → client fallback 到空场景（bug）。
+          currentScene: detail.currentScene,
         }));
 
         // 恢复 GameSession 的内存状态

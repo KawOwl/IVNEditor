@@ -102,12 +102,12 @@ export function VNStageContainer({ characters, backgrounds }: VNStageContainerPr
     return () => window.removeEventListener('keydown', handleKey);
   }, [advanceSentence, fullText.length, typewriter]);
 
-  // 游标之后还有未读 Sentence？（跳过 scene_change，找下一个可读的）
+  // 游标之后还有未读 Sentence？（跳过 scene_change / signal_input 两种跳过型）
   const hasMore = (() => {
     if (visibleSentenceIndex === null) return false;
-    // 当前是 scene_change（罕见）也不算有更多
     for (let i = visibleSentenceIndex + 1; i < parsedSentences.length; i++) {
-      if (parsedSentences[i]?.kind !== 'scene_change') return true;
+      const kind = parsedSentences[i]?.kind;
+      if (kind !== 'scene_change' && kind !== 'signal_input') return true;
     }
     return false;
   })();
