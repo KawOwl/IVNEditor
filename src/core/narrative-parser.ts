@@ -346,3 +346,35 @@ export function parseDialogueAttrs(attrsStr: string): ParticipationFrame {
     eavesdroppers: splitList(attrs.eav ?? attrs.eavesdroppers),
   };
 }
+
+/**
+ * 从 XML-lite 原文提取纯文本 —— 走 NarrativeParser 权威解析，保留 narration
+ * 段落文字 + dialogue 内部文字，标签本身被去掉。
+ *
+ * 用途：
+ *   - playthroughs.preview 字段（避免把 `<d s="jenkins" to="...">` 裸标签带到
+ *     UI 游玩记录列表）
+ *   - 未来 backlog 搜索 / 诊断面板等需要纯文本视图的场景
+ *
+ * 复用 parser 的收益（对比 regex）：
+ *   - parser 已经处理了未闭合 `<d ...` 截断、属性变体、嵌套降级等 edge case
+ *   - XML-lite 语法未来扩展（加新标签）时这里自动跟随，不需要单独维护 regex
+ *   - 和运行时 streaming 解析共用同一份语义，不会有偏差
+ */
+export function extractPlainText(xmlLite: string): string {
+  if (!xmlLite) return '';
+  const parts: string[] = [];
+  const parser = new NarrativeParser({
+    onNarrationChunk: (text) => parts.push(text),
+    onDialogueEnd: (_pf, fullText) => parts.push(fullText),
+  });
+  parser.push(xmlLite);
+  parser.finalize();
+  // 兜底：parser 在 IN_TAG_OPEN / IN_D_ATTRS 状态 finalize 时会把未闭合的
+  // `<d s="..."` buffer 作为 narration 降级保留（保留原文思路），但对 preview
+  // 来说我们要的是干净的人类可读文本，再 regex 剥一次残余标签。
+  return parts
+    .join('')
+    .replace(/<d\b[^>]*(?:>|$)/gi, '')
+    .replace(/<\/d>/gi, '');
+}

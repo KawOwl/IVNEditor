@@ -101,6 +101,7 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
       const wrapper = sessionManager.getOrCreate(
         playthroughId,
         version.manifest,
+        version.id,
         identity.userId,
         detail.kind,
         llmConfig,

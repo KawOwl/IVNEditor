@@ -76,11 +76,23 @@ export interface Memory {
   // ─── Write ─────────────────────────────────────────────────────────
 
   /**
-   * 每回合结束后追加一条。
+   * 通知 adapter 有新内容发生（一次对话轮次的 narrative / player input）。
    *
-   * 签名沿用原 MemoryManager.appendTurn：外部传必要字段，adapter 内部
-   * 生成 id / timestamp / pinned=false。这让调用点（game-session 多处）
-   * 保持简洁，不用每次手工填 id。
+   * **Memory Refactor v2 后实际语义变了**（2026-04-23）：
+   *   - **Legacy / LLMSummarizer**：**几乎 no-op**。仅返回一个占位 MemoryEntry，
+   *     不存任何 state。历史 entries 由 NarrativeHistoryReader 从 canonical
+   *     narrative_entries 按需读；摘要由 maybeCompact 压缩产生。
+   *   - **Mem0**：**真做事** —— 推送到云端做长期语义记忆。本地 recentEntries
+   *     窗口也会更新（供 getRecentAsMessages 用）。
+   *
+   * caller（game-session）按 turn/role/content 传，不关心 adapter 内部怎么
+   * 处理。**接口签名保持不变以减少迁移成本** —— 改名（如 observeEntry）收益
+   * 不大且侵入所有 adapter + 调用点，暂不做。如果未来 mem0 需要 batchId /
+   * orderIdx 等更丰富的元数据，再考虑加 observeEntry(NarrativeEntry) 方法。
+   *
+   * 历史：v1（挂起模式 + memory 自持 entries）里 appendTurn 是 memory 的核心
+   * 写路径，adapter 内部生成 id / timestamp / pinned=false、把 entry push 进
+   * state.entries。v2 后 state.entries 删除，appendTurn 降级为"通知 hook"。
    */
   appendTurn(params: {
     turn: number;

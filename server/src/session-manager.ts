@@ -34,6 +34,8 @@ export class GameSessionWrapper {
   private gameSession: GameSession | null = null;
   private manifest: ScriptManifest;
   private playthroughId: string;
+  /** 真实的 script_versions.id（从 playthrough.scriptVersionId 传进来），供 trace label 用 */
+  private scriptVersionId: string;
   private userId: string;
   /** 'production' | 'playtest'，用于 Langfuse trace environment 区分 */
   private kind: string;
@@ -45,12 +47,14 @@ export class GameSessionWrapper {
 
   constructor(
     manifest: ScriptManifest,
+    scriptVersionId: string,
     playthroughId: string,
     userId: string,
     kind: string,
     llmConfig: LLMConfig,
   ) {
     this.manifest = manifest;
+    this.scriptVersionId = scriptVersionId;
     this.playthroughId = playthroughId;
     this.userId = userId;
     this.kind = kind;
@@ -189,9 +193,8 @@ export class GameSessionWrapper {
       tracing: createBoundTracing({
         playthroughId: this.playthroughId,
         userId: this.userId,
-        // TODO(6.3): 改用真实的 script_version_id；现在临时用 manifest.id
-        // 作为 trace label，语义上就是"这个 playthrough 基于哪份 manifest"
-        scriptVersionId: manifest.id,
+        // 真实的 script_versions.id（playthrough.scriptVersionId 传进来）
+        scriptVersionId: this.scriptVersionId,
         kind: this.kind,
       }),
       // Memory Refactor v2：memory adapter 通过 reader 从 canonical
@@ -216,13 +219,14 @@ export class SessionManager {
   getOrCreate(
     playthroughId: string,
     manifest: ScriptManifest,
+    scriptVersionId: string,
     userId: string,
     kind: string,
     llmConfig: LLMConfig,
   ): GameSessionWrapper {
     let wrapper = this.sessions.get(playthroughId);
     if (!wrapper) {
-      wrapper = new GameSessionWrapper(manifest, playthroughId, userId, kind, llmConfig);
+      wrapper = new GameSessionWrapper(manifest, scriptVersionId, playthroughId, userId, kind, llmConfig);
       this.sessions.set(playthroughId, wrapper);
     }
     return wrapper;

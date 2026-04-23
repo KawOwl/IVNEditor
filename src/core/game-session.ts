@@ -36,7 +36,7 @@ import type { SignalInputOptions } from './tool-executor';
 import { LLMClient } from './llm-client';
 import type { LLMConfig } from './llm-client';
 import type { SessionEmitter } from './session-emitter';
-import { NarrativeParser } from './narrative-parser';
+import { NarrativeParser, extractPlainText } from './narrative-parser';
 import type { Sentence, ParticipationFrame, SceneState } from './types';
 
 // ============================================================================
@@ -1174,7 +1174,10 @@ export class GameSession {
         const memSnapGen = await this.memory.snapshot();
         await this.persistence?.onGenerateComplete({
           memorySnapshot: memSnapGen,
-          preview: result.text ? result.text.slice(0, 80).replace(/\n/g, ' ') : null,
+          // preview 用 parser 抽纯文本，避免列表里裸露 `<d s="...">` —— 见 D4
+          preview: result.text
+            ? extractPlainText(result.text).slice(0, 80).replace(/\n/g, ' ').trim()
+            : null,
           // M3: 持久化 VN 当前场景，断线重连时可恢复视觉状态
           currentScene: this.currentScene,
         }).catch((e) => console.error('[Persistence] onGenerateComplete failed:', e));

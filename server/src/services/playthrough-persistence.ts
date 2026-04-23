@@ -6,6 +6,7 @@
  */
 
 import type { SessionPersistence } from '../../../src/core/game-session';
+import { extractPlainText } from '../../../src/core/narrative-parser';
 import { playthroughService } from './playthrough-service';
 
 /**
@@ -37,8 +38,13 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
         batchId: data.batchId ?? null,
       });
 
-      // 更新 preview 为最新的这段
-      const preview = data.entry.content.slice(0, 80).replace(/\n/g, ' ');
+      // 更新 preview 为最新的这段（走 parser 提取纯文本，避免在 UI 的
+      // playthrough 列表里显示 XML-lite 裸标签：
+      // `你目光落在那扇... <d s="jenkins" to="...` → `你目光落在那扇... 你说完了我们就离开吧...`）
+      const preview = extractPlainText(data.entry.content)
+        .slice(0, 80)
+        .replace(/\n/g, ' ')
+        .trim();
       await playthroughService.updateState(playthroughId, { preview });
     },
 

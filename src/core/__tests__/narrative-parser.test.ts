@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { NarrativeParser, parseDialogueAttrs } from '../narrative-parser';
+import { NarrativeParser, parseDialogueAttrs, extractPlainText } from '../narrative-parser';
 import type { ParticipationFrame } from '../types';
 
 interface Event {
@@ -352,5 +352,47 @@ describe('NarrativeParser · 极端输入', () => {
       .map((e) => e.text)
       .join('');
     expect(allNarration).toBe('旁白尾巴');
+  });
+});
+
+describe('extractPlainText · D4 preview / 纯文本提取', () => {
+  it('标准 <d> 对话 → 取内部文本', () => {
+    const input = '<d s="alice" to="bob">你好</d>';
+    expect(extractPlainText(input)).toBe('你好');
+  });
+
+  it('混合 narration + 多段 dialogue → 连续拼成纯文本', () => {
+    const input = '她说：<d s="alice">你来了。</d>\n\n他点头。<d s="bob">嗯。</d>';
+    const result = extractPlainText(input);
+    expect(result).toContain('她说：');
+    expect(result).toContain('你来了。');
+    expect(result).toContain('他点头');
+    expect(result).toContain('嗯。');
+  });
+
+  it('无标签的纯旁白原样返回', () => {
+    const input = '黄昏的教室里只剩下她一个人。';
+    expect(extractPlainText(input)).toBe('黄昏的教室里只剩下她一个人。');
+  });
+
+  it('截断的 <d ...> 开标签（preview slice 场景）→ narration 部分保留', () => {
+    // LLM 输出被 preview slice 在标签中间砍掉：parser 的 IN_TAG_OPEN/IN_D_ATTRS
+    // 状态在 finalize 时降级，已进入 IN_TAG_OPEN 的 buffer 会被丢弃
+    const input = '你目光落在那扇半掩的木门上，话语里带着好奇。<d s="jenkins" to="';
+    expect(extractPlainText(input)).toBe(
+      '你目光落在那扇半掩的木门上，话语里带着好奇。',
+    );
+  });
+
+  it('未闭合 <d> body（流中途断）→ truncated dialogue 内容仍取出', () => {
+    // parser 在 IN_D_BODY 状态 finalize 会降级 emit dialogue（带 truncated 标记）
+    const input = '旁白。<d s="alice">未说完的话';
+    const result = extractPlainText(input);
+    expect(result).toContain('旁白。');
+    expect(result).toContain('未说完的话');
+  });
+
+  it('空字符串', () => {
+    expect(extractPlainText('')).toBe('');
   });
 });
