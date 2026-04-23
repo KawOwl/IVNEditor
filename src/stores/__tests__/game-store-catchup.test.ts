@@ -1,13 +1,12 @@
 /**
- * game-store · catch-up 机制
+ * game-store · 推进行为
  *
- * 验证 catchUpPending 的状态机：
- *   - 初始化 pending=true
- *   - appendSentence 在 pending=true + 在末端 + 非 scene_change 时 catch-up
- *     触发一次后 pending=false
- *   - 连续新 Sentence 不会重复触发 catch-up
- *   - 玩家 advanceSentence / setVisibleSentenceIndex 把 pending 置回 true
- *   - scene_change 不触发 catch-up
+ * 2026-04-23：catchUpPending 自动前进已关（见 game-store.ts appendSentence 注释）。
+ *   - 初始化（vsi null → 0）仍然发生 —— 开局必须给玩家看到第一条
+ *   - 之后任何新 Sentence 到达都**不自动推进**，玩家必须点击
+ *   - pending 字段、re-arm 逻辑保留，为未来开回做准备
+ *
+ * 测试的关注点从"自动推进时机"切到"手动推进行为 + 跳过型 Sentence 处理"。
  */
 
 import { describe, it, expect, beforeEach } from 'bun:test';
@@ -28,7 +27,7 @@ function signalInput(i: number, hint = 'pick one', choices = ['A', 'B']): Senten
   return { kind: 'signal_input', hint, choices, sceneRef: scene, turnNumber: 0, index: i };
 }
 
-describe('game-store · catchUpPending', () => {
+describe('game-store · 推进行为（自动前进已关）', () => {
   beforeEach(() => {
     useGameStore.getState().reset();
   });
@@ -46,111 +45,67 @@ describe('game-store · catchUpPending', () => {
     expect(s.catchUpPending).toBe(false);
   });
 
-  it('连续新 Sentence：第一次触发 catch-up 到末端，第二次不再前进', () => {
+  it('后续新 Sentence 到达：vsi 不自动前进（关掉 catch-up）', () => {
     const { appendSentence } = useGameStore.getState();
-    appendSentence(narration(0));    // init → vsi=0, pending=false
-    // 玩家主动点一下 → pending=true
-    useGameStore.getState().advanceSentence();  // parsedSentences 只有 1 条，vsi 仍在 0
-    expect(useGameStore.getState().catchUpPending).toBe(true);
-
-    appendSentence(narration(1));    // pending=true, 玩家在末端 → catch-up 到 vsi=1, pending=false
-    expect(useGameStore.getState().visibleSentenceIndex).toBe(1);
-    expect(useGameStore.getState().catchUpPending).toBe(false);
-
-    appendSentence(narration(2));    // pending=false → 不动
-    expect(useGameStore.getState().visibleSentenceIndex).toBe(1);
-    expect(useGameStore.getState().catchUpPending).toBe(false);
-
-    appendSentence(narration(3));    // 仍然 pending=false → 不动
-    expect(useGameStore.getState().visibleSentenceIndex).toBe(1);
+    appendSentence(narration(0));    // init → vsi=0
+    appendSentence(narration(1));    // 不动
+    appendSentence(narration(2));    // 不动
+    expect(useGameStore.getState().visibleSentenceIndex).toBe(0);
   });
 
-  it('玩家主动 advanceSentence 把 pending 置回 true', () => {
+  it('advance 跨过 scene_change / signal_input', () => {
+    const { appendSentence, advanceSentence } = useGameStore.getState();
+    appendSentence(narration(0));
+    appendSentence(sceneChange(1));
+    appendSentence(narration(2));
+
+    // 玩家在 vsi=0 点击 → 应该跳过 scene_change 直达 narration(2)
+    advanceSentence();
+    expect(useGameStore.getState().visibleSentenceIndex).toBe(2);
+  });
+
+  it('advance 跨过 signal_input（同 scene_change）', () => {
+    const { appendSentence, advanceSentence } = useGameStore.getState();
+    appendSentence(narration(0));
+    appendSentence(signalInput(1));
+    appendSentence(narration(2));
+
+    advanceSentence();
+    expect(useGameStore.getState().visibleSentenceIndex).toBe(2);
+  });
+
+  it('advance 到末尾不越界', () => {
     const { appendSentence, advanceSentence } = useGameStore.getState();
     appendSentence(narration(0));
     appendSentence(narration(1));
-    appendSentence(narration(2));
-    // 玩家点过一下后又追加的 Sentence 不会自动前进（pending=false）
-    expect(useGameStore.getState().visibleSentenceIndex).toBe(0);
-    expect(useGameStore.getState().catchUpPending).toBe(false);
 
-    advanceSentence();
+    advanceSentence(); // vsi=1
+    advanceSentence(); // 已在末尾，不越界
     expect(useGameStore.getState().visibleSentenceIndex).toBe(1);
-    expect(useGameStore.getState().catchUpPending).toBe(true);
-
-    appendSentence(narration(3));
-    // 玩家现在 vsi=1，不在末端（末端是 2），不 catch-up
-    expect(useGameStore.getState().visibleSentenceIndex).toBe(1);
-
-    // 玩家一路点到末端
-    advanceSentence();  // vsi=2
-    advanceSentence();  // vsi=3（末端）
-    expect(useGameStore.getState().visibleSentenceIndex).toBe(3);
-    expect(useGameStore.getState().catchUpPending).toBe(true);
-
-    appendSentence(narration(4));  // 又来一条
-    // pending=true + 玩家在末端 + 非 scene_change → catch-up
-    expect(useGameStore.getState().visibleSentenceIndex).toBe(4);
-    expect(useGameStore.getState().catchUpPending).toBe(false);
   });
 
-  it('scene_change 不触发 catch-up', () => {
-    const { appendSentence, advanceSentence } = useGameStore.getState();
-    appendSentence(narration(0));  // init
-    advanceSentence();  // pending=true
-
-    appendSentence(sceneChange(1));
-    // scene_change 来了，pending 保持 true，vsi 不变（还是 0）
-    expect(useGameStore.getState().visibleSentenceIndex).toBe(0);
-    expect(useGameStore.getState().catchUpPending).toBe(true);
-
-    appendSentence(narration(2));
-    // 下一条 narration 来了：pending=true + 玩家 vsi=0 是"上一个非 scene_change" →
-    // catch-up 到新末尾 vsi=2
-    expect(useGameStore.getState().visibleSentenceIndex).toBe(2);
-    expect(useGameStore.getState().catchUpPending).toBe(false);
-  });
-
-  it('signal_input 不触发 catch-up（migration 0010 / Step 4）', () => {
-    const { appendSentence, advanceSentence } = useGameStore.getState();
-    appendSentence(narration(0));
-    advanceSentence(); // pending=true
-
-    appendSentence(signalInput(1));
-    // signal_input 属"跳过型"，pending 保持 true，vsi 不动
-    expect(useGameStore.getState().visibleSentenceIndex).toBe(0);
-    expect(useGameStore.getState().catchUpPending).toBe(true);
-
-    appendSentence(narration(2));
-    // 下一条 narration：pending=true + 玩家 vsi=0 仍被视为末端（signal_input 不占） → catch-up
-    expect(useGameStore.getState().visibleSentenceIndex).toBe(2);
-    expect(useGameStore.getState().catchUpPending).toBe(false);
-  });
-
-  it('advanceSentence 自动跳过 signal_input（和 scene_change 同级）', () => {
-    const { appendSentence, advanceSentence } = useGameStore.getState();
-    appendSentence(narration(0));
-    appendSentence(signalInput(1));
-    appendSentence(narration(2));
-
-    // 玩家在 vsi=0 点击推进 → 跨过 signal_input 到 narration(2)
-    advanceSentence();
-    expect(useGameStore.getState().visibleSentenceIndex).toBe(2);
-  });
-
-  it('玩家往回翻（vsi < 末端）：新 Sentence 来不打扰', () => {
+  it('setVisibleSentenceIndex 可以往回翻', () => {
     const { appendSentence, setVisibleSentenceIndex } = useGameStore.getState();
     appendSentence(narration(0));
     appendSentence(narration(1));
     appendSentence(narration(2));
 
-    // 往回翻到 0
     setVisibleSentenceIndex(0);
-    expect(useGameStore.getState().catchUpPending).toBe(true);
-
-    appendSentence(narration(3));
-    // 玩家在 0，末端是 3 —— 不在末端，不 catch-up
     expect(useGameStore.getState().visibleSentenceIndex).toBe(0);
-    expect(useGameStore.getState().catchUpPending).toBe(true);
+
+    // 新 Sentence 到达不打扰（已关自动前进 + 玩家回翻都不动）
+    appendSentence(narration(3));
+    expect(useGameStore.getState().visibleSentenceIndex).toBe(0);
+  });
+
+  it('advance 在连续 scene_change 后停在最后可读条目', () => {
+    const { appendSentence, advanceSentence } = useGameStore.getState();
+    appendSentence(narration(0));
+    appendSentence(sceneChange(1));
+    appendSentence(sceneChange(2));
+
+    // 玩家点推进：没有更多可读 → 停在 vsi=0（不滑到 length）
+    advanceSentence();
+    expect(useGameStore.getState().visibleSentenceIndex).toBe(0);
   });
 });

@@ -184,12 +184,17 @@ export const useGameStore = create<GameState>((set) => ({
     })),
 
   // --- M3: VN Narrative & Scene ---
+  //
+  // 2026-04-23：catchUpPending 自动推进机制暂时关闭。
+  //   玩家反馈：LLM 吐新 Sentence 时自动推进游标，会跳过正在打字机显示的那条。
+  //   决定：关掉自动追赶，新 Sentence 到达后 hasMore 指示（▼）会闪，玩家手动点击推进。
+  //   保留字段 + 所有 re-arm 逻辑不变，以便未来开回来。
+  //   见 .claude/plans/vn-catch-up.md
   appendSentence: (sentence) =>
     set((state) => {
       const prev = state.parsedSentences;
       const next = [...prev, sentence];
       let vsi = state.visibleSentenceIndex;
-      let pending = state.catchUpPending;
 
       // "跳过型" Sentence —— 不占对话框 click 次数：
       //   scene_change  视觉切换帧
@@ -197,35 +202,16 @@ export const useGameStore = create<GameState>((set) => ({
       const isSkippable = (s: Sentence) => s.kind === 'scene_change' || s.kind === 'signal_input';
 
       // 游标初始化：首次追加时从 null → 找第一个非跳过型的位置。
+      // 这是不可避免的"第一次自动前进"—— 否则玩家永远看不到开头。
       if (vsi === null) {
         const firstReadable = next.findIndex((s) => !isSkippable(s));
         vsi = firstReadable >= 0 ? firstReadable : null;
-        // 初始化已经把玩家推到第一条；catch-up 任务这次就算完成了
         return { parsedSentences: next, visibleSentenceIndex: vsi, catchUpPending: false };
       }
 
-      // catch-up：玩家刚做过主动动作（catchUpPending=true）+ 在末端 + 新 Sentence
-      // 不是跳过型 → 自动把游标推到新末尾，然后把 pending 置 false。
-      // 后续新 Sentence 不再连续自动前进，直到玩家再做主动动作（advance /
-      // setVisibleSentenceIndex）重新置 pending=true。
-      let lastReadableInPrev = prev.length - 1;
-      while (lastReadableInPrev >= 0 && isSkippable(prev[lastReadableInPrev]!)) {
-        lastReadableInPrev--;
-      }
-      const playerAtTail = vsi === lastReadableInPrev;
-      const canCatchUp =
-        pending &&
-        playerAtTail &&
-        !isSkippable(sentence);
-
-      if (canCatchUp) {
-        vsi = next.length - 1;
-        pending = false;
-      }
-      // 其它情况（pending=false / 玩家在往回翻 / 新 Sentence 是 scene_change / signal_input）
-      // 都不动游标。
-
-      return { parsedSentences: next, visibleSentenceIndex: vsi, catchUpPending: pending };
+      // 关掉 catch-up：无论 pending 状态、玩家是否在末端，新 Sentence 到达不自动推进。
+      // 仅追加 Sentence，游标不动。玩家通过点击 / 空格 / DialogBox 的 ▼ 提示手动推进。
+      return { parsedSentences: next, visibleSentenceIndex: vsi, catchUpPending: state.catchUpPending };
     }),
 
   setCurrentScene: (scene, transition) =>
