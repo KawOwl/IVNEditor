@@ -53,6 +53,21 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
       });
     },
 
+    /**
+     * 把 signal_input_needed 一次调用写成一条 narrative_entry。
+     * role='system' + kind='signal_input' + content=hint + payload={choices}。
+     * 见 .claude/plans/conversation-persistence.md Step 2。
+     */
+    async onSignalInputRecorded(data): Promise<void> {
+      await playthroughService.appendNarrativeEntry({
+        playthroughId,
+        role: 'system',
+        kind: 'signal_input',
+        content: data.hint,
+        payload: { choices: data.choices },
+      });
+    },
+
     async onWaitingInput(data): Promise<void> {
       const patch: Record<string, unknown> = {
         status: 'waiting-input',

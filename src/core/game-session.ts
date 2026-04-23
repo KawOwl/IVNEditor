@@ -202,6 +202,26 @@ export interface SessionPersistence {
     currentScene?: SceneState | null;
   }): Promise<void>;
 
+  /**
+   * `signal_input_needed` 工具被 LLM 调用时写一条结构化事件
+   * （migration 0010，见 .claude/plans/conversation-persistence.md）。
+   *
+   * 语义上等价于"GM 在这一步提了问，给出了这些选项"。持久化后：
+   *   - backlog 能回看历史问答
+   *   - 未来 fork 能用它定位分支点
+   *
+   * 和 `onWaitingInput` 的区别：
+   *   - onWaitingInput 更新 `playthroughs` 的"当前状态"快照（input_hint/choices）
+   *   - onSignalInputRecorded 在 `narrative_entries` 追加一条不可变事件
+   *
+   * 外循环无 tool 的 Receive phase 不调本方法（没有 hint/choices，也不是
+   * 结构化事件）。
+   */
+  onSignalInputRecorded?(data: {
+    hint: string;
+    choices: string[];
+  }): Promise<void>;
+
   /** 玩家输入完成 */
   onReceiveComplete(data: {
     entry: { role: string; content: string };
@@ -1265,13 +1285,31 @@ export class GameSession {
       }
       this.emitter.setStatus('waiting-input');
 
-      // ③ 持久化：signal_input_needed 触发的等待输入
+      // ③ 持久化：
+      //
+      //   (a) 先写一条结构化 signal_input 事件到 narrative_entries（0010+）
+      //       —— 这是不可变历史，让 backlog 能回看"第 N 步 GM 问了什么 / 给了哪些选项"
+      //   (b) 再 upsert playthroughs 的"当前状态"快照（input_hint/choices/memory/scene）
+       //      —— 这是断线重连 O(1) 恢复 UI 用的，只保存最新一条
+      //
+      // 顺序：先 append 事件，再写 snapshot。两者都失败也不影响 generate 挂起
+      // 本身 —— catch 住 error，UI 依然能继续等玩家输入（不过下次 restore 会不一致）。
+      const hint = options.hint ?? null;
+      const choices = options.choices ?? [];
+      // narrative_entries.content NOT NULL —— 只有 hint 非空才写 signal_input entry。
+      // choices 允许为空（LLM 只要自由输入也是合法的 signal 事件）。
+      if (hint) {
+        await this.persistence?.onSignalInputRecorded?.({
+          hint,
+          choices,
+        }).catch((e) => console.error('[Persistence] onSignalInputRecorded failed:', e));
+      }
       // 同时保存最新的 memory snapshot → 断线重连后 memory 不空
       const memSnapSignal = await this.memory.snapshot();
       await this.persistence?.onWaitingInput({
-        hint: options.hint ?? null,
-        inputType: options.choices?.length ? 'choice' : 'freetext',
-        choices: options.choices ?? null,
+        hint,
+        inputType: choices.length ? 'choice' : 'freetext',
+        choices: choices.length ? choices : null,
         memorySnapshot: memSnapSignal,
         currentScene: this.currentScene,
       }).catch((e) => console.error('[Persistence] onWaitingInput (signal) failed:', e));

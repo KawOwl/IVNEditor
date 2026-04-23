@@ -240,6 +240,63 @@ describe('PlaythroughPersistence', () => {
   });
 
   // --------------------------------------------------------------------------
+  // onSignalInputRecorded — signal_input_needed 事件化（migration 0010 / Step 2）
+  // --------------------------------------------------------------------------
+
+  describe('onSignalInputRecorded', () => {
+    it('should append signal_input entry with hint + choices payload', async () => {
+      const pt = await createTestPlaythrough();
+      const persistence = createPlaythroughPersistence(pt.id);
+
+      await persistence.onSignalInputRecorded!({
+        hint: '你想做什么？',
+        choices: ['探索洞穴', '返回村庄', '休息一下'],
+      });
+
+      const detail = await service.getById(pt.id, pt.userId);
+      expect(detail!.entries.length).toBe(1);
+      const e = detail!.entries[0]!;
+      expect(e.role).toBe('system');
+      expect(e.kind).toBe('signal_input');
+      expect(e.content).toBe('你想做什么？');
+      expect(e.payload).toEqual({ choices: ['探索洞穴', '返回村庄', '休息一下'] });
+    });
+
+    it('should accept empty choices array (freetext signal)', async () => {
+      const pt = await createTestPlaythrough();
+      const persistence = createPlaythroughPersistence(pt.id);
+
+      await persistence.onSignalInputRecorded!({
+        hint: '请自由输入你的想法',
+        choices: [],
+      });
+
+      const detail = await service.getById(pt.id, pt.userId);
+      expect(detail!.entries[0]!.payload).toEqual({ choices: [] });
+    });
+
+    it('should append signal_input and narrative entries in order', async () => {
+      const pt = await createTestPlaythrough();
+      const persistence = createPlaythroughPersistence(pt.id);
+
+      await persistence.onNarrativeSegmentFinalized({
+        entry: { role: 'generate', content: '教室里一片寂静。' },
+      });
+      await persistence.onSignalInputRecorded!({
+        hint: '你想做什么？',
+        choices: ['离开', '留下'],
+      });
+
+      const detail = await service.getById(pt.id, pt.userId);
+      expect(detail!.entries.length).toBe(2);
+      expect(detail!.entries[0]!.kind).toBe('narrative');
+      expect(detail!.entries[1]!.kind).toBe('signal_input');
+      expect(detail!.entries[0]!.orderIdx).toBe(0);
+      expect(detail!.entries[1]!.orderIdx).toBe(1);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // onGenerateComplete — 仅同步 memory（不再负责 entry）
   // --------------------------------------------------------------------------
 
