@@ -101,9 +101,9 @@ export interface NarrativeEntryRow {
   playthroughId: string;
   role: string;
   /**
-   * 事件类别（migration 0010）：
-   *   'narrative' | 'signal_input' | 'player_input'
-   * 见 .claude/plans/conversation-persistence.md
+   * 事件类别（migration 0010 / 0011）：
+   *   'narrative' | 'signal_input' | 'tool_call' | 'player_input'
+   * 见 .claude/plans/messages-model.md
    */
   kind: string;
   content: string;
@@ -111,6 +111,11 @@ export interface NarrativeEntryRow {
   /** 按 kind 自描述的结构化载荷（migration 0010 取代 tool_calls dead column） */
   payload: Record<string, unknown> | null;
   finishReason: string | null;
+  /**
+   * 同批 entries 的分组标记（migration 0011），见 messages-model.md。
+   * 0010 之前老数据为 null；视图层走启发式兜底。
+   */
+  batchId: string | null;
   orderIdx: number;
   createdAt: Date;
 }
@@ -359,8 +364,8 @@ export class PlaythroughService {
   /**
    * 追加叙事条目
    *
-   * kind 默认 'narrative'。signal_input / player_input 条目走同一个入口，
-   * 只是 kind + payload 不同，见 .claude/plans/conversation-persistence.md。
+   * kind 默认 'narrative'。signal_input / tool_call / player_input 条目走同一个入口，
+   * 只是 kind + payload 不同，见 .claude/plans/messages-model.md。
    */
   async appendNarrativeEntry(entry: {
     playthroughId: string;
@@ -370,6 +375,11 @@ export class PlaythroughService {
     reasoning?: string | null;
     payload?: Record<string, unknown> | null;  // migration 0010 取代 tool_calls
     finishReason?: string | null;
+    /**
+     * migration 0011：同一 LLM step / 玩家一次提交产出的 entries 共享的 UUID。
+     * nullable，不传视为 null（老行为兼容）。
+     */
+    batchId?: string | null;
   }): Promise<string> {
     const id = crypto.randomUUID();
 
@@ -391,6 +401,7 @@ export class PlaythroughService {
         reasoning: entry.reasoning ?? null,
         payload: entry.payload ?? null,
         finishReason: entry.finishReason ?? null,
+        batchId: entry.batchId ?? null,
         orderIdx: nextIdx,
       });
     });
@@ -413,6 +424,29 @@ export class PlaythroughService {
       .orderBy(asc(schema.narrativeEntries.orderIdx))
       .limit(limit)
       .offset(offset) as NarrativeEntryRow[];
+  }
+
+  /**
+   * 加载 orderIdx 在 [fromOrderIdx, toOrderIdx] 区间内的 entries（闭区间，升序）。
+   * 任一端为 undefined 即不设约束。供 NarrativeHistoryReader.readRange 使用。
+   */
+  async loadEntriesInRange(
+    playthroughId: string,
+    fromOrderIdx?: number,
+    toOrderIdx?: number,
+  ): Promise<NarrativeEntryRow[]> {
+    const conditions = [eq(schema.narrativeEntries.playthroughId, playthroughId)];
+    if (fromOrderIdx !== undefined) {
+      conditions.push(sql`${schema.narrativeEntries.orderIdx} >= ${fromOrderIdx}`);
+    }
+    if (toOrderIdx !== undefined) {
+      conditions.push(sql`${schema.narrativeEntries.orderIdx} <= ${toOrderIdx}`);
+    }
+    return await db
+      .select()
+      .from(schema.narrativeEntries)
+      .where(and(...conditions))
+      .orderBy(asc(schema.narrativeEntries.orderIdx)) as NarrativeEntryRow[];
   }
 }
 

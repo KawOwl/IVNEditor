@@ -240,6 +240,76 @@ describe('PlaythroughPersistence', () => {
   });
 
   // --------------------------------------------------------------------------
+  // onToolCallRecorded — 普通工具持久化（migration 0011 / PR-M1）
+  // --------------------------------------------------------------------------
+
+  describe('onToolCallRecorded', () => {
+    it('写入 kind=tool_call + content=toolName + payload={input, output} + batchId', async () => {
+      const pt = await createTestPlaythrough();
+      const persistence = createPlaythroughPersistence(pt.id);
+      const batchId = crypto.randomUUID();
+
+      await persistence.onToolCallRecorded!({
+        toolName: 'update_state',
+        input: { key: 'trust', value: 2 },
+        output: { success: true, updated: ['trust'] },
+        batchId,
+      });
+
+      const detail = await service.getById(pt.id, pt.userId);
+      const e = detail!.entries[0]!;
+      expect(e.role).toBe('system');
+      expect(e.kind).toBe('tool_call');
+      expect(e.content).toBe('update_state');
+      expect(e.payload).toEqual({
+        input: { key: 'trust', value: 2 },
+        output: { success: true, updated: ['trust'] },
+      });
+      expect(e.batchId).toBe(batchId);
+    });
+
+    it('同 batchId 的多个 tool_call + narrative + signal_input 共享分组', async () => {
+      const pt = await createTestPlaythrough();
+      const persistence = createPlaythroughPersistence(pt.id);
+      const batchId = crypto.randomUUID();
+
+      await persistence.onNarrativeSegmentFinalized({
+        entry: { role: 'generate', content: '旁白。' },
+        batchId,
+      });
+      await persistence.onToolCallRecorded!({
+        toolName: 'update_state',
+        input: { a: 1 },
+        output: { ok: true },
+        batchId,
+      });
+      await persistence.onToolCallRecorded!({
+        toolName: 'change_scene',
+        input: { bg: 'forest' },
+        output: { ok: true },
+        batchId,
+      });
+      await persistence.onSignalInputRecorded!({
+        hint: '做什么？',
+        choices: ['离开', '留下'],
+        batchId,
+      });
+
+      const detail = await service.getById(pt.id, pt.userId);
+      expect(detail!.entries.length).toBe(4);
+      for (const e of detail!.entries) {
+        expect(e.batchId).toBe(batchId);
+      }
+      expect(detail!.entries.map((e) => e.kind)).toEqual([
+        'narrative',
+        'tool_call',
+        'tool_call',
+        'signal_input',
+      ]);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // onSignalInputRecorded — signal_input_needed 事件化（migration 0010 / Step 2）
   // --------------------------------------------------------------------------
 
@@ -460,6 +530,25 @@ describe('PlaythroughPersistence', () => {
 
       const detail = await service.getById(pt.id, pt.userId);
       expect(detail!.entries[0].payload).toEqual({ inputType: 'freetext' });
+    });
+
+    it('should persist batchId when provided (migration 0011)', async () => {
+      const pt = await createTestPlaythrough();
+      const persistence = createPlaythroughPersistence(pt.id);
+      const batchId = crypto.randomUUID();
+
+      await persistence.onReceiveComplete({
+        entry: { role: 'receive', content: '返回村庄' },
+        stateVars: {},
+        turn: 1,
+        memorySnapshot: { kind: 'legacy-v1', entries: [], summaries: [] },
+        payload: { inputType: 'choice', selectedIndex: 1 },
+        batchId,
+      });
+
+      const detail = await service.getById(pt.id, pt.userId);
+      expect(detail!.entries[0].batchId).toBe(batchId);
+      expect(detail!.entries[0].kind).toBe('player_input');
     });
   });
 

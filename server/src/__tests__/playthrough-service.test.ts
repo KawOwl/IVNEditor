@@ -570,6 +570,94 @@ describe('PlaythroughService', () => {
   });
 
   // --------------------------------------------------------------------------
+  // migration 0011：batchId + tool_call kind + loadEntriesInRange
+  // --------------------------------------------------------------------------
+
+  describe('migration 0011', () => {
+    it('appendNarrativeEntry 带 batchId 落库 + readback', async () => {
+      const pt = await createTestPlaythrough();
+      const batchId = crypto.randomUUID();
+      await service.appendNarrativeEntry({
+        playthroughId: pt.id,
+        role: 'generate',
+        content: '带 batchId 的条目',
+        batchId,
+      });
+
+      const entries = await service.loadEntries(pt.id, 1);
+      expect(entries[0].batchId).toBe(batchId);
+    });
+
+    it('appendNarrativeEntry 不传 batchId → null', async () => {
+      const pt = await createTestPlaythrough();
+      await service.appendNarrativeEntry({
+        playthroughId: pt.id,
+        role: 'generate',
+        content: '无 batchId',
+      });
+
+      const entries = await service.loadEntries(pt.id, 1);
+      expect(entries[0].batchId).toBeNull();
+    });
+
+    it('tool_call kind 存取（content=toolName, payload={input, output}）', async () => {
+      const pt = await createTestPlaythrough();
+      await service.appendNarrativeEntry({
+        playthroughId: pt.id,
+        role: 'system',
+        kind: 'tool_call',
+        content: 'update_state',
+        payload: {
+          input: { key: 'trust', value: 2 },
+          output: { success: true, updated: ['trust'] },
+        },
+      });
+
+      const entries = await service.loadEntries(pt.id, 1);
+      expect(entries[0].kind).toBe('tool_call');
+      expect(entries[0].content).toBe('update_state');
+      expect(entries[0].payload).toEqual({
+        input: { key: 'trust', value: 2 },
+        output: { success: true, updated: ['trust'] },
+      });
+    });
+
+    it('loadEntriesInRange 正确按 orderIdx 过滤', async () => {
+      const pt = await createTestPlaythrough();
+      for (let i = 0; i < 5; i++) {
+        await service.appendNarrativeEntry({
+          playthroughId: pt.id,
+          role: 'generate',
+          content: `E${i}`,
+        });
+      }
+
+      // [1, 3]
+      const ranged = await service.loadEntriesInRange(pt.id, 1, 3);
+      expect(ranged.length).toBe(3);
+      expect(ranged.map((e) => e.content)).toEqual(['E1', 'E2', 'E3']);
+
+      // 只 from
+      const fromOnly = await service.loadEntriesInRange(pt.id, 3);
+      expect(fromOnly.map((e) => e.content)).toEqual(['E3', 'E4']);
+
+      // 只 to
+      const toOnly = await service.loadEntriesInRange(pt.id, undefined, 1);
+      expect(toOnly.map((e) => e.content)).toEqual(['E0', 'E1']);
+
+      // 无约束 = 全部
+      const all = await service.loadEntriesInRange(pt.id);
+      expect(all.length).toBe(5);
+    });
+
+    it('loadEntriesInRange 空结果', async () => {
+      const pt = await createTestPlaythrough();
+      const none = await service.loadEntriesInRange(pt.id, 100, 200);
+      expect(none).toEqual([]);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // countByScriptVersionAndUser
   // --------------------------------------------------------------------------
 

@@ -286,9 +286,11 @@ export const narrativeEntries = pgTable('narrative_entries', {
     .references(() => playthroughs.id, { onDelete: 'cascade' }),
   role: text('role').notNull(), // 'generate' | 'receive' | 'system'
   /**
-   * 事件类别（0010 加入）。见 .claude/plans/conversation-persistence.md
+   * 事件类别（0010 加入，0011 扩展到 4 种）。
+   * 见 .claude/plans/messages-model.md
    *   'narrative'    旁白+对话混合（role='generate' 的常规条目）
    *   'signal_input' 一次 signal_input_needed 调用（role='system'，content=hint，payload={choices}）
+   *   'tool_call'    其他工具一次调用（role='system'，content=toolName，payload={input, output}）
    *   'player_input' 玩家输入（role='receive'，payload={selectedIndex?, inputType}）
    * 旧行默认 'narrative'，兼容 0009 之前的数据。
    */
@@ -301,11 +303,20 @@ export const narrativeEntries = pgTable('narrative_entries', {
    */
   payload: jsonb('payload').$type<Record<string, unknown>>(),
   finishReason: text('finish_reason'),
+  /**
+   * 同一 LLM step（或玩家一次提交）产出的一批 entries 共享的 UUID。
+   * 视图层 messages-builder 按 batch_id 分组为"一次 assistant message + tool message"
+   * 或"一次 user message"（0011 加入）。
+   *
+   * nullable：0010 及之前的老 entries 为 null，视图层走启发式兜底。
+   */
+  batchId: text('batch_id'),
   orderIdx: integer('order_idx').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_narrative_entries_playthrough_id').on(table.playthroughId),
   index('idx_narrative_entries_order_idx').on(table.playthroughId, table.orderIdx),
+  index('idx_narrative_entries_batch_id').on(table.playthroughId, table.batchId),
   // 防止并发写入导致 orderIdx 重复（P1 修复）
   unique('uniq_narrative_entry_order').on(table.playthroughId, table.orderIdx),
 ]);

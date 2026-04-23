@@ -94,6 +94,15 @@ export interface StepInfo {
    * 里完全不可观察（input.system 永远显示开局快照）。
    */
   effectiveSystemPrompt?: string;
+  /**
+   * 本 step 的 batchId（migration 0011）。
+   * 在 experimental_onStepStart 里生成 UUID，该 step 的所有工具调用 + narrative
+   * 写入 narrative_entries 时共享这个 id。
+   *
+   * 视图层 messages-builder 用 batchId 精确分组"一个 LLM step 的所有事件"，
+   * 投影成一对 assistant + tool message。
+   */
+  batchId?: string;
 }
 
 export interface GenerateOptions {
@@ -109,6 +118,23 @@ export interface GenerateOptions {
   onToolResult?: (name: string, result: unknown) => void;
   /** 每个 step（内部 LLM API 调用）结束时触发，用于追踪/观测 */
   onStep?: (step: StepInfo) => void;
+  /**
+   * 每个工具调用 finish 时触发（experimental_onToolCallFinish）—— 方案 B
+   * 前置：把 tool_call 写入 narrative_entries.kind='tool_call'。
+   *
+   * **跳过 signal_input_needed / end_scenario**：
+   *   - signal_input_needed 走专属的 onSignalInputRecorded 路径（hint + choices 写进 signal_input kind）
+   *   - end_scenario 走 onScenarioFinished 路径
+   *
+   * 非目标：把 tool output 做任何业务转换 —— 只是原始 input/output 透传给上游做持久化。
+   */
+  onToolObserved?: (evt: {
+    batchId: string;
+    toolName: string;
+    input: unknown;
+    output: unknown;
+    success: boolean;
+  }) => void | Promise<void>;
   /**
    * Per-step system prompt 覆盖钩子（Focus Injection D 方案）。
    *
@@ -211,6 +237,7 @@ export class LLMClient {
       onToolCall: onToolCallCb,
       onToolResult: onToolResultCb,
       onStep,
+      onToolObserved,
       prepareStepSystem,
     } = options;
 
@@ -227,6 +254,13 @@ export class LLMClient {
     // 返回 undefined 或未提供 prepareStepSystem 时，记为外层的 systemPrompt。
     // tracing 层读这个以反映 Focus Injection D 的 per-step 切换。
     const stepSystemMap = new Map<number, string>();
+    // 该 step 的 batchId（migration 0011）—— experimental_onStepStart 生成，
+    // experimental_onToolCallFinish 和 onStepFinish 用来 tag entries。
+    const stepBatchIdMap = new Map<number, string>();
+    // 当前正在执行的 step 编号（experimental_onToolCallFinish 拿 batchId 用）。
+    // AI SDK 在一个 step 内按顺序触发 start → tool_calls → finish，所以这个
+    // 值在 tool 回调里都是当前 step 的 stepNumber。
+    let currentStepNumber = 0;
 
     // Build AI SDK messages
     const aiMessages: Array<{ role: 'user' | 'assistant'; content: string }> = messages.map((m) => ({
@@ -260,6 +294,10 @@ export class LLMClient {
       // 以及该 step 开始的真实瞬间（tracing 层用作 generation span startTime）。
       experimental_onStepStart: (event) => {
         stepStartAtMap.set(event.stepNumber, new Date());
+        // 每个 step 分配一个 UUID 作 batchId —— 该 step 的所有 tool_call /
+        // narrative entry 在持久化时会挂这个 id，让 messages-builder 精确分组
+        stepBatchIdMap.set(event.stepNumber, crypto.randomUUID());
+        currentStepNumber = event.stepNumber;
         try {
           const simplified = (event.messages ?? []).map((m) => {
             const role = String(m.role);
@@ -294,7 +332,7 @@ export class LLMClient {
         toolCallLog.push({ name: toolName, args: input, result: undefined });
       },
       experimental_onToolCallFinish: (event) => {
-        const { toolName } = event.toolCall;
+        const { toolName, input } = event.toolCall;
         const output = event.success ? event.output : event.error;
         onToolResultCb?.(toolName, output);
         const logEntry = toolCallLog.find(
@@ -302,6 +340,27 @@ export class LLMClient {
         );
         if (logEntry) {
           logEntry.result = output;
+        }
+
+        // migration 0011：把非 signal/end 类 tool_call 透传给上游做持久化。
+        // signal_input_needed 走专属 onSignalInputRecorded 路径；end_scenario
+        // 走 onScenarioFinished。其余（update_state / change_scene / ...）进 entries。
+        if (onToolObserved && toolName !== 'signal_input_needed' && toolName !== 'end_scenario') {
+          const batchId = stepBatchIdMap.get(currentStepNumber);
+          if (batchId) {
+            // fire-and-forget：不阻塞 agentic loop；持久化失败只打 console，
+            // 不把异常冒上来影响 LLM stream。上游（game-session / persistence）
+            // 自己 catch 异常。
+            Promise.resolve(onToolObserved({
+              batchId,
+              toolName,
+              input,
+              output,
+              success: event.success,
+            })).catch((err) => {
+              console.error('[llm-client] onToolObserved failed:', err);
+            });
+          }
         }
       },
       onStepFinish: (step) => {
@@ -334,6 +393,9 @@ export class LLMClient {
             // —— tracing 层用这个替换 initialInput.systemPrompt 的一次性快照，
             //    让 Langfuse UI 每 step 能看到真实的 system prompt
             effectiveSystemPrompt: stepSystemMap.get(step.stepNumber) ?? systemPrompt,
+            // 本 step 的 batchId（migration 0011）供 game-session 持久化 narrative /
+            // signal_input entry 时挂载。
+            batchId: stepBatchIdMap.get(step.stepNumber),
           });
         } catch (err) {
           console.error('[llm-client] onStep handler threw:', err);

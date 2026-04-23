@@ -34,6 +34,7 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
         content: data.entry.content,
         reasoning: data.entry.reasoning,
         finishReason: data.entry.finishReason,
+        batchId: data.batchId ?? null,
       });
 
       // 更新 preview 为最新的这段
@@ -65,6 +66,22 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
         kind: 'signal_input',
         content: data.hint,
         payload: { choices: data.choices },
+        batchId: data.batchId ?? null,
+      });
+    },
+
+    /**
+     * 普通工具（update_state / change_scene 等）调用完成时触发，写成 kind='tool_call' 条目。
+     * 见 .claude/plans/messages-model.md Step 5 & migration 0011。
+     */
+    async onToolCallRecorded(data): Promise<void> {
+      await playthroughService.appendNarrativeEntry({
+        playthroughId,
+        role: 'system',
+        kind: 'tool_call',
+        content: data.toolName,
+        payload: { input: data.input, output: data.output },
+        batchId: data.batchId,
       });
     },
 
@@ -84,14 +101,16 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
     },
 
     async onReceiveComplete(data): Promise<void> {
-      // 保存玩家输入条目（migration 0010）
+      // 保存玩家输入条目（migration 0010 / 0011）
       //   kind='player_input'，payload 带 inputType + selectedIndex（如果选了 choice）
+      //   batchId 由 game-session 每次提交独立生成 —— 未来多模态一次提交多 entry 会复用
       await playthroughService.appendNarrativeEntry({
         playthroughId,
         role: data.entry.role,
         kind: 'player_input',
         content: data.entry.content,
         payload: data.payload as Record<string, unknown> | undefined,
+        batchId: data.batchId ?? null,
       });
 
       // 更新状态 + memory

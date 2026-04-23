@@ -200,6 +200,8 @@ export interface SessionPersistence {
    */
   onNarrativeSegmentFinalized(data: {
     entry: { role: string; content: string; reasoning?: string; finishReason?: string };
+    /** migration 0011：同 LLM step 产出的 entries 共享的 batchId，null 表示未知 */
+    batchId?: string | null;
   }): Promise<void>;
 
   /** generate() 全部结束后同步 memory 快照 + preview + VN 场景（不再负责 entry 入库） */
@@ -244,6 +246,23 @@ export interface SessionPersistence {
   onSignalInputRecorded?(data: {
     hint: string;
     choices: string[];
+    /** migration 0011：同 LLM step 产出的 entries 共享的 batchId，null 表示未知 */
+    batchId?: string | null;
+  }): Promise<void>;
+
+  /**
+   * 非 signal_input / end_scenario 的"普通"工具（update_state / change_scene /
+   * pin_memory / query_memory 等）调用完成时触发（migration 0011 / PR-M1）。
+   * 持久化层按 kind='tool_call' 写一条 narrative_entry。
+   *
+   * 触发点：llm-client 的 experimental_onToolCallFinish 钩子（经由
+   * GenerateOptions.onToolObserved 透传给 game-session，再转发到这里）。
+   */
+  onToolCallRecorded?(data: {
+    toolName: string;
+    input: unknown;
+    output: unknown;
+    batchId: string;
   }): Promise<void>;
 
   /** 玩家输入完成 */
@@ -264,6 +283,11 @@ export interface SessionPersistence {
       inputType: 'choice' | 'freetext';
       selectedIndex?: number;
     };
+    /**
+     * migration 0011：玩家一次提交的 batchId。
+     * 每次 submit 独立 UUID；未来多模态一次提交多 entry 共享同一 UUID。
+     */
+    batchId?: string | null;
   }): Promise<void>;
 
   /**
@@ -524,6 +548,20 @@ export class GameSession {
    */
   private pendingSignalChoices: string[] | null = null;
 
+  /**
+   * 当前 LLM step 的 batchId（migration 0011）。onStep 回调里从 StepInfo.batchId
+   * 取到并缓存；onSignalInputRecorded / onNarrativeSegmentFinalized 挂起时把它
+   * 一并透传给 persistence，让 narrative_entries.batch_id 统一标记"同一次 LLM
+   * 响应产出的 entries"。
+   *
+   * 为什么用 instance 字段而不是局部变量：signal_input_needed 的挂起路径里，
+   * `createWaitForPlayerInput` 是 tool-executor 的回调，它脱离 generate() 的
+   * 闭包，必须通过 this.currentStepBatchId 读到当前 step 的 id。
+   *
+   * 生命周期：onStep 触发时更新；generate() 结束时（finally 块）清空。
+   */
+  private currentStepBatchId: string | null = null;
+
   // 用于中断进行中的 generate()（停止/重置时防挂死）
   private abortController: AbortController | null = null;
 
@@ -688,6 +726,8 @@ export class GameSession {
             turn: config.turn,
             memorySnapshot: memSnap,
             payload,
+            // migration 0011：玩家一次提交独立 batchId（未来多模态一次提交多 entry 共享）
+            batchId: crypto.randomUUID(),
           }).catch((e) => console.error('[Persistence] onReceiveComplete (restore) failed:', e));
         }
 
@@ -751,6 +791,8 @@ export class GameSession {
         turn,
         memorySnapshot: memSnap,
         payload,
+        // migration 0011：玩家一次提交独立 batchId
+        batchId: crypto.randomUUID(),
       }).catch((e) => console.error('[Persistence] onReceiveComplete (signal) failed:', e));
 
       // resolve → agentic loop 继续
@@ -797,6 +839,9 @@ export class GameSession {
       // ① 持久化：generate 开始
       await this.persistence?.onGenerateStart(turn).catch((e) =>
         console.error('[Persistence] onGenerateStart failed:', e));
+
+      // migration 0011：新 generate 开始，清空 batchId 防上一轮残留串台
+      this.currentStepBatchId = null;
 
       // 🔭 可观测性：为这一轮 generate 开启 trace（在 try 外层定义，catch 也能访问）
       const traceHandle: GenerateTraceHandle | undefined = this.tracing?.startGenerateTrace(turn);
@@ -1064,6 +1109,8 @@ export class GameSession {
             }
           },
           onStep: (step) => {
+            // migration 0011：缓存当前 step 的 batchId 供挂起期 / finalize 期挂载
+            this.currentStepBatchId = step.batchId ?? null;
             // 🔭 tracing: 每个 step 记一个 generation span
             traceHandle?.recordStep({
               stepNumber: step.stepNumber,
@@ -1079,6 +1126,17 @@ export class GameSession {
               stepInputMessages: step.stepInputMessages,
               effectiveSystemPrompt: step.effectiveSystemPrompt,
             });
+          },
+          // migration 0011 / PR-M1：非 signal/end 类工具调用写 kind='tool_call' entry
+          onToolObserved: async (evt) => {
+            await this.persistence?.onToolCallRecorded?.({
+              toolName: evt.toolName,
+              input: evt.input,
+              output: evt.output,
+              batchId: evt.batchId,
+            }).catch((e) =>
+              console.error('[Persistence] onToolCallRecorded failed:', e),
+            );
           },
         });
 
@@ -1123,6 +1181,8 @@ export class GameSession {
               content: this.currentNarrativeBuffer,
               finishReason: result.finishReason,
             },
+            // migration 0011：最后一 step 的 batchId（onStep 里缓存的最后一帧）
+            batchId: this.currentStepBatchId,
           }).catch((e) => console.error('[Persistence] onNarrativeSegmentFinalized (final) failed:', e));
           this.currentNarrativeBuffer = '';
         }
@@ -1163,6 +1223,8 @@ export class GameSession {
         // Fall through to Receive Phase — player can re-send to retry
       } finally {
         this.currentTraceHandle = undefined;
+        // migration 0011：本轮 generate 彻底结束，清 batchId 防下一轮串台
+        this.currentStepBatchId = null;
       }
 
       // --- 本轮 generate 结束检查：剧情是否已结束？ ---
@@ -1222,6 +1284,8 @@ export class GameSession {
             turn,
             memorySnapshot: memSnapRx,
             payload: { inputType: 'freetext' },
+            // migration 0011：玩家一次提交独立 batchId
+            batchId: crypto.randomUUID(),
           }).catch((e) => console.error('[Persistence] onReceiveComplete failed:', e));
         }
 
@@ -1335,11 +1399,14 @@ export class GameSession {
       // 标记，post-generate 只 append 剩余的新增部分。
       if (this.currentNarrativeBuffer) {
         // 写 narrative_entries（UI 显示用）
+        // migration 0011：挂上当前 step 的 batchId，让 signal_input entry 和同批
+        // narrative / tool_call 进到一个 assistant message
         await this.persistence?.onNarrativeSegmentFinalized({
           entry: {
             role: 'generate',
             content: this.currentNarrativeBuffer,
           },
+          batchId: this.currentStepBatchId,
         }).catch((e) =>
           console.error('[Persistence] onNarrativeSegmentFinalized (signal) failed:', e),
         );
@@ -1383,9 +1450,11 @@ export class GameSession {
         // 1. VN Sentence 流里放一条 signal_input 供 backlog 回看（migration 0010 / Step 4）
         this.emitSignalInputSentence(hint, choices);
         // 2. 持久化成 narrative_entry（下次 restore 重放）
+        //    migration 0011：挂当前 step 的 batchId
         await this.persistence?.onSignalInputRecorded?.({
           hint,
           choices,
+          batchId: this.currentStepBatchId,
         }).catch((e) => console.error('[Persistence] onSignalInputRecorded failed:', e));
       }
       // 同时保存最新的 memory snapshot → 断线重连后 memory 不空
