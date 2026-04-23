@@ -333,4 +333,86 @@ describe('buildMessagesFromEntries', () => {
     const toolPart = ((msgs[1] as ToolModelMessage).content as any[])[0];
     expect(toolPart.output).toEqual({ type: 'json', value: { wrapped: 'plain text' } });
   });
+
+  // ==========================================================================
+  // A2 假设验证：batchId 分组 → orderIdx 顺序对合并结果不敏感
+  //
+  // 背景：recordPendingSignal 原本在 signal_input 事件前同步 flush 当前
+  // narrative buffer，理由是"保证 narrative 在 signal_input 之前写 DB，避免
+  // messages-builder 把它们拆成不同 assistant message"。
+  //
+  // 但 messages-builder 的实际合并逻辑是：
+  //   1. 按 batchId 分组（相同 batchId → 同 group）
+  //   2. group 内 narrative 全部 join 成 text block
+  //   3. group 内 tool_call / signal_input 全部变成 tool-call blocks
+  //   4. 固定顺序输出 assistant.content = [text, ...tool-calls]（不看 orderIdx）
+  //
+  // 所以只要 batchId 相同，signal_input entry 的 orderIdx 即便在 narrative
+  // 之前也没问题。下面用例锁定这个行为，为后续删除 recordPendingSignal 里的
+  // narrative flush 做 regression 保障。
+  // ==========================================================================
+
+  it('A1. signal_input orderIdx < narrative orderIdx 但同 batchId → 仍合并为一个 assistant (text + tool-call)', () => {
+    // 模拟"不 flush"场景：signal_input entry 先写（orderIdx=0），
+    // 之后 generate 返回 flush narrative 写（orderIdx=1），两者同 batchId
+    const msgs = buildMessagesFromEntries([
+      signalInput('你想做什么？', ['向左', '向右'], 'B1', 0),
+      narrative('你站在岔路口，夕阳斜照在石板上。', 'B1', 1),
+    ]);
+
+    // 期望：一个 assistant + 一个 tool message（不因顺序颠倒就拆成两个 batch）
+    expect(msgs).toHaveLength(2);
+
+    const a = msgs[0] as AssistantModelMessage;
+    expect(a.role).toBe('assistant');
+    expect(Array.isArray(a.content)).toBe(true);
+    const parts = a.content as any[];
+    // 固定顺序：text 在 tool-call 之前
+    expect(parts[0]).toEqual({ type: 'text', text: '你站在岔路口，夕阳斜照在石板上。' });
+    expect(parts[1].type).toBe('tool-call');
+    expect(parts[1].toolName).toBe('signal_input_needed');
+    expect(parts[1].input).toEqual({ prompt_hint: '你想做什么？', choices: ['向左', '向右'] });
+
+    // tool message 跟随
+    const t = msgs[1] as ToolModelMessage;
+    expect(t.role).toBe('tool');
+    const tp = (t.content as any[])[0];
+    expect(tp.toolName).toBe('signal_input_needed');
+    expect(tp.toolCallId).toBe(parts[1].toolCallId);
+  });
+
+  it('A2. 多 narrative 散在 signal_input / tool_call 之间，同 batchId → 所有 narrative 合成一个 text block', () => {
+    // 更极端的乱序：narrative 和 tool-call / signal_input 交替
+    const msgs = buildMessagesFromEntries([
+      signalInput('Q?', ['ok'], 'B1', 0),
+      narrative('段一', 'B1', 1),
+      toolCall('update_state', { x: 1 }, { ok: true }, 'B1', 2),
+      narrative('段二', 'B1', 3),
+    ]);
+    expect(msgs).toHaveLength(2);
+    const a = msgs[0] as AssistantModelMessage;
+    const parts = a.content as any[];
+    // text block：两段 narrative 按 orderIdx 升序拼接
+    expect(parts[0]).toEqual({ type: 'text', text: '段一段二' });
+    // tool-call 按 entries 扫描顺序加入（orderIdx 升序）：先 signal_input 再 update_state
+    expect(parts[1].toolName).toBe('signal_input_needed');
+    expect(parts[2].toolName).toBe('update_state');
+  });
+
+  it('A3. signal_input 不同 batchId（真实跨 step）→ 分开两个 assistant message', () => {
+    // 假设 LLM 走了两个独立 step：step 1 narrative（无 signal），step 2 signal_input（无 narrative）
+    // 两者不同 batchId，messages-builder 分两个 assistant message
+    const msgs = buildMessagesFromEntries([
+      narrative('第一步的叙事', 'B1', 0),
+      signalInput('Q?', ['ok'], 'B2', 1),
+    ]);
+    expect(msgs).toHaveLength(3); // assistant(text) + assistant(tool-call) + tool
+    expect(msgs[0]!.role).toBe('assistant');
+    expect((msgs[0] as AssistantModelMessage).content).toBe('第一步的叙事');
+    expect(msgs[1]!.role).toBe('assistant');
+    const parts = (msgs[1] as AssistantModelMessage).content as any[];
+    expect(parts[0].type).toBe('tool-call');
+    expect(parts[0].toolName).toBe('signal_input_needed');
+    expect(msgs[2]!.role).toBe('tool');
+  });
 });

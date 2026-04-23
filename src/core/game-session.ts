@@ -1138,16 +1138,15 @@ export class GameSession {
         // Finalize streaming → append to narrative entries (with attached debug info)
         this.emitter.finalizeStreamingEntry();
 
-        // Store LLM response in memory.
+        // Store LLM response in memory + 持久化 narrative entry。
         //
-        // 方案 B（turn-bounded）下一次 generate 对应一个玩家回合。如果本轮调了
-        // signal_input_needed，`recordPendingSignal` 已经在 signal 触发时把 signal
-        // 之前的 narrative buffer 写进 memory + narrative_entries 了；currentNarrativeBuffer
-        // 此时一般已清空（signal 之后 stopWhen 拦截直接返回，LLM 没有继续写叙事的
-        // 机会）。所以这里的 if 多半不会 fire。
+        // 方案 B（turn-bounded）下一次 generate 对应一个玩家回合。
+        // currentNarrativeBuffer 包含本轮 LLM 产出的全部 narrative text
+        // （signal_input 路径也不再提前 flush，见 recordPendingSignal 注释）。
         //
-        // 没有 signal 的场景（natural stop / maxSteps）：currentNarrativeBuffer 含全部
-        // 本轮 text，这里统一写进 memory。
+        // 这里一次性写 memory + narrative_entries。narrative 的 batchId 挂当前
+        // step 的 id，和同 step 的 tool_call / signal_input entry 共享 batch
+        // → messages-builder 按 batchId 分组合并为一个 assistant message。
         if (this.currentNarrativeBuffer) {
           await this.memory.appendTurn({
             turn,
@@ -1157,9 +1156,7 @@ export class GameSession {
           });
         }
 
-        // ② 持久化：最后一段 streaming entry（generate 返回后）
-        //    signal 路径下 recordPendingSignal 已经处理了 signal 之前的叙事；
-        //    这里只处理 signal 之后（或无 signal 时的整段）
+        // ② 持久化：本轮 narrative 段入 narrative_entries
         if (this.currentNarrativeBuffer) {
           await this.persistence?.onNarrativeSegmentFinalized({
             entry: {
@@ -1390,13 +1387,15 @@ export class GameSession {
    *   3. 外层 coreLoop 看到 this.pendingSignal 非空，进入 Receive 阶段等玩家输入
    *
    * 本方法内部做的事：
-   *   - flush 当前 narration buffer → 玩家先看到 GM 的叙事再看到选项
-   *   - 把当前 narrative buffer 写进 narrative_entries + memory（挂当前 step batchId）
-   *   - 写一条 signal_input entry 进 narrative_entries（供 restore / backlog）
+   *   - flush pendingNarrationFlusher → VN UI 先看到叙事 Sentence 再看到选项
    *   - emit signal_input Sentence 到 VN UI
+   *   - 写 signal_input entry 进 narrative_entries（供 restore / backlog）
    *   - 设 this.pendingSignal 供 coreLoop 读
    *
-   * 不做的事（区别于老挂起模式）：
+   * 不做的事：
+   *   - **不** flush currentNarrativeBuffer 到 DB。挂起模式 v1 时代会做，
+   *     方案 B 下冗余（见下方 ★ 2 注释 + messages-builder.test.ts A1-A3
+   *     canonical tests 证明 batchId 分组机制足够）
    *   - 不设 UI 状态为 waiting-input（generate 还在 generating，stopWhen 拦截后 coreLoop 切 UI）
    *   - 不调 onWaitingInput（由 coreLoop 在 generate 返回后统一调）
    *   - 不 return Promise（execute 的 async 立即 resolve → tool_result success:true 可用）
@@ -1405,28 +1404,22 @@ export class GameSession {
     const hint = options.hint ?? '';
     const choices = options.choices ?? [];
 
-    // ★ 1. flush 累积的 narration 段落 Sentence，让玩家先看到叙事再看到选项
+    // ★ 1. flush 累积的 narration 段落 Sentence 到 VN UI（WS 'sentence' 事件），
+    //    让玩家先看到叙事再看到选项。注意这只 emit Sentence，**不**写 DB ——
+    //    DB 写入由 generate() 返回后的通用路径统一处理（见下方 ★ 注释）。
     this.pendingNarrationFlusher?.();
 
-    // ★ 2. 把当前 narrative buffer 同步写 narrative_entries + memory
-    if (this.currentNarrativeBuffer) {
-      await this.persistence?.onNarrativeSegmentFinalized({
-        entry: {
-          role: 'generate',
-          content: this.currentNarrativeBuffer,
-        },
-        batchId: this.currentStepBatchId,
-      }).catch((e) =>
-        console.error('[Persistence] onNarrativeSegmentFinalized (signal) failed:', e),
-      );
-      await this.memory.appendTurn({
-        turn: this.stateStore.getTurn(),
-        role: 'generate',
-        content: this.currentNarrativeBuffer,
-        tokenCount: estimateTokens(this.currentNarrativeBuffer),
-      });
-      this.currentNarrativeBuffer = '';
-    }
+    // ★ 2. 不主动 flush currentNarrativeBuffer 到 DB。
+    //    历史（挂起模式 v1 时代）这里会先写 narrative → 再写 signal_input，
+    //    理由是"保证顺序 + 避免挂起期间断线丢失"。方案 B 下：
+    //      - 挂起已删，generate() stopWhen 后正常返回
+    //      - coreLoop 的 L1151 通用路径会 flush currentNarrativeBuffer 进 DB
+    //      - narrative 和 signal_input 同属当前 LLM step → 同 batchId
+    //      - messages-builder 按 batchId 分组合并成一个 assistant message，
+    //        orderIdx 顺序颠倒不影响合并结果（见 messages-builder.test.ts
+    //        "A1. signal_input orderIdx < narrative orderIdx 但同 batchId" 用例）
+    //    所以这里的 flush 变冗余，删掉减少代码路径 + 减少 mem0 adapter 的
+    //    重复 push 云端。
 
     // ★ 3. 缓存 pendingSignal 供 coreLoop Receive 阶段读（hint + choices + batchId）
     this.pendingSignal = {
