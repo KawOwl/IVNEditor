@@ -84,11 +84,14 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
     },
 
     async onReceiveComplete(data): Promise<void> {
-      // 保存玩家输入条目
+      // 保存玩家输入条目（migration 0010）
+      //   kind='player_input'，payload 带 inputType + selectedIndex（如果选了 choice）
       await playthroughService.appendNarrativeEntry({
         playthroughId,
         role: data.entry.role,
+        kind: 'player_input',
         content: data.entry.content,
+        payload: data.payload as Record<string, unknown> | undefined,
       });
 
       // 更新状态 + memory

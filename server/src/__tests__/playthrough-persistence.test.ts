@@ -413,6 +413,8 @@ describe('PlaythroughPersistence', () => {
       expect(detail!.entries.length).toBe(1);
       expect(detail!.entries[0].role).toBe('receive');
       expect(detail!.entries[0].content).toBe('我走向那道光');
+      // migration 0010: player_input entry 默认 kind='player_input'
+      expect(detail!.entries[0].kind).toBe('player_input');
 
       // 检查状态更新
       expect(detail!.stateVars).toEqual(stateVars);
@@ -423,6 +425,41 @@ describe('PlaythroughPersistence', () => {
       expect(detail!.inputHint).toBeNull();
       expect(detail!.inputType).toBe('freetext');
       expect(detail!.choices).toBeNull();
+    });
+
+    it('should persist payload.selectedIndex when player picked a choice', async () => {
+      const pt = await createTestPlaythrough();
+      const persistence = createPlaythroughPersistence(pt.id);
+
+      await persistence.onReceiveComplete({
+        entry: { role: 'receive', content: '返回村庄' },
+        stateVars: {},
+        turn: 1,
+        memorySnapshot: { kind: 'legacy-v1', entries: [], summaries: [] },
+        payload: { inputType: 'choice', selectedIndex: 1 },
+      });
+
+      const detail = await service.getById(pt.id, pt.userId);
+      expect(detail!.entries[0].payload).toEqual({
+        inputType: 'choice',
+        selectedIndex: 1,
+      });
+    });
+
+    it('should persist payload.inputType=freetext when no choices', async () => {
+      const pt = await createTestPlaythrough();
+      const persistence = createPlaythroughPersistence(pt.id);
+
+      await persistence.onReceiveComplete({
+        entry: { role: 'receive', content: '我自己写的一段回复' },
+        stateVars: {},
+        turn: 1,
+        memorySnapshot: { kind: 'legacy-v1', entries: [], summaries: [] },
+        payload: { inputType: 'freetext' },
+      });
+
+      const detail = await service.getById(pt.id, pt.userId);
+      expect(detail!.entries[0].payload).toEqual({ inputType: 'freetext' });
     });
   });
 

@@ -157,6 +157,30 @@ export function createNarrationAccumulator(emit: (para: string) => void) {
 }
 
 /**
+ * 根据玩家输入 + 当前挂起的 choices 算 player_input entry 的结构化 payload。
+ * （migration 0010 / Step 3，见 .claude/plans/conversation-persistence.md）
+ *
+ *   choices 空 / null   → 纯自由输入，inputType='freetext'
+ *   text 精确命中某项  → inputType='choice' + selectedIndex=命中下标
+ *   text 不匹配        → 玩家选了自由输入绕开 choices，仍然 'freetext'
+ *
+ * 导出以便测试；submitInput 和 restore 路径都用这个函数统一逻辑。
+ */
+export function computeReceivePayload(
+  text: string,
+  choices: string[] | null,
+): { inputType: 'choice' | 'freetext'; selectedIndex?: number } {
+  if (!choices || choices.length === 0) {
+    return { inputType: 'freetext' };
+  }
+  const idx = choices.indexOf(text);
+  if (idx >= 0) {
+    return { inputType: 'choice', selectedIndex: idx };
+  }
+  return { inputType: 'freetext' };
+}
+
+/**
  * SessionPersistence — 可选的持久化回调接口
  *
  * 远程模式下由 server 注入实现（写 DB），本地模式不传。
@@ -228,6 +252,18 @@ export interface SessionPersistence {
     stateVars: Record<string, unknown>;
     turn: number;
     memorySnapshot: Record<string, unknown>;
+    /**
+     * migration 0010 / Step 3：player_input entry 的结构化载荷。
+     *   inputType='choice'   玩家从 signal_input_needed 的 choices 里选了一个
+     *     + selectedIndex    选的是 choices[selectedIndex]
+     *   inputType='freetext' 玩家自由输入（可能没 signal，也可能有 signal 但没选 choice）
+     *     + selectedIndex    undefined
+     * 让未来 backlog / fork 能准确还原"是选的第几个还是自己敲的"。
+     */
+    payload?: {
+      inputType: 'choice' | 'freetext';
+      selectedIndex?: number;
+    };
   }): Promise<void>;
 
   /**
@@ -479,6 +515,15 @@ export class GameSession {
   // 内循环挂起 Promise（signal_input_needed 等玩家输入）
   private signalInputResolve: ((text: string) => void) | null = null;
 
+  /**
+   * 当前 signal_input_needed 挂起时的 choices（migration 0010 / Step 3）。
+   * submitInput 时拿来和玩家输入 text 匹配，算出 selectedIndex 存到
+   * player_input entry 的 payload 里。restore 路径用 config.choices 同理。
+   *
+   * 非 null 表示"正在等玩家答 signal"；submitInput resolve 后清回 null。
+   */
+  private pendingSignalChoices: string[] | null = null;
+
   // 用于中断进行中的 generate()（停止/重置时防挂死）
   private abortController: AbortController | null = null;
 
@@ -640,6 +685,8 @@ export class GameSession {
             stateVars: this.stateStore.getAll(),
             turn: config.turn,
             memorySnapshot: memSnap,
+            // restore 路径下玩家刚从 DB 恢复的 choices 里选 → 算 selectedIndex
+            payload: computeReceivePayload(inputText, config.choices ?? null),
           }).catch((e) => console.error('[Persistence] onReceiveComplete (restore) failed:', e));
         }
 
@@ -668,6 +715,9 @@ export class GameSession {
       // 挂起模式：signal_input_needed 正在等玩家输入
       const resolve = this.signalInputResolve;
       this.signalInputResolve = null;
+      // migration 0010 / Step 3：算 selectedIndex 之前先快照 choices，再清空
+      const choicesAtSubmit = this.pendingSignalChoices;
+      this.pendingSignalChoices = null;
 
       // 清 UI 状态，恢复生成中
       this.emitter.setInputHint(null);
@@ -698,6 +748,7 @@ export class GameSession {
         stateVars: this.stateStore.getAll(),
         turn,
         memorySnapshot: memSnap,
+        payload: computeReceivePayload(text, choicesAtSubmit),
       }).catch((e) => console.error('[Persistence] onReceiveComplete (signal) failed:', e));
 
       // resolve → agentic loop 继续
@@ -1161,12 +1212,14 @@ export class GameSession {
           });
 
           // ④ 持久化：receive 完成
+          // 外循环 Receive 路径：无 signal_input_needed 上下文，永远 freetext
           const memSnapRx = await this.memory.snapshot();
           await this.persistence?.onReceiveComplete({
             entry: { role: 'receive', content: inputText },
             stateVars: this.stateStore.getAll(),
             turn,
             memorySnapshot: memSnapRx,
+            payload: { inputType: 'freetext' },
           }).catch((e) => console.error('[Persistence] onReceiveComplete failed:', e));
         }
 
@@ -1284,6 +1337,9 @@ export class GameSession {
         this.emitter.setInputType('choice', options.choices);
       }
       this.emitter.setStatus('waiting-input');
+
+      // 缓存 choices 供 submitInput 算 selectedIndex（migration 0010 / Step 3）
+      this.pendingSignalChoices = options.choices ?? null;
 
       // ③ 持久化：
       //
