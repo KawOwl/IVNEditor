@@ -434,6 +434,11 @@ export interface RestoreConfig {
   defaultScene?: SceneState;
   /** mem0 adapter 的 API key —— server 从 env 读后注入 */
   mem0ApiKey?: string;
+  /**
+   * Memory Refactor v2：从 narrative_entries 读历史的接口。
+   * server 侧传入 createNarrativeHistoryReader(playthroughId)。本地模式不传。
+   */
+  narrativeReader?: import('./memory/narrative-reader').NarrativeHistoryReader;
 }
 
 export interface GameSessionConfig {
@@ -457,6 +462,11 @@ export interface GameSessionConfig {
   defaultScene?: SceneState;
   /** mem0 adapter 的 API key —— server 从 env 读后注入（前端不读 env） */
   mem0ApiKey?: string;
+  /**
+   * Memory Refactor v2：从 narrative_entries 读历史的接口。
+   * server 侧传入 createNarrativeHistoryReader(playthroughId)。本地模式不传。
+   */
+  narrativeReader?: import('./memory/narrative-reader').NarrativeHistoryReader;
 }
 
 // ============================================================================
@@ -600,6 +610,7 @@ export class GameSession {
         config: config.memoryConfig,
         llmClient: this.llmClient,
         mem0ApiKey: config.mem0ApiKey,
+        reader: config.narrativeReader,
       });
       this.segments = config.segments;
       this.enabledTools = config.enabledTools ?? [];
@@ -654,6 +665,7 @@ export class GameSession {
         config: config.memoryConfig,
         llmClient: this.llmClient,
         mem0ApiKey: config.mem0ApiKey,
+        reader: config.narrativeReader,
       });
       this.segments = config.segments;
       this.enabledTools = config.enabledTools ?? [];

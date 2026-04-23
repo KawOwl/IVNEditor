@@ -1,27 +1,11 @@
 /**
- * LLMSummarizerMemory —— 和 LegacyMemory 平行的 Memory adapter
+ * LLMSummarizerMemory —— Memory Refactor v2（2026-04-23）：reader-based 实现
  *
- * 设计原则：**不继承 LegacyMemory**。虽然两者大部分行为重合（appendTurn /
- * pin / retrieve 等），但通过继承共享会把"是否共享某段实现"的权利交给基类，
- * 将来改 legacy 的细节就会牵扯到 LLMSummarizer。作为独立 adapter 可以各自
- * 演化（比如 LLMSummarizer 未来想加"压缩前先 dedupe"、"摘要 stream 返回"
- * 这类功能），不影响 legacy。
+ * 和 LegacyMemory 结构对齐（各自独立，无继承），唯一功能差别：
+ *   - compressFn 走真 LLM（makeLLMCompressFn 产物），而不是截断拼接
+ *   - snapshot.kind = 'llm-summarizer-v2'（和 legacy 的 'legacy-v2' 隔离）
  *
- * 与 legacy 的唯一功能性差别：
- *   - compressFn 从截断拼接换成真 LLM 调用（质量显著提升）
- *   - snapshot.kind = 'llm-summarizer-v1'（和 legacy 的 'legacy-v1' 隔离）
- *     → 切换 provider 时 restore 会抛 kind 不匹配错，这是 opaque snapshot
- *       契约的预期行为
- *
- * 行为相同点（有意和 legacy 对齐，避免引入非压缩相关的变化）：
- *   - 每轮 appendTurn 写入，压缩按 token 阈值触发，pinned 不参与压缩
- *   - pinned entries 进入 retrieve().summary 的 `[重要] ...` 列表
- *   - getRecentAsMessages 按 recencyWindow 窗口 + budget cap
- *   - 关键词匹配给 query_memory tool
- *
- * 代码上和 legacy 会有明显重复 —— 这是"平行独立"的代价，换来演化自由度。
- * 如果未来两个 adapter 积累出确实值得共享的小块（比如 entries 管理），
- * 再提取成 `memory/shared/` 模块。
+ * 详见 .claude/plans/memory-refactor-v2.md
  */
 
 import { estimateTokens } from '../../tokens';
@@ -34,21 +18,25 @@ import type {
   MemorySnapshot,
   RecentMessagesResult,
 } from '../types';
+import type { NarrativeHistoryReader } from '../narrative-reader';
+import { narrativeEntriesToMemoryEntries } from '../narrative-entry-mapping';
 import { makeLLMCompressFn, type CompressFn } from './compress';
 
 // ============================================================================
-// Snapshot kind（adapter 间隔离）
+// Snapshot kind
 // ============================================================================
 
-const SNAPSHOT_KIND = 'llm-summarizer-v1';
+const SNAPSHOT_KIND_V2 = 'llm-summarizer-v2';
+const SNAPSHOT_KIND_V1 = 'llm-summarizer-v1';
 
 // ============================================================================
-// Internal state
+// Internal state (v2)
 // ============================================================================
 
 interface LLMSummarizerState {
-  entries: MemoryEntry[];
   summaries: string[];
+  pinned: MemoryEntry[];
+  compressedUpTo: number;
 }
 
 // ============================================================================
@@ -66,12 +54,13 @@ function generateId(): string {
 
 export class LLMSummarizerMemory implements Memory {
   readonly kind = 'llm-summarizer';
-  private state: LLMSummarizerState = { entries: [], summaries: [] };
+  private state: LLMSummarizerState = { summaries: [], pinned: [], compressedUpTo: -1 };
   private readonly compressFn: CompressFn;
 
   constructor(
     private readonly config: MemoryConfig,
     llmClient: LLMClient,
+    private readonly reader?: NarrativeHistoryReader,
   ) {
     this.compressFn = makeLLMCompressFn(llmClient);
   }
@@ -85,7 +74,8 @@ export class LLMSummarizerMemory implements Memory {
     tokenCount: number;
     tags?: string[];
   }): Promise<MemoryEntry> {
-    const entry: MemoryEntry = {
+    // v2 no-op：对话原件由 persistence 层写 narrative_entries，adapter 不再双写
+    return {
       id: generateId(),
       turn: params.turn,
       role: params.role,
@@ -95,8 +85,6 @@ export class LLMSummarizerMemory implements Memory {
       tags: params.tags,
       pinned: false,
     };
-    this.state.entries.push(entry);
-    return entry;
   }
 
   async pin(content: string, tags?: string[]): Promise<MemoryEntry> {
@@ -110,27 +98,21 @@ export class LLMSummarizerMemory implements Memory {
       tags,
       pinned: true,
     };
-    this.state.entries.push(entry);
+    this.state.pinned.push(entry);
     return entry;
   }
 
   // ─── Read ──────────────────────────────────────────────────────────
 
-  /**
-   * summary = 真 LLM 生成的摘要列表 + pinned entries
-   *
-   * 相比 legacy，summaries 数组里的每条都是一段 3-5 句话的情节摘要，
-   * 而不是截断拼接的原文片段。这是 LLMSummarizer 的核心价值。
-   */
   async retrieve(query: string): Promise<MemoryRetrieval> {
-    const pinned = this.state.entries.filter((e) => e.pinned);
     const parts: string[] = [];
     for (const s of this.state.summaries) parts.push(s);
-    for (const p of pinned) parts.push(`[重要] ${p.content}`);
+    for (const p of this.state.pinned) parts.push(`[重要] ${p.content}`);
 
+    const recent = await this.readRecentMemoryEntries();
     return {
       summary: parts.join('\n\n'),
-      entries: this.keywordMatch(query),
+      entries: this.keywordMatch(query, recent),
     };
   }
 
@@ -138,11 +120,18 @@ export class LLMSummarizerMemory implements Memory {
     opts: { budget: number },
   ): Promise<RecentMessagesResult> {
     const window = this.config.recencyWindow;
-    const recent = this.state.entries.slice(-window);
+    if (!this.reader) {
+      return { messages: [], tokensUsed: 0 };
+    }
+    const raw = await this.reader.readRecent({
+      limit: window,
+      kinds: ['narrative', 'player_input'],
+    });
+    const entries = narrativeEntriesToMemoryEntries(raw);
 
     const messages: ChatMessage[] = [];
     let used = 0;
-    for (const e of recent) {
+    for (const e of entries) {
       if (used + e.tokenCount > opts.budget) break;
       messages.push({
         role: e.role === 'receive' ? 'user' : 'assistant',
@@ -156,68 +145,82 @@ export class LLMSummarizerMemory implements Memory {
   // ─── Lifecycle ─────────────────────────────────────────────────────
 
   async maybeCompact(): Promise<void> {
-    if (this.getTotalTokenCount() <= this.config.compressionThreshold) return;
-    await this.compressOnce();
-  }
+    if (!this.reader) return;
 
-  /**
-   * 压缩一轮旧 entries 成 summary 追加到 summaries[]。
-   *
-   * 唯一和 legacy 的差别：compressFn 真的调 LLM（makeLLMCompressFn 的产物），
-   * 所以这一步会额外花一次 LLM 调用（~几秒 + 一点 token 钱）。
-   * 触发时机和 legacy 一致：总 token 超 compressionThreshold 时才跑。
-   */
-  private async compressOnce(): Promise<void> {
-    const { recencyWindow, compressionHints } = this.config;
-    const pinned = this.state.entries.filter((e) => e.pinned);
-    const unpinned = this.state.entries.filter((e) => !e.pinned);
-    const toKeep = unpinned.slice(-recencyWindow);
-    const toCompress = unpinned.slice(0, -recencyWindow);
+    const pending = await this.reader.readRange({
+      fromOrderIdx: this.state.compressedUpTo + 1,
+    });
+    const memoryEntries = narrativeEntriesToMemoryEntries(pending);
+    const totalTokens = memoryEntries.reduce((s, e) => s + e.tokenCount, 0);
+    if (totalTokens <= this.config.compressionThreshold) return;
+
+    const toCompress = memoryEntries.slice(0, -this.config.recencyWindow);
     if (toCompress.length === 0) return;
 
-    const summary = await this.compressFn(toCompress, compressionHints);
+    const summary = await this.compressFn(toCompress, this.config.compressionHints);
     this.state.summaries.push(summary);
 
-    this.state.entries = [...pinned, ...toKeep];
+    const lastCompressedId = toCompress[toCompress.length - 1]?.id;
+    if (lastCompressedId) {
+      const orig = pending.find((e) => e.id === lastCompressedId);
+      if (orig) this.state.compressedUpTo = orig.orderIdx;
+    }
   }
 
   async snapshot(): Promise<MemorySnapshot> {
     return {
-      kind: SNAPSHOT_KIND,
-      entries: structuredClone(this.state.entries),
+      kind: SNAPSHOT_KIND_V2,
       summaries: [...this.state.summaries],
+      pinned: structuredClone(this.state.pinned),
+      compressedUpTo: this.state.compressedUpTo,
     };
   }
 
   async restore(snap: MemorySnapshot): Promise<void> {
-    if (snap.kind !== SNAPSHOT_KIND) {
-      throw new Error(
-        `LLMSummarizerMemory cannot restore from kind: ${String(snap.kind)}. ` +
-          `提示：adapter 间 snapshot 不可互换；切换 provider 需新建 playthrough。`,
-      );
+    if (snap.kind === SNAPSHOT_KIND_V2) {
+      this.state = {
+        summaries: [...((snap.summaries ?? []) as string[])],
+        pinned: structuredClone((snap.pinned ?? []) as MemoryEntry[]),
+        compressedUpTo: (snap.compressedUpTo as number | undefined) ?? -1,
+      };
+      return;
     }
-    this.state = {
-      entries: structuredClone((snap.entries ?? []) as MemoryEntry[]),
-      summaries: [...((snap.summaries ?? []) as string[])],
-    };
+    if (snap.kind === SNAPSHOT_KIND_V1) {
+      // 老格式兼容：从 entries.pinned=true 提取
+      const oldEntries = (snap.entries ?? []) as MemoryEntry[];
+      this.state = {
+        summaries: [...((snap.summaries ?? []) as string[])],
+        pinned: structuredClone(oldEntries.filter((e) => e.pinned)),
+        compressedUpTo: -1,
+      };
+      return;
+    }
+    throw new Error(
+      `LLMSummarizerMemory cannot restore from kind: ${String(snap.kind)}. ` +
+        `提示：adapter 间 snapshot 不可互换；切换 provider 需新建 playthrough。`,
+    );
   }
 
   async reset(): Promise<void> {
-    this.state = { entries: [], summaries: [] };
+    this.state = { summaries: [], pinned: [], compressedUpTo: -1 };
   }
 
   // ─── Internal helpers ──────────────────────────────────────────────
 
-  private getTotalTokenCount(): number {
-    return this.state.entries.reduce((s, e) => s + e.tokenCount, 0);
+  private async readRecentMemoryEntries(): Promise<MemoryEntry[]> {
+    if (!this.reader) return [];
+    const raw = await this.reader.readRecent({
+      limit: Math.max(this.config.recencyWindow * 4, 100),
+      kinds: ['narrative', 'player_input'],
+    });
+    return narrativeEntriesToMemoryEntries(raw);
   }
 
-  /** 空格分词 + 词频打分，和 legacy 对齐 */
-  private keywordMatch(query: string): MemoryEntry[] {
+  private keywordMatch(query: string, entries: MemoryEntry[]): MemoryEntry[] {
     const keywords = query.toLowerCase().split(/\s+/).filter(Boolean);
     if (keywords.length === 0) return [];
 
-    const scored = this.state.entries
+    const scored = entries
       .map((entry) => {
         const text = entry.content.toLowerCase();
         const score = keywords.reduce(

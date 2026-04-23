@@ -14,6 +14,7 @@ import type { ScriptManifest, PromptSegment } from '../../src/core/types';
 import type { LLMConfig } from '../../src/core/llm-client';
 import { createWebSocketEmitter } from './ws-session-emitter';
 import { createPlaythroughPersistence } from './services/playthrough-persistence';
+import { createNarrativeHistoryReader } from './services/narrative-reader';
 import { createBoundTracing } from './tracing';
 
 // ============================================================================
@@ -193,6 +194,9 @@ export class GameSessionWrapper {
         scriptVersionId: manifest.id,
         kind: this.kind,
       }),
+      // Memory Refactor v2：memory adapter 通过 reader 从 canonical
+      // narrative_entries 读历史，不再持有 entries 副本。
+      narrativeReader: createNarrativeHistoryReader(this.playthroughId),
     };
   }
 }

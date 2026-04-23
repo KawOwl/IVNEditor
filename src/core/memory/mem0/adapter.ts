@@ -45,6 +45,9 @@ import type {
   MemoryScope,
   RecentMessagesResult,
 } from '../types';
+// Memory Refactor v2：Mem0 不需要 NarrativeHistoryReader —— 云端做长期记忆检索，
+// 本地 recentEntries 窗口承担 getRecentAsMessages。factory 传不传 reader 都行，
+// mem0 的 Mem0Memory constructor 不接受也不需要。
 import { entryToMem0Message, playthroughToMem0UserId } from './mapping';
 
 // ============================================================================

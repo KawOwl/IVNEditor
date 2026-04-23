@@ -164,4 +164,15 @@ export interface CreateMemoryOptions {
    * 也可以通过 config.providerOptions.apiKey 覆盖（剧本级定制），优先级更高。
    */
   mem0ApiKey?: string;
+  /**
+   * Memory Refactor v2（2026-04-23）：从 canonical narrative_entries 读历史的
+   * 接口。legacy / llm-summarizer 的 retrieve / getRecentAsMessages / maybeCompact
+   * 通过它拉 entries，不再自己持有副本。
+   *
+   * mem0 adapter 暂不依赖 reader（本地 recentEntries 窗口已够用）。
+   * 单元测试可以不传 —— adapter 内部 reader undefined 时保守返回空 messages。
+   *
+   * 详见 .claude/plans/memory-refactor-v2.md
+   */
+  reader?: import('./narrative-reader').NarrativeHistoryReader;
 }
