@@ -284,3 +284,130 @@ within-turn 仍需 —— 玩家一个选择可能触发 LLM 在一回合内改 
 - 要做长篇剧本（单局超过 20 回合）
 
 如果以上不出现，方案 B 可以长期搁置。真出现时再实施，代价固定，不随时间增长。
+
+---
+
+## 参考实现 · Claude Code 的 AskUserQuestionTool
+
+> 调研源：https://github.com/oboard/claude-code-rev
+> 路径：`src/tools/AskUserQuestionTool/AskUserQuestionTool.tsx`
+
+Claude Code（Anthropic 官方 CLI）的 user-input tool 架构实质上就是方案 B，
+而且**更极致**：event loop 从不 block，所有状态在数据结构里。
+
+### 实现要点
+
+```tsx
+export const AskUserQuestionTool = buildTool({
+  shouldDefer: true,                          // ★ 标志位 1
+  requiresUserInteraction() { return true },  // ★ 标志位 2
+
+  async checkPermissions(input) {
+    return {
+      behavior: 'ask',                         // ★ runtime 看到就暂停
+      message: 'Answer questions?',
+      updatedInput: input,
+    };
+  },
+
+  async call({ questions, answers = {}, annotations }) {
+    // 不 await user Promise。同步返回。
+    // 因为到这一步时 answers 已经被 runtime 填好了。
+    return { data: { questions, answers, ...(annotations && { annotations }) } };
+  },
+
+  mapToolResultToToolResultBlockParam({ answers }, toolUseID) {
+    return {
+      type: 'tool_result',
+      content: `User has answered your questions: ${answersText}. You can now continue...`,
+      tool_use_id: toolUseID,
+    };
+  },
+});
+```
+
+### 执行流程
+
+```
+LLM stream 吐 tool_use(AskUserQuestion, {questions:[...]})
+   │
+   ▼
+runtime 截获 → 调 tool.checkPermissions
+   │
+   ▼
+返回 behavior: 'ask' → runtime 结束当前 LLM stream（不 await）
+   │
+   ▼
+runtime 把 pending tool_use 存 conversation log
+   │
+   ▼
+runtime 在 UI 层显示选项，等玩家答
+   │
+   ▼
+玩家答完 → 答案塞进 input.answers
+   │
+   ▼
+runtime 调 tool.call(input) → 同步返回 data
+   │
+   ▼
+runtime 把 tool_result 压进 conversation log
+   │
+   ▼
+runtime 发起新一次 LLM stream（带完整历史）
+```
+
+**关键**：LLM stream 生命周期**短**；长寿命状态只在 **conversation log**
+（append-only 消息数组）。Event loop 从不被用户输入 block。
+
+### Session Resume（Claude Code 做法）
+
+```tsx
+const fullLog = await loadFullLog(log);
+void onResume(sessionId, fullLog, 'slash_command_picker');
+```
+
+**纯加载历史，不处理"挂起中"状态**。因为架构上根本没有"挂起态" ——
+要么 stream 已经结束（log 闭合），要么 pending tool_use 在 log 尾部（runtime
+自然会重新提示玩家）。
+
+### 和我们方案 B 的对比
+
+| 维度 | Claude Code | 我们当前 | 我们方案 B |
+|---|---|---|---|
+| user-input tool 实现 | `checkPermissions` 返回 `'ask'` + runtime 截获 | `execute` 里 `await userPromise` 挂起 event loop | `execute` 只 record + `stopWhen` 截获 |
+| LLM stream 生命周期 | 短（遇 ask 即结束） | 整局（跨多次玩家输入） | 每回合（遇 signal_input_needed 即结束） |
+| 长寿命状态 | conversation log | event loop Promise + DB entries | DB entries + state + pendingSignal |
+| resume 机制 | 重载 log，自然恢复 | restore 要喂 memory + 重挂 signalInputResolve | 读 DB inputHint/choices → 直接进 Phase 2 |
+| 玩家输入走 tool 的 | input（答案注入到 tool 的 input）| result（execute 返回 playerChoice） | 外循环 Receive（跳过 tool_result） |
+
+### 对我们方案 B 实施的启示
+
+1. **验证方向**：Claude Code 坚定选择了"不挂起"。我们的 `signal_input_needed` 挂起机制是"在 AI SDK 提供 `stopWhen` 之前的 workaround"，既然有了原生能力可以清理。
+
+2. **玩家输入放 result 还是 input 都可**（两种实现都有效）：
+   - A. 我们方案 B 文档里的写法：tool 返回空 result + 玩家输入走 Phase 2 Receive 阶段（以 `role='receive'` entry 进 messages 历史）
+   - B. Claude Code 式：runtime 把答案注入 tool.input，然后 call 返回
+
+   对 LLM 可见性一样（下一次 generate 的 messages 里都包含玩家输入）。A 更
+   简单无须 plumbing，B 和 AI SDK 原生 tool 语义更贴。我们选 A。
+
+3. **session resume 会变简单**：
+   - 现状需要判断"是否中途挂起" / 恢复 memory / 重 attach signalInputResolve
+   - 方案 B 后：restore → 读 DB pending inputHint/choices → 进 Phase 2 `waitForInput`
+   - 跟 Claude Code 一样干净
+
+4. **trace 粒度变细是好事，不是坏事**：
+   Claude Code 本质上每次 LLM 调用一条 API request（每次都是一条 trace）。
+   我们每局一个 trace 是**反常**（signal 挂起让 stream 不结束）。
+   方案 B 后变成每回合一 trace，对齐标准 agent 架构。
+
+### 方向确认
+
+**方案 B 的路径在业内有成熟 precedent**（Claude Code）。风险点（`stopWhen`
+的 edge case、resume、tool_result 语义）都有参考答案。
+
+实施优先级维持原有判断（见前文"不做方案 B 的情况"）：
+- 方案 C（maxSteps 可观测 + UX 兜底）先上
+- 如果需求触发（maxSteps 频繁击中 / 调试困难 / 长剧本），再按本文档实施方案 B
+- 真实施时可以进一步参考 Claude Code 源码的工程细节（`shouldDefer` 标志
+  位、conversation log 模型、等）
