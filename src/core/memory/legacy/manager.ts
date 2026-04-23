@@ -169,6 +169,7 @@ export class LegacyMemory implements Memory {
   ): Promise<RecentMessagesResult> {
     const window = this.config.recencyWindow;
     if (!this.reader) {
+      console.warn('[LegacyMemory.getRecentAsMessages] reader is undefined → empty');
       return { messages: [], tokensUsed: 0 };
     }
     const raw = await this.reader.readRecent({ limit: window });
@@ -177,7 +178,16 @@ export class LegacyMemory implements Memory {
     // messages-builder 负责，legacy 这里只要拿住 entries 丢给它即可
     const projected = buildMessagesFromEntries(raw);
 
-    return capMessagesByBudgetFromTail(projected, opts.budget);
+    const result = capMessagesByBudgetFromTail(projected, opts.budget);
+
+    // 诊断：reload 后 memory 偶现 empty 复盘用，同 llm-summarizer
+    if (result.messages.length === 0) {
+      console.warn(
+        `[LegacyMemory.getRecentAsMessages] empty result: ` +
+          `raw=${raw.length}, projected=${projected.length}, budget=${opts.budget}, window=${window}`,
+      );
+    }
+    return result;
   }
 
   // ─── Lifecycle ────────────────────────────────────────────────────

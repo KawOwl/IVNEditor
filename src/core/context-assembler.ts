@@ -349,13 +349,37 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
     await memory.getRecentAsMessages({ budget: budgetRemaining });
   usedTokens += historyTokens;
 
-  // AI SDK requires at least one message — use initialPrompt or fallback
+  // AI SDK requires at least one message — use initialPrompt or recovery fallback.
   // 这是对 AI SDK "messages 不能为空" 约束的兜底，不归 Memory 接口管。
+  //
+  // 关键分支：state.turn>0 说明这是一个**已进行的 playthrough**（restore
+  // 路径或轮次中），memory 这时候意外空只能是 bug —— 绝不能塞 initialPrompt
+  // （通常是 '开始游戏'），否则 LLM 会被诱导把当前剧情当成新局从头写，玩家
+  // 会看到"我读取到了游戏状态信息，但既然你说开始游戏，让我们从头开始"这种
+  // 灾难输出（session 1e5f07db / 85a8c5c0 复盘）。
+  //
+  // 正确 fallback：告诉 LLM "基于 INTERNAL_STATE 自然延续当前剧情"，并在
+  // server log 里标记 warn 供后续排查 memory 为什么空了。
   if (historyMessages.length === 0) {
-    historyMessages.push({
-      role: 'user',
-      content: options.initialPrompt ?? '[Game session started. Begin narration.]',
-    });
+    const currentTurn = stateStore.getTurn();
+    if (currentTurn > 0) {
+      console.error(
+        `[assembler] memory returned empty on resumed playthrough (turn=${currentTurn}) — ` +
+          `using continuation prompt instead of initialPrompt to avoid LLM "restart from scratch" behavior`,
+      );
+      historyMessages.push({
+        role: 'user',
+        content:
+          '[系统：继续之前的剧情。当前状态由 INTERNAL_STATE 描述（见 system prompt）。' +
+          '请基于该状态自然延续叙事，不要把这当作新局开始、不要介绍剧本背景、不要让角色"刚醒来"。' +
+          '按剧本当前阶段和场景推进即可。]',
+      });
+    } else {
+      historyMessages.push({
+        role: 'user',
+        content: options.initialPrompt ?? '[Game session started. Begin narration.]',
+      });
+    }
   }
 
   return {

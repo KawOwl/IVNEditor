@@ -121,13 +121,25 @@ export class LLMSummarizerMemory implements Memory {
   ): Promise<RecentMessagesResult> {
     const window = this.config.recencyWindow;
     if (!this.reader) {
+      console.warn('[LLMSummarizerMemory.getRecentAsMessages] reader is undefined → empty');
       return { messages: [], tokensUsed: 0 };
     }
     const raw = await this.reader.readRecent({ limit: window });
     // 详见 legacy/manager.ts 同名方法的注释 —— 开放 kinds + tail-based budget cap
     // + messages-builder 投影 tool-call parts。两个 adapter 保持语义一致。
     const projected = buildMessagesFromEntries(raw);
-    return capMessagesByBudgetFromTail(projected, opts.budget);
+    const result = capMessagesByBudgetFromTail(projected, opts.budget);
+
+    // 诊断日志：reload 后 memory 偶现 empty 的 bug 复盘用。
+    // 正常情况 raw 非空 → projected 非空 → result.messages 非空。
+    // 若 raw 非空但 result 空 / raw 本身空，打一条 warn 便于 prod 排查。
+    if (result.messages.length === 0) {
+      console.warn(
+        `[LLMSummarizerMemory.getRecentAsMessages] empty result: ` +
+          `raw=${raw.length}, projected=${projected.length}, budget=${opts.budget}, window=${window}`,
+      );
+    }
+    return result;
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────────
