@@ -15,28 +15,40 @@ import { isKnownEntryKind } from '@ivn/core/persistence-entry';
 import { playthroughService, type NarrativeEntryRow } from './playthrough-service';
 
 /** DB Row → core 层 NarrativeEntry */
-function rowToEntry(row: NarrativeEntryRow): NarrativeEntry {
-  // DB kind 列允许任意 text；未知值兜底为 'narrative'（记一条 console.warn 便于观测）
-  let kind: EntryKind;
-  if (isKnownEntryKind(row.kind)) {
-    kind = row.kind;
-  } else {
-    console.warn(`[narrative-reader] unknown kind "${row.kind}" for entry ${row.id} → fallback 'narrative'`);
-    kind = 'narrative';
-  }
+function rowToEntry({
+  id,
+  playthroughId,
+  role,
+  kind: rawKind,
+  content,
+  payload,
+  reasoning,
+  finishReason,
+  batchId,
+  orderIdx,
+  createdAt,
+}: NarrativeEntryRow): NarrativeEntry {
   return {
-    id: row.id,
-    playthroughId: row.playthroughId,
-    role: row.role,
-    kind,
-    content: row.content,
-    payload: row.payload,
-    reasoning: row.reasoning,
-    finishReason: row.finishReason,
-    batchId: row.batchId,
-    orderIdx: row.orderIdx,
-    createdAt: row.createdAt,
+    id,
+    playthroughId,
+    role,
+    kind: normalizeEntryKind(rawKind, id),
+    content,
+    payload,
+    reasoning,
+    finishReason,
+    batchId,
+    orderIdx,
+    createdAt,
   };
+}
+
+function normalizeEntryKind(kind: string, entryId: string): EntryKind {
+  if (isKnownEntryKind(kind)) return kind;
+
+  // DB kind 列允许任意 text；未知值兜底为 'narrative'（记一条 console.warn 便于观测）
+  console.warn(`[narrative-reader] unknown kind "${kind}" for entry ${entryId} → fallback 'narrative'`);
+  return 'narrative';
 }
 
 /**

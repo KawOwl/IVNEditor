@@ -6,9 +6,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterAll } from 'bun:test';
-import { createPlaythroughPersistence } from '../services/playthrough-persistence';
-import { PlaythroughService } from '../services/playthrough-service';
-import { db, schema } from '../db';
+import { createPlaythroughPersistence } from '#server/services/playthrough-persistence';
+import { PlaythroughService } from '#server/services/playthrough-service';
+import { db, schema } from '#server/db';
 import { assertTestDatabase } from './_db-guard';
 import type { ScriptManifest } from '@ivn/core/types';
 

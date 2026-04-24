@@ -4,6 +4,12 @@
   "description": "Interactive Novel Engine — Backend Server",
   "private": true,
   "type": "module",
+  "imports": {
+    "#server/*": "./src/*.ts",
+    "#server/db": "./src/db/index.ts",
+    "#server/env": "./src/env.ts",
+    "#server/services/*": "./src/services/*.ts"
+  },
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",

@@ -16,13 +16,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterAll } from 'bun:test';
-import { buildApp } from '../app';
-import { db, schema } from '../db';
-import { userService } from '../services/user-service';
-import { scriptService } from '../services/script-service';
-import { scriptVersionService } from '../services/script-version-service';
-import { assetService } from '../services/asset-service';
-import { __setAssetStorageForTesting, type AssetStorage } from '../services/asset-storage';
+import { buildApp } from '#server/app';
+import { db, schema } from '#server/db';
+import { userService } from '#server/services/user-service';
+import { scriptService } from '#server/services/script-service';
+import { scriptVersionService } from '#server/services/script-version-service';
+import { assetService } from '#server/services/asset-service';
+import { __setAssetStorageForTesting, type AssetStorage } from '#server/services/asset-storage';
 import { assertTestDatabase } from './_db-guard';
 import type { ScriptManifest } from '@ivn/core/types';
 

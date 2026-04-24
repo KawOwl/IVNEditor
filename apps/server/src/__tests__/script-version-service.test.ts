@@ -12,10 +12,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterAll } from 'bun:test';
-import { ScriptVersionService, hashManifest } from '../services/script-version-service';
-import { scriptService } from '../services/script-service';
-import { playthroughService } from '../services/playthrough-service';
-import { db, schema } from '../db';
+import { ScriptVersionService, hashManifest } from '#server/services/script-version-service';
+import { scriptService } from '#server/services/script-service';
+import { playthroughService } from '#server/services/playthrough-service';
+import { db, schema } from '#server/db';
 import { assertTestDatabase } from './_db-guard';
 import type { ScriptManifest } from '@ivn/core/types';
 

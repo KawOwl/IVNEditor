@@ -16,9 +16,9 @@ import {
   requireAdmin,
   requireAnyIdentity,
   isResponse,
-} from '../auth-identity';
-import { userService } from '../services/user-service';
-import { db, schema } from '../db';
+} from '#server/auth-identity';
+import { userService } from '#server/services/user-service';
+import { db, schema } from '#server/db';
 import { eq } from 'drizzle-orm';
 import { assertTestDatabase } from './_db-guard';
 

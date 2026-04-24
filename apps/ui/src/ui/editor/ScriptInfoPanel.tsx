@@ -496,48 +496,16 @@ function CharactersSection({
         <div className="text-[11px] text-zinc-600 italic">尚无角色</div>
       ) : (
         <ul className="space-y-1.5">
-          {characters.map((c) => (
-            <li key={c.id} className="border border-zinc-800 rounded overflow-hidden">
-              <div className="flex items-center gap-2 px-2 py-1.5 bg-zinc-900">
-                <span className="font-mono text-xs text-blue-400">{c.id}</span>
-                <span className="text-xs text-zinc-300">{c.displayName}</span>
-                <span className="text-[10px] text-zinc-600">{c.sprites.length} sprite{c.sprites.length === 1 ? '' : 's'}</span>
-                <div className="ml-auto flex gap-1">
-                  <button
-                    onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}
-                    className="text-[11px] px-2 py-0.5 rounded border border-zinc-700 text-zinc-500 hover:text-zinc-300"
-                  >
-                    {expandedId === c.id ? '收起' : '编辑'}
-                  </button>
-                  <button
-                    onClick={() => handleRemove(c.id)}
-                    className="text-[11px] px-2 py-0.5 rounded border border-zinc-700 text-zinc-500 hover:text-red-400"
-                  >
-                    删除
-                  </button>
-                </div>
-              </div>
-              {expandedId === c.id && (
-                <div className="px-2 py-2 space-y-2 bg-zinc-900/50">
-                  <Field label="显示名">
-                    <input
-                      type="text"
-                      value={c.displayName}
-                      onChange={(e) => handleUpdateCharacter(c.id, { displayName: e.target.value })}
-                      className={inputClass}
-                    />
-                  </Field>
-                  <div>
-                    <div className="text-[10px] text-zinc-500 mb-1">立绘表情</div>
-                    <SpritesEditor
-                      sprites={c.sprites}
-                      onChange={(sprites) => handleUpdateCharacter(c.id, { sprites })}
-                      loadedScriptId={loadedScriptId}
-                    />
-                  </div>
-                </div>
-              )}
-            </li>
+          {characters.map((character) => (
+            <CharacterAssetItem
+              key={character.id}
+              character={character}
+              expanded={expandedId === character.id}
+              loadedScriptId={loadedScriptId}
+              onToggle={() => setExpandedId(expandedId === character.id ? null : character.id)}
+              onRemove={() => handleRemove(character.id)}
+              onPatch={(patch) => handleUpdateCharacter(character.id, patch)}
+            />
           ))}
         </ul>
       )}
@@ -569,6 +537,70 @@ function CharactersSection({
         {error && <div className="text-[11px] text-red-400">{error}</div>}
       </div>
     </div>
+  );
+}
+
+function CharacterAssetItem({
+  character,
+  expanded,
+  loadedScriptId,
+  onToggle,
+  onRemove,
+  onPatch,
+}: {
+  character: CharacterAsset;
+  expanded: boolean;
+  loadedScriptId: string | null;
+  onToggle: () => void;
+  onRemove: () => void;
+  onPatch: (patch: Partial<CharacterAsset>) => void;
+}) {
+  const { id, displayName, sprites } = character;
+
+  return (
+    <li className="border border-zinc-800 rounded overflow-hidden">
+      <div className="flex items-center gap-2 px-2 py-1.5 bg-zinc-900">
+        <span className="font-mono text-xs text-blue-400">{id}</span>
+        <span className="text-xs text-zinc-300">{displayName}</span>
+        <span className="text-[10px] text-zinc-600">
+          {sprites.length} sprite{sprites.length === 1 ? '' : 's'}
+        </span>
+        <div className="ml-auto flex gap-1">
+          <button
+            onClick={onToggle}
+            className="text-[11px] px-2 py-0.5 rounded border border-zinc-700 text-zinc-500 hover:text-zinc-300"
+          >
+            {expanded ? '收起' : '编辑'}
+          </button>
+          <button
+            onClick={onRemove}
+            className="text-[11px] px-2 py-0.5 rounded border border-zinc-700 text-zinc-500 hover:text-red-400"
+          >
+            删除
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <div className="px-2 py-2 space-y-2 bg-zinc-900/50">
+          <Field label="显示名">
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => onPatch({ displayName: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <div>
+            <div className="text-[10px] text-zinc-500 mb-1">立绘表情</div>
+            <SpritesEditor
+              sprites={sprites}
+              onChange={(nextSprites) => onPatch({ sprites: nextSprites })}
+              loadedScriptId={loadedScriptId}
+            />
+          </div>
+        </div>
+      )}
+    </li>
   );
 }
 

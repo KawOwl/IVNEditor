@@ -26,9 +26,9 @@
  */
 
 import { eq } from 'drizzle-orm';
-import { db, schema } from '../src/db';
-import { scriptService } from '../src/services/script-service';
-import { scriptVersionService } from '../src/services/script-version-service';
+import { db, schema } from '#server/db';
+import { scriptService } from '#server/services/script-service';
+import { scriptVersionService } from '#server/services/script-version-service';
 import type { ScriptManifest, PromptSegment } from '@ivn/core/types';
 
 const SCRIPT_ID = 'test-e2e-library';
