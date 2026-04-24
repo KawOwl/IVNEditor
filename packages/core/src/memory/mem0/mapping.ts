@@ -7,7 +7,7 @@
  *   2. Scope → mem0 EntityOptions.userId
  */
 
-import type { MemoryEntry } from '../../types';
+import type { MemoryEntry } from '@ivn/core/types';
 
 /**
  * 把引擎 entry 转成 mem0 能接受的 message 格式。

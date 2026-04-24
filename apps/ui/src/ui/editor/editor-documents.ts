@@ -103,24 +103,46 @@ function simpleHash(text: string): string {
   return Math.abs(hash).toString(36);
 }
 
-export function docToSegment(doc: EditorDocument): PromptSegment {
+export function docToSegment({
+  id,
+  filename,
+  content,
+  role,
+  priority,
+  injectionCondition,
+  injectionDescription,
+  focusScene,
+  derivedContent,
+  useDerived,
+}: EditorDocument): PromptSegment {
   return {
-    id: doc.id,
-    label: doc.filename,
-    content: doc.content,
-    contentHash: simpleHash(doc.content),
+    id,
+    label: filename,
+    content,
+    contentHash: simpleHash(content),
     type: 'logic',
-    sourceDoc: doc.filename,
-    role: doc.role,
-    priority: doc.priority,
-    injectionRule: doc.injectionCondition
-      ? { description: doc.injectionDescription || doc.injectionCondition, condition: doc.injectionCondition }
-      : undefined,
-    focusTags: doc.focusScene ? { scene: doc.focusScene } : undefined,
-    tokenCount: estimateTokens(doc.content),
-    derivedContent: doc.derivedContent,
-    useDerived: doc.useDerived,
+    sourceDoc: filename,
+    role,
+    priority,
+    injectionRule: buildInjectionRule(injectionCondition, injectionDescription),
+    focusTags: buildFocusTags(focusScene),
+    tokenCount: estimateTokens(content),
+    derivedContent,
+    useDerived,
   };
+}
+
+function buildInjectionRule(
+  condition: string,
+  description: string,
+): PromptSegment['injectionRule'] {
+  return condition
+    ? { description: description || condition, condition }
+    : undefined;
+}
+
+function buildFocusTags(scene: string): PromptSegment['focusTags'] {
+  return scene ? { scene } : undefined;
 }
 
 export function manifestToDocuments(manifest: ScriptManifest): EditorDocument[] {

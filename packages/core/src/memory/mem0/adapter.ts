@@ -35,8 +35,8 @@
  */
 
 import MemoryClient from 'mem0ai';
-import { estimateTokens } from '../../tokens';
-import type { MemoryEntry, MemoryConfig } from '../../types';
+import { estimateTokens } from '@ivn/core/tokens';
+import type { MemoryEntry, MemoryConfig } from '@ivn/core/types';
 import type {
   Memory,
   MemoryRetrieval,

@@ -10,8 +10,8 @@
  * 接口层面已经支持。
  */
 
-import type { MemoryEntry } from '../../types';
-import type { LLMClient } from '../../llm-client';
+import type { MemoryEntry } from '@ivn/core/types';
+import type { LLMClient } from '@ivn/core/llm-client';
 
 /**
  * CompressFn —— 和 legacy 的 CompressFn 同签名，方便未来提取公共 type。

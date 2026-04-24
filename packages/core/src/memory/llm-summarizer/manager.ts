@@ -8,10 +8,10 @@
  * 详见 .claude/plans/memory-refactor-v2.md
  */
 
-import { estimateTokens } from '../../tokens';
-import type { MemoryEntry, MemoryConfig } from '../../types';
-import { buildMessagesFromEntries, capMessagesByBudgetFromTail } from '../../messages-builder';
-import type { LLMClient } from '../../llm-client';
+import { estimateTokens } from '@ivn/core/tokens';
+import type { MemoryEntry, MemoryConfig } from '@ivn/core/types';
+import { buildMessagesFromEntries, capMessagesByBudgetFromTail } from '@ivn/core/messages-builder';
+import type { LLMClient } from '@ivn/core/llm-client';
 import type {
   Memory,
   MemoryRetrieval,

@@ -18,9 +18,9 @@
  *   - maybeCompact 由 token 阈值触发
  */
 
-import { estimateTokens } from '../../tokens';
-import type { MemoryEntry, MemoryConfig } from '../../types';
-import { buildMessagesFromEntries, capMessagesByBudgetFromTail } from '../../messages-builder';
+import { estimateTokens } from '@ivn/core/tokens';
+import type { MemoryEntry, MemoryConfig } from '@ivn/core/types';
+import { buildMessagesFromEntries, capMessagesByBudgetFromTail } from '@ivn/core/messages-builder';
 import type {
   Memory,
   MemoryRetrieval,

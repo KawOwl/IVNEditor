@@ -21,109 +21,166 @@ export interface SentenceDebugModel {
   };
 }
 
+type NarrationSentence = Extract<Sentence, { kind: 'narration' }>;
+type DialogueSentence = Extract<Sentence, { kind: 'dialogue' }>;
+type PlayerInputSentence = Extract<Sentence, { kind: 'player_input' }>;
+type SignalInputSentence = Extract<Sentence, { kind: 'signal_input' }>;
+type SceneChangeSentence = Extract<Sentence, { kind: 'scene_change' }>;
+
 export function toSentenceDebugModel(sentence: Sentence): SentenceDebugModel {
   switch (sentence.kind) {
     case 'narration':
-      return {
-        borderClassName: 'border-zinc-700',
-        header: formatHeader(sentence, 'narration'),
-        body: {
-          className: 'text-zinc-300 whitespace-pre-wrap',
-          text: sentence.text,
-        },
-      };
+      return toNarrationDebugModel(sentence);
 
     case 'dialogue':
-      return {
-        borderClassName: 'border-blue-700',
-        header: formatHeader(sentence, 'dialogue'),
-        headerBadge: sentence.truncated
-          ? { className: 'text-red-400 ml-1', text: '[truncated]' }
-          : undefined,
-        speakerLine: {
-          className: 'text-blue-300 text-[10px]',
-          text: formatParticipationFrame(sentence.pf),
-        },
-        body: {
-          className: 'text-zinc-200 whitespace-pre-wrap',
-          text: sentence.text,
-        },
-      };
+      return toDialogueDebugModel(sentence);
 
     case 'player_input':
-      return {
-        borderClassName: 'border-sky-700',
-        header: formatHeader(sentence, 'player_input'),
-        headerBadge: sentence.selectedIndex !== undefined
-          ? { className: 'ml-1 text-amber-500', text: `[choice ${sentence.selectedIndex}]` }
-          : undefined,
-        body: {
-          className: 'text-sky-200 whitespace-pre-wrap text-[11px]',
-          text: sentence.text,
-        },
-      };
+      return toPlayerInputDebugModel(sentence);
 
     case 'signal_input':
-      return {
-        borderClassName: 'border-amber-700',
-        header: `${formatHeader(sentence, 'signal_input')} · ${sentence.choices.length} choice(s)`,
-        body: {
-          className: 'text-amber-300 text-[11px] whitespace-pre-wrap',
-          text: sentence.hint,
-        },
-        footer: sentence.choices.length > 0
-          ? {
-              className: 'text-[10px] text-zinc-500',
-              text: sentence.choices.map((choice, i) => `${i + 1}. ${choice}`).join(' / '),
-            }
-          : undefined,
-      };
+      return toSignalInputDebugModel(sentence);
 
     case 'scene_change':
-      return {
-        borderClassName: 'border-emerald-700',
-        header: formatHeader(sentence, 'scene_change'),
-        headerBadge: sentence.transition
-          ? { className: 'ml-1', text: `[${sentence.transition}]` }
-          : undefined,
-        body: {
-          className: 'text-[10px] text-emerald-300',
-          text: formatScene(sentence.scene),
-        },
-      };
+      return toSceneChangeDebugModel(sentence);
   }
 }
 
-function formatHeader(
-  sentence: Pick<Sentence, 'index' | 'turnNumber'>,
-  kind: Sentence['kind'],
-): string {
-  return `#${sentence.index} · ${kind} · turn ${sentence.turnNumber}`;
+function toNarrationDebugModel({
+  index,
+  turnNumber,
+  text,
+}: NarrationSentence): SentenceDebugModel {
+  return {
+    borderClassName: 'border-zinc-700',
+    header: formatHeader(index, turnNumber, 'narration'),
+    body: {
+      className: 'text-zinc-300 whitespace-pre-wrap',
+      text,
+    },
+  };
 }
 
-function formatParticipationFrame(sentence: Extract<Sentence, { kind: 'dialogue' }>['pf']): string {
-  const parts = [sentence.speaker];
+function toDialogueDebugModel({
+  index,
+  turnNumber,
+  text,
+  truncated,
+  pf,
+}: DialogueSentence): SentenceDebugModel {
+  return {
+    borderClassName: 'border-blue-700',
+    header: formatHeader(index, turnNumber, 'dialogue'),
+    headerBadge: truncated
+      ? { className: 'text-red-400 ml-1', text: '[truncated]' }
+      : undefined,
+    speakerLine: {
+      className: 'text-blue-300 text-[10px]',
+      text: formatParticipationFrame(pf),
+    },
+    body: {
+      className: 'text-zinc-200 whitespace-pre-wrap',
+      text,
+    },
+  };
+}
 
-  if (sentence.addressee) {
-    parts.push(`-> ${sentence.addressee.join(', ')}`);
+function toPlayerInputDebugModel({
+  index,
+  turnNumber,
+  text,
+  selectedIndex,
+}: PlayerInputSentence): SentenceDebugModel {
+  return {
+    borderClassName: 'border-sky-700',
+    header: formatHeader(index, turnNumber, 'player_input'),
+    headerBadge: selectedIndex !== undefined
+      ? { className: 'ml-1 text-amber-500', text: `[choice ${selectedIndex}]` }
+      : undefined,
+    body: {
+      className: 'text-sky-200 whitespace-pre-wrap text-[11px]',
+      text,
+    },
+  };
+}
+
+function toSignalInputDebugModel({
+  index,
+  turnNumber,
+  hint,
+  choices,
+}: SignalInputSentence): SentenceDebugModel {
+  return {
+    borderClassName: 'border-amber-700',
+    header: `${formatHeader(index, turnNumber, 'signal_input')} · ${choices.length} choice(s)`,
+    body: {
+      className: 'text-amber-300 text-[11px] whitespace-pre-wrap',
+      text: hint,
+    },
+    footer: choices.length > 0
+      ? {
+          className: 'text-[10px] text-zinc-500',
+          text: formatChoices(choices),
+        }
+      : undefined,
+  };
+}
+
+function toSceneChangeDebugModel({
+  index,
+  turnNumber,
+  transition,
+  scene,
+}: SceneChangeSentence): SentenceDebugModel {
+  return {
+    borderClassName: 'border-emerald-700',
+    header: formatHeader(index, turnNumber, 'scene_change'),
+    headerBadge: transition
+      ? { className: 'ml-1', text: `[${transition}]` }
+      : undefined,
+    body: {
+      className: 'text-[10px] text-emerald-300',
+      text: formatScene(scene),
+    },
+  };
+}
+
+function formatHeader(index: number, turnNumber: number, kind: Sentence['kind']): string {
+  return `#${index} · ${kind} · turn ${turnNumber}`;
+}
+
+function formatParticipationFrame({
+  speaker,
+  addressee,
+  overhearers,
+  eavesdroppers,
+}: DialogueSentence['pf']): string {
+  const parts = [speaker];
+
+  if (addressee) {
+    parts.push(`-> ${addressee.join(', ')}`);
   }
 
-  if (sentence.overhearers) {
-    parts.push(`+${sentence.overhearers.join(',')}`);
+  if (overhearers) {
+    parts.push(`+${overhearers.join(',')}`);
   }
 
-  if (sentence.eavesdroppers) {
-    parts.push(`?${sentence.eavesdroppers.join(',')}`);
+  if (eavesdroppers) {
+    parts.push(`?${eavesdroppers.join(',')}`);
   }
 
   return parts.join(' ');
 }
 
-function formatScene(scene: SceneState): string {
-  return `bg: ${scene.background ?? 'null'} · sprites: ${formatSprites(scene.sprites)}`;
+function formatChoices(choices: string[]): string {
+  return choices.map((choice, i) => `${i + 1}. ${choice}`).join(' / ');
+}
+
+function formatScene({ background, sprites }: SceneState): string {
+  return `bg: ${background ?? 'null'} · sprites: ${formatSprites(sprites)}`;
 }
 
 function formatSprites(sprites: SceneState['sprites']): string {
   if (sprites.length === 0) return '—';
-  return sprites.map((sprite) => `${sprite.id}:${sprite.emotion}`).join(', ');
+  return sprites.map(({ id, emotion }) => `${id}:${emotion}`).join(', ');
 }

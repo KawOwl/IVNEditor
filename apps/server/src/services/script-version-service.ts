@@ -59,6 +59,31 @@ export interface CreateVersionResult {
   created: boolean;  // false = 复用已有（去重命中）
 }
 
+export interface PublishedCatalogEntry {
+  scriptId: string;
+  scriptLabel: string;
+  scriptDescription: string | null;
+  authorUserId: string;
+  version: ScriptVersionRow;
+}
+
+interface PublishedCatalogRow {
+  scriptId: string;
+  scriptLabel: string;
+  scriptDescription: string | null;
+  authorUserId: string;
+  versionId: string;
+  versionNumber: number;
+  versionLabel: string | null;
+  status: string;
+  manifest: ScriptManifest;
+  contentHash: string;
+  note: string | null;
+  createdAt: Date;
+  publishedAt: Date | null;
+  archivedAt: Date | null;
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -275,13 +300,7 @@ export class ScriptVersionService {
    * 列出所有有 published 版本的剧本 —— 玩家首页 catalog 用。
    * 返回每个 script 的基础信息 + 其 published 版本的 manifest（用于首页展示字段）。
    */
-  async listPublishedCatalog(): Promise<Array<{
-    scriptId: string;
-    scriptLabel: string;
-    scriptDescription: string | null;
-    authorUserId: string;
-    version: ScriptVersionRow;
-  }>> {
+  async listPublishedCatalog(): Promise<PublishedCatalogEntry[]> {
     // JOIN scripts + script_versions WHERE status='published'
     const rows = await db
       .select({
@@ -308,27 +327,46 @@ export class ScriptVersionService {
       .where(eq(schema.scriptVersions.status, 'published'))
       .orderBy(desc(schema.scriptVersions.publishedAt));
 
-    return rows.map((r) => ({
-      scriptId: r.scriptId,
-      scriptLabel: r.scriptLabel,
-      scriptDescription: r.scriptDescription,
-      authorUserId: r.authorUserId,
-      version: {
-        id: r.versionId,
-        scriptId: r.scriptId,
-        versionNumber: r.versionNumber,
-        label: r.versionLabel,
-        status: r.status as VersionStatus,
-        manifest: r.manifest as ScriptManifest,
-        contentHash: r.contentHash,
-        note: r.note,
-        createdAt: r.createdAt,
-        publishedAt: r.publishedAt,
-        archivedAt: r.archivedAt,
-      },
-    }));
+    return rows.map(toPublishedCatalogEntry);
   }
 }
 
 // 单例导出
 export const scriptVersionService = new ScriptVersionService();
+
+function toPublishedCatalogEntry({
+  scriptId,
+  scriptLabel,
+  scriptDescription,
+  authorUserId,
+  versionId,
+  versionNumber,
+  versionLabel,
+  status,
+  manifest,
+  contentHash,
+  note,
+  createdAt,
+  publishedAt,
+  archivedAt,
+}: PublishedCatalogRow): PublishedCatalogEntry {
+  return {
+    scriptId,
+    scriptLabel,
+    scriptDescription,
+    authorUserId,
+    version: {
+      id: versionId,
+      scriptId,
+      versionNumber,
+      label: versionLabel,
+      status: status as VersionStatus,
+      manifest,
+      contentHash,
+      note,
+      createdAt,
+      publishedAt,
+      archivedAt,
+    },
+  };
+}
