@@ -31,7 +31,7 @@ import { createTools, getEnabledTools } from '#internal/tool-executor';
 import type { ScenePatch } from '#internal/tool-executor';
 import type { SignalInputOptions } from '#internal/tool-executor';
 import { LLMClient } from '#internal/llm-client';
-import type { LLMConfig } from '#internal/llm-client';
+import type { LLMConfig, StepInfo } from '#internal/llm-client';
 import type { SessionEmitter } from '#internal/session-emitter';
 import { NarrativeParser, extractPlainText } from '#internal/narrative-parser';
 import { serializeMessagesForDebug } from '#internal/messages-builder';
@@ -46,6 +46,35 @@ import type {
   SessionTracing,
   ToolCallTraceHandle,
 } from '#internal/game-session/types';
+
+type StepStartInfo = {
+  batchId: string;
+  isFollowup: boolean;
+};
+
+type TraceStepRecord = Parameters<GenerateTraceHandle['recordStep']>[0];
+
+const TRACE_STEP_FIELDS = [
+  'stepNumber',
+  'text',
+  'reasoning',
+  'finishReason',
+  'inputTokens',
+  'outputTokens',
+  'model',
+  'partKinds',
+  'responseTimestamp',
+  'stepStartAt',
+  'stepInputMessages',
+  'effectiveSystemPrompt',
+  'isFollowup',
+] as const satisfies ReadonlyArray<keyof StepInfo & keyof TraceStepRecord>;
+
+function toTraceStepRecord(step: StepInfo): TraceStepRecord {
+  return Object.fromEntries(
+    TRACE_STEP_FIELDS.map((field) => [field, step[field]]),
+  ) as TraceStepRecord;
+}
 
 export {
   NARRATION_HARD_LIMIT,
@@ -699,55 +728,8 @@ export class GameSession {
               handle?.end(toolResult);
             }
           },
-          onStepStart: (info) => {
-            // Bug B 修复（2026-04-24）：在 step **开始时**就把当前 step 的 batchId
-            // 挂到 this.currentStepBatchId，这样本 step 内 tool.execute 调用的
-            // recordPendingSignal / onToolObserved 读到的永远是当前 step 的 batchId，
-            // 而不是上一 step 的或 null。isFollowup 的 step 跳过（见下方 onStep 的
-            // isFollowup 注释），保持在主 generate 最后一个 step 的 batchId。
-            if (!info.isFollowup) {
-              this.currentStepBatchId = info.batchId;
-            }
-          },
-          onStep: (step) => {
-            // migration 0011：缓存当前 step 的 batchId 供挂起期 / finalize 期挂载
-            //
-            // Bug B 修复后（2026-04-24）：主路径已经由 onStepStart 接管，这里保留
-            // 是作为兜底（万一 onStepStart 某种异常没跑）；值和 onStepStart 一致，
-            // 重复写不会错。
-            //
-            // isFollowup 门控（方案 A post-step 补刀，2026-04-24）：
-            //   follow-up step 是 llm-client 在主 generate 空停时自动追发的
-            //   补刀请求（详见 llm-client.ts GenerateOptions.onStep 中
-            //   isFollowup 注释）。补刀里 signal_input_needed 的
-            //   recordPendingSignal 已经用**主最后一个 step** 的 batchId 挂
-            //   载了 signal_input entry；这里如果让 follow-up 覆盖
-            //   currentStepBatchId，下一步 flushNarrativeBuffer 会把 narrative
-            //   entry 挂到 follow-up 的新 batchId，导致 narrative 和
-            //   signal_input 跨 batch，messages-builder 会投成两个 assistant
-            //   message（一个只有 narrative，一个只有 signal）。不希望这样。
-            //   所以补刀的 step 只走 tracing（下方 recordStep），**不**更新
-            //   currentStepBatchId。
-            if (!step.isFollowup) {
-              this.currentStepBatchId = step.batchId ?? null;
-            }
-            // 🔭 tracing: 每个 step 记一个 generation span
-            traceHandle?.recordStep({
-              stepNumber: step.stepNumber,
-              text: step.text,
-              reasoning: step.reasoning,
-              finishReason: step.finishReason,
-              inputTokens: step.inputTokens,
-              outputTokens: step.outputTokens,
-              model: step.model,
-              partKinds: step.partKinds,
-              responseTimestamp: step.responseTimestamp,
-              stepStartAt: step.stepStartAt,
-              stepInputMessages: step.stepInputMessages,
-              effectiveSystemPrompt: step.effectiveSystemPrompt,
-              isFollowup: step.isFollowup,
-            });
-          },
+          onStepStart: (info) => this.handleStepStart(info),
+          onStep: (step) => this.handleStepFinished(step, traceHandle),
           // migration 0011 / PR-M1：非 signal/end 类工具调用写 kind='tool_call' entry
           onToolObserved: async (evt) => {
             await this.persistence?.onToolCallRecorded?.({
@@ -949,6 +931,26 @@ export class GameSession {
   // ============================================================================
   // Helpers
   // ============================================================================
+
+  private handleStepStart(info: StepStartInfo): void {
+    // Bug B 修复（2026-04-24）：在 step 开始时就缓存 batchId，让本 step 内
+    // tool.execute / recordPendingSignal 读到当前 step，而不是上一 step。
+    this.rememberMainStepBatch(info);
+  }
+
+  private handleStepFinished(step: StepInfo, traceHandle: GenerateTraceHandle | undefined): void {
+    // onStepStart 是主路径；这里仍兜底同步一次，防止 start 回调异常时 batchId 丢失。
+    this.rememberMainStepBatch(step);
+    traceHandle?.recordStep(toTraceStepRecord(step));
+  }
+
+  private rememberMainStepBatch(step: Pick<StepInfo, 'batchId' | 'isFollowup'>): void {
+    // follow-up step 是 llm-client 的 post-step 补刀。它可以被 tracing 记录，但不能覆盖
+    // currentStepBatchId，否则 narrative 和 signal_input 会跨 batch 分组。
+    if (!step.isFollowup) {
+      this.currentStepBatchId = step.batchId ?? null;
+    }
+  }
 
   /**
    * 为本轮 generate 构造 Memory.retrieve 的 query。
