@@ -517,6 +517,22 @@ export class GameSession {
    */
   private currentNarrativeBuffer = '';
 
+  /**
+   * 本轮 LLM 产生的 reasoning (thinking) 累积缓冲 —— reasoner 类模型
+   * （DeepSeek V4 Flash thinking、deepseek-reasoner 等）会产出，写进
+   * narrative_entries.reasoning。
+   *
+   * 为什么要存：DeepSeek thinking 模式要求回放 assistant message 时把
+   * reasoning_content 也带上，否则 API 报 "The reasoning_content in the
+   * thinking mode must be passed back to the API"（方案 A 结构化 messages
+   * 开始带 ToolCallPart 之后暴露；之前都是纯 string content 所以 DeepSeek
+   * 没抱怨）。
+   *
+   * messages-builder 会把 entry.reasoning 投影成 AI SDK 的 ReasoningPart，
+   * openai-compatible provider 序列化为 reasoning_content 字段。
+   */
+  private currentReasoningBuffer = '';
+
   // Session lifecycle
   private active = false;
 
@@ -928,6 +944,7 @@ export class GameSession {
 
         // 创建 streaming entry（文本将直接追加到这条 entry）
         this.currentNarrativeBuffer = '';
+        this.currentReasoningBuffer = '';
         this.emitter.beginStreamingEntry();
 
         // 🔭 可观测性：设置 trace 初始上下文（展示 LLM 看到的 prompt）
@@ -1074,6 +1091,7 @@ export class GameSession {
             narrativeParser.push(chunk);
           },
           onReasoningChunk: (chunk) => {
+            this.currentReasoningBuffer += chunk;
             this.emitter.appendReasoningToStreamingEntry(chunk);
           },
           onToolCall: (name, args) => {
@@ -1169,12 +1187,18 @@ export class GameSession {
             entry: {
               role: 'generate',
               content: this.currentNarrativeBuffer,
+              // reasoner 类模型的 thinking 内容。DeepSeek v4 Flash thinking 模式
+              // 要求重放时带回 reasoning_content，messages-builder 会投影成
+              // ReasoningPart。空字符串 → null 统一走 DB NULL 约束，avoid 浪费
+              // 列空间存 ''。
+              reasoning: this.currentReasoningBuffer || undefined,
               finishReason: result.finishReason,
             },
             // migration 0011：最后一 step 的 batchId（onStep 里缓存的最后一帧）
             batchId: this.currentStepBatchId,
           }).catch((e) => console.error('[Persistence] onNarrativeSegmentFinalized (final) failed:', e));
           this.currentNarrativeBuffer = '';
+          this.currentReasoningBuffer = '';
         }
 
         // 同步 memory 快照和 preview

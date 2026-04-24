@@ -24,6 +24,16 @@ import type {
   ToolCallPart,
   ToolResultPart,
 } from 'ai';
+
+// ReasoningPart 由 @ai-sdk/provider-utils 定义，但 `ai` 没把它 re-export
+// （只 re-export 了 ReasoningUIPart/ReasoningOutput）。直接 import
+// '@ai-sdk/provider-utils' 会在 Docker pnpm 严格模式下炸（它是传递依赖，
+// 没列在 package.json）。最便宜的办法：本地内联这个接口，AssistantContent
+// 的 union 里接受这个 shape 即可。
+interface ReasoningPart {
+  type: 'reasoning';
+  text: string;
+}
 import { estimateTokens } from './tokens';
 
 import {
@@ -168,6 +178,20 @@ function buildAssistantAndToolMessages(
     // narrative entries 原文里自带空白/换行；不额外 normalize，空串拼接即可
     .join('');
 
+  // reasoner 模型（DeepSeek v4 thinking / deepseek-reasoner）的 thinking 痕迹。
+  // DeepSeek thinking 模式强制要求：assistant message 有 tool_calls 时必须带
+  // reasoning_content（否则 API 报 "The reasoning_content in the thinking mode
+  // must be passed back"）。AI SDK 的 ReasoningPart 会被 openai-compatible
+  // provider 序列化成 reasoning_content。
+  //
+  // 旧数据（2026-04-24 之前）narrative_entries.reasoning = null，回放时此处为
+  // 空 → 不生成 ReasoningPart。DeepSeek v4 对那些老 assistant message 仍会
+  // 报错。解决办法是起新 playthrough；或以后做 DB backfill 补默认占位符。
+  const reasoningText = group
+    .filter(isNarrativeEntry)
+    .map((e) => e.reasoning ?? '')
+    .join('');
+
   const toolCallParts: ToolCallPart[] = [];
   const toolResultParts: ToolResultPart[] = [];
 
@@ -212,14 +236,36 @@ function buildAssistantAndToolMessages(
   }
 
   // 组装 assistant message content
-  const assistantContent: AssistantModelMessage['content'] =
-    narrativeText.length > 0 && toolCallParts.length === 0
-      ? narrativeText                                                  // 只有 text → 直接用 string
-      : narrativeText.length > 0
-        ? [{ type: 'text', text: narrativeText } as TextPart, ...toolCallParts]
-        : toolCallParts.length > 0
-          ? toolCallParts
-          : '';                                                        // 空组兜底（理论不会到这里）
+  //
+  // 结构化顺序（AI SDK 约定 & DeepSeek 兼容）：
+  //   [ReasoningPart?, TextPart?, ToolCallPart...]
+  //
+  // reasoning 放最前面 —— provider 序列化时 reasoning_content 通常是 message 级
+  // 元数据，位置不敏感；放首部只是视觉上符合"先思考再输出"的惯例。
+  //
+  // 简化形：只有纯文本、没有 reasoning 和 tool-call → 直接用 string 更紧凑
+  //（provider cache / 日志显示都更友好）。
+  const hasReasoning = reasoningText.length > 0;
+  const hasText = narrativeText.length > 0;
+  const hasTools = toolCallParts.length > 0;
+
+  const reasoningPart: ReasoningPart | null = hasReasoning
+    ? { type: 'reasoning', text: reasoningText }
+    : null;
+  const textPart: TextPart | null = hasText ? { type: 'text', text: narrativeText } : null;
+
+  let assistantContent: AssistantModelMessage['content'];
+  if (hasText && !hasTools && !hasReasoning) {
+    assistantContent = narrativeText;   // 最常见情况用 string
+  } else if (!hasText && !hasTools && !hasReasoning) {
+    assistantContent = '';              // 空组兜底（理论不会到这里）
+  } else {
+    const parts: Array<ReasoningPart | TextPart | ToolCallPart> = [];
+    if (reasoningPart) parts.push(reasoningPart);
+    if (textPart) parts.push(textPart);
+    parts.push(...toolCallParts);
+    assistantContent = parts;
+  }
 
   const assistantMessage: AssistantModelMessage = {
     role: 'assistant',

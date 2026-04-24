@@ -419,6 +419,91 @@ describe('buildMessagesFromEntries', () => {
     expect(parts[0].toolName).toBe('signal_input_needed');
     expect(msgs[2]!.role).toBe('tool');
   });
+
+  // -----------------------------------------------------------------
+  // Reasoning（DeepSeek v4 thinking 模式兼容）
+  // -----------------------------------------------------------------
+
+  it('narrative entry 有 reasoning → assistant content 含 ReasoningPart', () => {
+    const entries = [
+      mkEntry({
+        kind: 'narrative',
+        role: 'generate',
+        content: '你走进屋子。',
+        reasoning: '玩家选择进屋，描绘空间过渡。',
+        batchId: 'b1',
+        orderIdx: 0,
+      }),
+      mkEntry({
+        kind: 'tool_call',
+        role: 'system',
+        content: 'change_scene',
+        payload: { input: { background: 'room' }, output: { ok: true } },
+        batchId: 'b1',
+        orderIdx: 1,
+      }),
+    ];
+    const msgs = buildMessagesFromEntries(entries);
+    expect(msgs).toHaveLength(2); // assistant + tool
+    const asst = msgs[0] as AssistantModelMessage;
+    expect(asst.role).toBe('assistant');
+    const parts = asst.content as any[];
+    expect(Array.isArray(parts)).toBe(true);
+    expect(parts[0]).toEqual({ type: 'reasoning', text: '玩家选择进屋，描绘空间过渡。' });
+    expect(parts[1]).toEqual({ type: 'text', text: '你走进屋子。' });
+    expect(parts[2].type).toBe('tool-call');
+    expect(parts[2].toolName).toBe('change_scene');
+  });
+
+  it('narrative entry reasoning=null → assistant content 无 ReasoningPart（老数据回放）', () => {
+    const entries = [
+      mkEntry({
+        kind: 'narrative',
+        role: 'generate',
+        content: '纯叙事，无思考痕迹',
+        reasoning: null,
+        batchId: 'b1',
+        orderIdx: 0,
+      }),
+      mkEntry({
+        kind: 'tool_call',
+        role: 'system',
+        content: 'update_state',
+        payload: { input: {}, output: { ok: true } },
+        batchId: 'b1',
+        orderIdx: 1,
+      }),
+    ];
+    const msgs = buildMessagesFromEntries(entries);
+    const asst = msgs[0] as AssistantModelMessage;
+    const parts = asst.content as any[];
+    const kinds = parts.map((p) => p.type);
+    expect(kinds).not.toContain('reasoning');
+    expect(kinds).toContain('text');
+    expect(kinds).toContain('tool-call');
+  });
+
+  it('只有 narrative + reasoning，没有 tool-call → parts 数组含 reasoning + text（不 collapse 为 string）', () => {
+    const entries = [
+      mkEntry({
+        kind: 'narrative',
+        role: 'generate',
+        content: '叙事正文',
+        reasoning: '我的思考',
+        batchId: 'b1',
+        orderIdx: 0,
+      }),
+    ];
+    const msgs = buildMessagesFromEntries(entries);
+    expect(msgs).toHaveLength(1);
+    const asst = msgs[0] as AssistantModelMessage;
+    // 有 reasoning 就走结构化 parts，不走 string 简化形
+    expect(Array.isArray(asst.content)).toBe(true);
+    const parts = asst.content as any[];
+    expect(parts).toHaveLength(2);
+    expect(parts[0]).toEqual({ type: 'reasoning', text: '我的思考' });
+    expect(parts[1]).toEqual({ type: 'text', text: '叙事正文' });
+  });
 });
 
 // ============================================================================
