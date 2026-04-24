@@ -297,6 +297,228 @@ function findSegment(
   return { chapterIdx, segmentIdx, segment: chapter.segments[segmentIdx]! };
 }
 
+interface AddCharacterSpriteArgs {
+  scriptId: string;
+  characterId: string;
+  characterDisplayName?: string;
+  spriteId: string;
+  spriteLabel?: string;
+  contentType: string;
+  imageBase64: string;
+  versionLabel?: string;
+  versionNote?: string;
+}
+
+interface CharacterUpsert {
+  characters: CharacterAsset[];
+  characterIndex: number;
+  createdCharacter: boolean;
+}
+
+interface SpriteUpsert {
+  character: CharacterAsset;
+  replacedSprite: boolean;
+}
+
+function optionalArgString(value: unknown): string | undefined {
+  return value ? String(value) : undefined;
+}
+
+function parseAddCharacterSpriteArgs(args: Record<string, unknown>): AddCharacterSpriteArgs {
+  return {
+    scriptId: String(args.scriptId),
+    characterId: String(args.characterId),
+    characterDisplayName: optionalArgString(args.characterDisplayName),
+    spriteId: String(args.spriteId),
+    spriteLabel: optionalArgString(args.spriteLabel),
+    contentType: String(args.contentType),
+    imageBase64: String(args.imageBase64),
+    versionLabel: optionalArgString(args.versionLabel),
+    versionNote: optionalArgString(args.versionNote),
+  };
+}
+
+function cloneManifest(manifest: ScriptManifest): ScriptManifest {
+  return JSON.parse(JSON.stringify(manifest)) as ScriptManifest;
+}
+
+function upsertCharacter(
+  characters: CharacterAsset[],
+  characterId: string,
+  characterDisplayName: string | undefined,
+): CharacterUpsert {
+  const characterIndex = characters.findIndex((c) => c.id === characterId);
+  if (characterIndex < 0) {
+    if (!characterDisplayName) {
+      throw new Error(
+        `Character ${characterId} does not exist yet; please provide characterDisplayName to create it.`,
+      );
+    }
+
+    return {
+      characters: [
+        ...characters,
+        {
+          id: characterId,
+          displayName: characterDisplayName,
+          sprites: [],
+        },
+      ],
+      characterIndex: characters.length,
+      createdCharacter: true,
+    };
+  }
+
+  if (!characterDisplayName) {
+    return { characters, characterIndex, createdCharacter: false };
+  }
+
+  const renamedCharacters = [...characters];
+  renamedCharacters[characterIndex] = {
+    ...renamedCharacters[characterIndex]!,
+    displayName: characterDisplayName,
+  };
+
+  return {
+    characters: renamedCharacters,
+    characterIndex,
+    createdCharacter: false,
+  };
+}
+
+function upsertSpriteAsset(
+  character: CharacterAsset,
+  spriteId: string,
+  assetUrl: string,
+  spriteLabel: string | undefined,
+): SpriteUpsert {
+  const sprites: SpriteAsset[] = [...character.sprites];
+  const spriteIndex = sprites.findIndex((s) => s.id === spriteId);
+  const spritePatch = {
+    assetUrl,
+    ...(spriteLabel !== undefined ? { label: spriteLabel } : {}),
+  };
+
+  if (spriteIndex >= 0) {
+    sprites[spriteIndex] = {
+      ...sprites[spriteIndex]!,
+      ...spritePatch,
+    };
+
+    return {
+      character: { ...character, sprites },
+      replacedSprite: true,
+    };
+  }
+
+  sprites.push({
+    id: spriteId,
+    ...spritePatch,
+  });
+
+  return {
+    character: { ...character, sprites },
+    replacedSprite: false,
+  };
+}
+
+function replaceCharacterAt(
+  characters: CharacterAsset[],
+  characterIndex: number,
+  character: CharacterAsset,
+): CharacterAsset[] {
+  const updatedCharacters = [...characters];
+  updatedCharacters[characterIndex] = character;
+  return updatedCharacters;
+}
+
+function characterSpriteVersionNote(params: {
+  characterId: string;
+  spriteId: string;
+  createdCharacter: boolean;
+  replacedSprite: boolean;
+}): string {
+  return (
+    `mcp: ${params.createdCharacter ? 'create character + ' : ''}` +
+    `${params.replacedSprite ? 'update' : 'add'} sprite ${params.characterId}/${params.spriteId}`
+  );
+}
+
+function characterSpriteResultNote(createdCharacter: boolean, replacedSprite: boolean): string {
+  return createdCharacter
+    ? '已新建 character 并挂入第一张立绘，生成新 draft 版本。'
+    : replacedSprite
+      ? '已覆盖同名 sprite，生成新 draft 版本。'
+      : '已为现有 character 新增一张 sprite，生成新 draft 版本。';
+}
+
+async function handleAddCharacterSprite(
+  args: Record<string, unknown>,
+  identity: Identity,
+): Promise<ReturnType<typeof textResult>> {
+  const input = parseAddCharacterSpriteArgs(args);
+  const base = await getBaselineVersion(input.scriptId);
+  const manifest = cloneManifest(base.manifest);
+
+  const characterUpsert = upsertCharacter(
+    manifest.characters ?? [],
+    input.characterId,
+    input.characterDisplayName,
+  );
+
+  const asset = await uploadImageBytes({
+    scriptId: input.scriptId,
+    kind: 'sprite',
+    contentType: input.contentType,
+    imageBase64: input.imageBase64,
+    originalName: `${input.characterId}-${input.spriteId}`,
+    uploadedByUserId: identity.userId,
+  });
+
+  const spriteUpsert = upsertSpriteAsset(
+    characterUpsert.characters[characterUpsert.characterIndex]!,
+    input.spriteId,
+    asset.assetUrl,
+    input.spriteLabel,
+  );
+
+  manifest.characters = replaceCharacterAt(
+    characterUpsert.characters,
+    characterUpsert.characterIndex,
+    spriteUpsert.character,
+  );
+
+  const result = await scriptVersionService.create({
+    scriptId: input.scriptId,
+    manifest,
+    label: input.versionLabel,
+    note:
+      input.versionNote
+      ?? characterSpriteVersionNote({
+        characterId: input.characterId,
+        spriteId: input.spriteId,
+        createdCharacter: characterUpsert.createdCharacter,
+        replacedSprite: spriteUpsert.replacedSprite,
+      }),
+    status: 'draft',
+  });
+
+  return textResult({
+    scriptId: input.scriptId,
+    characterId: input.characterId,
+    spriteId: input.spriteId,
+    assetUrl: asset.assetUrl,
+    assetId: asset.assetId,
+    sizeBytes: asset.sizeBytes,
+    createdCharacter: characterUpsert.createdCharacter,
+    replacedSprite: spriteUpsert.replacedSprite,
+    baseVersionId: base.id,
+    newVersionId: result.version.id,
+    newVersionNumber: result.version.versionNumber,
+    note: characterSpriteResultNote(characterUpsert.createdCharacter, spriteUpsert.replacedSprite),
+  });
+}
+
 const tools: ToolDef[] = [
   // ------------------------------------------------------------------------
   // 只读 tools
@@ -878,105 +1100,7 @@ const tools: ToolDef[] = [
       required: ['scriptId', 'characterId', 'spriteId', 'contentType', 'imageBase64'],
       additionalProperties: false,
     },
-    async handler(args, identity) {
-      const scriptId = String(args.scriptId);
-      const characterId = String(args.characterId);
-      const characterDisplayName = args.characterDisplayName
-        ? String(args.characterDisplayName)
-        : undefined;
-      const spriteId = String(args.spriteId);
-      const spriteLabel = args.spriteLabel ? String(args.spriteLabel) : undefined;
-      const contentType = String(args.contentType);
-      const imageBase64 = String(args.imageBase64);
-      const versionLabel = args.versionLabel ? String(args.versionLabel) : undefined;
-      const versionNote = args.versionNote ? String(args.versionNote) : undefined;
-
-      const base = await getBaselineVersion(scriptId);
-      const manifest: ScriptManifest = JSON.parse(JSON.stringify(base.manifest)) as ScriptManifest;
-      const characters: CharacterAsset[] = manifest.characters ?? [];
-
-      let charIdx = characters.findIndex((c) => c.id === characterId);
-      let createdCharacter = false;
-      if (charIdx < 0) {
-        if (!characterDisplayName) {
-          throw new Error(
-            `Character ${characterId} does not exist yet; please provide characterDisplayName to create it.`,
-          );
-        }
-        characters.push({
-          id: characterId,
-          displayName: characterDisplayName,
-          sprites: [],
-        });
-        charIdx = characters.length - 1;
-        createdCharacter = true;
-      } else if (characterDisplayName) {
-        characters[charIdx] = { ...characters[charIdx]!, displayName: characterDisplayName };
-      }
-
-      // 上传图片
-      const asset = await uploadImageBytes({
-        scriptId,
-        kind: 'sprite',
-        contentType,
-        imageBase64,
-        originalName: `${characterId}-${spriteId}`,
-        uploadedByUserId: identity.userId,
-      });
-
-      const character = characters[charIdx]!;
-      const sprites: SpriteAsset[] = [...character.sprites];
-      const spriteIdx = sprites.findIndex((s) => s.id === spriteId);
-      const newSprite: SpriteAsset = {
-        id: spriteId,
-        assetUrl: asset.assetUrl,
-        ...(spriteLabel !== undefined ? { label: spriteLabel } : {}),
-      };
-      let replacedSprite = false;
-      if (spriteIdx >= 0) {
-        const old = sprites[spriteIdx]!;
-        sprites[spriteIdx] = {
-          ...old,
-          assetUrl: asset.assetUrl,
-          ...(spriteLabel !== undefined ? { label: spriteLabel } : {}),
-        };
-        replacedSprite = true;
-      } else {
-        sprites.push(newSprite);
-      }
-      characters[charIdx] = { ...character, sprites };
-      manifest.characters = characters;
-
-      const result = await scriptVersionService.create({
-        scriptId,
-        manifest,
-        label: versionLabel,
-        note:
-          versionNote
-          ?? `mcp: ${createdCharacter ? 'create character + ' : ''}` +
-             `${replacedSprite ? 'update' : 'add'} sprite ${characterId}/${spriteId}`,
-        status: 'draft',
-      });
-
-      return textResult({
-        scriptId,
-        characterId,
-        spriteId,
-        assetUrl: asset.assetUrl,
-        assetId: asset.assetId,
-        sizeBytes: asset.sizeBytes,
-        createdCharacter,
-        replacedSprite,
-        baseVersionId: base.id,
-        newVersionId: result.version.id,
-        newVersionNumber: result.version.versionNumber,
-        note: createdCharacter
-          ? '已新建 character 并挂入第一张立绘，生成新 draft 版本。'
-          : replacedSprite
-            ? '已覆盖同名 sprite，生成新 draft 版本。'
-            : '已为现有 character 新增一张 sprite，生成新 draft 版本。',
-      });
-    },
+    handler: handleAddCharacterSprite,
   },
 
   {
