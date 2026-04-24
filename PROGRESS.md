@@ -1,20 +1,17 @@
 # 项目进度
 
 ## 当前状态
-MCP.1 + MCP.2 已上线 staging（v26，commit 830f40a）。
+7.3 signal_input_needed 空停补刀落地，待 rollout。
 
-新加的 MCP server 挂在 `/api/mcp`（手写 JSON-RPC 2.0 over Streamable HTTP），
-给编剧的 Claude Desktop 通过 `mcp-remote` 接入，让 AI 可以直接读写剧本 +
-上传立绘 / 背景图。12 个 tool 全覆盖 read / edit-segment / edit-manifest /
-upload-image / publish。bun test 136/136 全绿。
-
-Rollout：`ivn-k3s-staging` deployment/ivn-engine 已切到
-`memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com/ivn/engine:v26`，
-2/2 replicas Running，/health ok，/api/mcp 403 Forbidden（无 Bearer token，符合
-admin-gated 设计）。
+llm-client.generate 结束后若 toolCallLog 里没 signal_input_needed / end_scenario，
+自动追发一次 streamText，toolChoice 协议级强制 signal_input_needed。follow-up 的
+step 带 isFollowup=true 让 game-session 的 onStep 跳过覆盖 currentStepBatchId，
+最终 narrative + signal_input 共享主最后一步的 batchId，messages-builder 投成一个
+干净的 assistant message。对 DeepSeek V4 thinking + tool_calls 的 replay 协议
+（必须带 reasoning_content）友好。bun test 136/136 全绿，tsc clean，bun start 正常。
 
 ## 当前任务
-（暂无 — MCP feature 部署完毕。下一轮任务等用户指派。）
+（待 rollout 后转为"完成"）
 
 ## 已完成的里程碑
 
@@ -124,6 +121,7 @@ admin-gated 设计）。
 | 2026-04-21 | WS 'reset' 消息不全量 reset 客户端 store | game-session.start() 会发 'reset'，但客户端 seedOpeningSentences 已经在 mount 时填了 parsedSentences，全量 reset 会清掉 | `'reset'` handler 改为只清 status / error / inputHint / inputType；VN 字段（parsedSentences / currentScene / visibleSentenceIndex）保留 |
 | 2026-04-21 | M1 choices 与对话并存时允许 advance | 玩家可能还没读完就触发了 signal_input_needed，应该能继续点看完再选 | click-to-advance 不因 isWaitingChoice 阻塞；advance 到末尾自然 no-op |
 | 2026-04-21 | M2 不处理文件上传 | M4 专门做 OSS pipeline；M2 只存 id + label，assetUrl 留空 | SceneBackground / SpriteLayer 对空 URL 已有占位渲染，M4 填 URL 后无需改 UI |
+| 2026-04-24 | signal_input_needed 空停改为 llm-client post-step 补刀，不动 prompt 也不挪到 game-session | 主 generate 漏叫是 provider 级问题（prompt 已足够明确），解决要走协议级 toolChoice；放在 llm-client 让主 / 补刀共享 callbacks + closure，调用方无感 | StepInfo 加 isFollowup 字段；game-session onStep 回调的 currentStepBatchId 更新门控 !step.isFollowup；narrative + signal_input 共享 batchId 反而比多步主生成时更整洁 |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |

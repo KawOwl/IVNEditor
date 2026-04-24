@@ -375,6 +375,16 @@
     "verify": "短 prompt 单段返回；长 prompt 自动续写 N 段直到 stop；UI 显示 \"续写 N / 8\" 进度；达到上限 alert 提示"
   },
   {
+    "id": "7.3",
+    "title": "signal_input_needed 空停补刀（post-step follow-up）",
+    "description": "主 generate 结束时若 LLM 未调 signal_input_needed / end_scenario（典型 finishReason=stop 或 length），llm-client 自动追发一次 streamText，通过 toolChoice={type:'tool', toolName:'signal_input_needed'} 在 provider 解码器层强制模型调。follow-up 的 step 带 isFollowup=true 标记，game-session 的 onStep 回调 !step.isFollowup 跳过覆盖 currentStepBatchId —— 让 follow-up 里 recordPendingSignal 写入的 signal_input entry 和主轮最后一段 narrative flush 出来的 entry 共享同一 batchId，messages-builder 分组投成一个干净的 assistant message（reasoning + text + tool_call）。failure 兜底：任何异常 console.error 不冒上来，fallback 到 freetext UI 老路径。",
+    "status": "done",
+    "type": "logic",
+    "ref": "src/core/llm-client.ts + src/core/game-session.ts",
+    "verify": "bun tsc --noEmit clean；cd server && bun tsc 无新 error（只有 pre-existing TS6059 rootDir 噪音）；cd server && bun test 136 全绿；bun start 正常启动 + shutdown；实测补刀路径需观察 Langfuse trace 出现带 isFollowup 标签的 follow-up step，且 narrative_entries 中 signal_input kind 和 narrative kind 同 batchId",
+    "note": "关键设计：follow-up 的 text-delta / reasoning-delta 不回传给 onTextChunk / onReasoningChunk（toolChoice 下模型不该再叙事，避免前端叠字）；stepCountIs(2) cap + maxOutputTokens 1024 限成本；对 DeepSeek V4 thinking 模式 replay 友好——主轮最后 step 的 reasoning_content 跟 signal_input tool_call 同 batch，messages-builder 投成带 reasoning + tool_calls 的 assistant message 满足协议约束。回调结构抽成 handleStepStart/handleToolCallStart/handleToolCallFinish/handleStepFinish 命名函数让主轮和 follow-up 共享"
+  },
+  {
     "id": "M3",
     "title": "视觉层铺底：XML-lite 叙事协议 + 场景状态 + 视觉工具",
     "description": "LLM 输出用 <d s=... to=... hear=... eav=...>text</d> 标记对话，裸文本即旁白；流式 NarrativeParser 状态机解析为 Sentence 流（含 ParticipationFrame）；SceneState（背景+精灵）端到端持久化 (playthroughs.current_scene jsonb)；引入 change_scene/change_sprite/clear_stage 工具取代 show_image；WS 推流 sentence + scene-change 事件；EditorDebugPanel 新增 sentences tab",

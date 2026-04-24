@@ -1117,7 +1117,22 @@ export class GameSession {
           },
           onStep: (step) => {
             // migration 0011：缓存当前 step 的 batchId 供挂起期 / finalize 期挂载
-            this.currentStepBatchId = step.batchId ?? null;
+            //
+            // isFollowup 门控（方案 A post-step 补刀，2026-04-24）：
+            //   follow-up step 是 llm-client 在主 generate 空停时自动追发的
+            //   补刀请求（详见 llm-client.ts GenerateOptions.onStep 中
+            //   isFollowup 注释）。补刀里 signal_input_needed 的
+            //   recordPendingSignal 已经用**主最后一个 step** 的 batchId 挂
+            //   载了 signal_input entry；这里如果让 follow-up 覆盖
+            //   currentStepBatchId，下一步 flushNarrativeBuffer 会把 narrative
+            //   entry 挂到 follow-up 的新 batchId，导致 narrative 和
+            //   signal_input 跨 batch，messages-builder 会投成两个 assistant
+            //   message（一个只有 narrative，一个只有 signal）。不希望这样。
+            //   所以补刀的 step 只走 tracing（下方 recordStep），**不**更新
+            //   currentStepBatchId。
+            if (!step.isFollowup) {
+              this.currentStepBatchId = step.batchId ?? null;
+            }
             // 🔭 tracing: 每个 step 记一个 generation span
             traceHandle?.recordStep({
               stepNumber: step.stepNumber,
