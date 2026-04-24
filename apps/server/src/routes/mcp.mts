@@ -324,6 +324,124 @@ function optionalArgString(value: unknown): string | undefined {
   return value ? String(value) : undefined;
 }
 
+interface AddBackgroundArgs {
+  scriptId: string;
+  backgroundId: string;
+  label?: string;
+  contentType: string;
+  imageBase64: string;
+  versionLabel?: string;
+  versionNote?: string;
+}
+
+interface BackgroundUpsert {
+  backgrounds: BackgroundAsset[];
+  replaced: boolean;
+}
+
+function parseAddBackgroundArgs(args: Record<string, unknown>): AddBackgroundArgs {
+  return {
+    scriptId: String(args.scriptId),
+    backgroundId: String(args.backgroundId),
+    label: optionalArgString(args.label),
+    contentType: String(args.contentType),
+    imageBase64: String(args.imageBase64),
+    versionLabel: optionalArgString(args.versionLabel),
+    versionNote: optionalArgString(args.versionNote),
+  };
+}
+
+function upsertBackgroundAsset(
+  backgrounds: BackgroundAsset[],
+  backgroundId: string,
+  assetUrl: string,
+  label: string | undefined,
+): BackgroundUpsert {
+  const backgroundIndex = backgrounds.findIndex((b) => b.id === backgroundId);
+  const backgroundPatch = {
+    assetUrl,
+    ...(label !== undefined ? { label } : {}),
+  };
+
+  if (backgroundIndex >= 0) {
+    const updatedBackgrounds = [...backgrounds];
+    updatedBackgrounds[backgroundIndex] = {
+      ...updatedBackgrounds[backgroundIndex]!,
+      ...backgroundPatch,
+    };
+
+    return { backgrounds: updatedBackgrounds, replaced: true };
+  }
+
+  return {
+    backgrounds: [
+      ...backgrounds,
+      {
+        id: backgroundId,
+        ...backgroundPatch,
+      },
+    ],
+    replaced: false,
+  };
+}
+
+function backgroundVersionNote(backgroundId: string, replaced: boolean): string {
+  return `mcp: ${replaced ? 'update' : 'add'} background ${backgroundId}`;
+}
+
+function backgroundResultNote(replaced: boolean): string {
+  return replaced
+    ? '已覆盖同名 background，并生成新 draft 版本。'
+    : '已新增 background，并生成新 draft 版本。';
+}
+
+async function handleAddBackgroundToScript(
+  args: Record<string, unknown>,
+  identity: Identity,
+): Promise<ReturnType<typeof textResult>> {
+  const input = parseAddBackgroundArgs(args);
+  const base = await getBaselineVersion(input.scriptId);
+  const manifest = cloneManifest(base.manifest);
+
+  const asset = await uploadImageBytes({
+    scriptId: input.scriptId,
+    kind: 'background',
+    contentType: input.contentType,
+    imageBase64: input.imageBase64,
+    originalName: input.label,
+    uploadedByUserId: identity.userId,
+  });
+
+  const backgroundUpsert = upsertBackgroundAsset(
+    manifest.backgrounds ?? [],
+    input.backgroundId,
+    asset.assetUrl,
+    input.label,
+  );
+  manifest.backgrounds = backgroundUpsert.backgrounds;
+
+  const result = await scriptVersionService.create({
+    scriptId: input.scriptId,
+    manifest,
+    label: input.versionLabel,
+    note: input.versionNote ?? backgroundVersionNote(input.backgroundId, backgroundUpsert.replaced),
+    status: 'draft',
+  });
+
+  return textResult({
+    scriptId: input.scriptId,
+    backgroundId: input.backgroundId,
+    assetUrl: asset.assetUrl,
+    assetId: asset.assetId,
+    sizeBytes: asset.sizeBytes,
+    replaced: backgroundUpsert.replaced,
+    baseVersionId: base.id,
+    newVersionId: result.version.id,
+    newVersionNumber: result.version.versionNumber,
+    note: backgroundResultNote(backgroundUpsert.replaced),
+  });
+}
+
 function parseAddCharacterSpriteArgs(args: Record<string, unknown>): AddCharacterSpriteArgs {
   return {
     scriptId: String(args.scriptId),
@@ -999,74 +1117,7 @@ const tools: ToolDef[] = [
       required: ['scriptId', 'backgroundId', 'contentType', 'imageBase64'],
       additionalProperties: false,
     },
-    async handler(args, identity) {
-      const scriptId = String(args.scriptId);
-      const backgroundId = String(args.backgroundId);
-      const label = args.label ? String(args.label) : undefined;
-      const contentType = String(args.contentType);
-      const imageBase64 = String(args.imageBase64);
-      const versionLabel = args.versionLabel ? String(args.versionLabel) : undefined;
-      const versionNote = args.versionNote ? String(args.versionNote) : undefined;
-
-      const base = await getBaselineVersion(scriptId);
-      const manifest: ScriptManifest = JSON.parse(JSON.stringify(base.manifest)) as ScriptManifest;
-
-      // 先上传，拿到 assetUrl；失败就在这里抛，没必要再动 manifest
-      const asset = await uploadImageBytes({
-        scriptId,
-        kind: 'background',
-        contentType,
-        imageBase64,
-        originalName: label,
-        uploadedByUserId: identity.userId,
-      });
-
-      // 写入 / 更新 backgrounds[]
-      const backgrounds: BackgroundAsset[] = manifest.backgrounds ?? [];
-      const existingIdx = backgrounds.findIndex((b) => b.id === backgroundId);
-      const newEntry: BackgroundAsset = {
-        id: backgroundId,
-        assetUrl: asset.assetUrl,
-        ...(label !== undefined ? { label } : {}),
-      };
-      let replaced = false;
-      if (existingIdx >= 0) {
-        // 保留原 label 如果没传新的
-        const old = backgrounds[existingIdx]!;
-        backgrounds[existingIdx] = {
-          ...old,
-          assetUrl: asset.assetUrl,
-          ...(label !== undefined ? { label } : {}),
-        };
-        replaced = true;
-      } else {
-        backgrounds.push(newEntry);
-      }
-      manifest.backgrounds = backgrounds;
-
-      const result = await scriptVersionService.create({
-        scriptId,
-        manifest,
-        label: versionLabel,
-        note: versionNote ?? `mcp: ${replaced ? 'update' : 'add'} background ${backgroundId}`,
-        status: 'draft',
-      });
-
-      return textResult({
-        scriptId,
-        backgroundId,
-        assetUrl: asset.assetUrl,
-        assetId: asset.assetId,
-        sizeBytes: asset.sizeBytes,
-        replaced,
-        baseVersionId: base.id,
-        newVersionId: result.version.id,
-        newVersionNumber: result.version.versionNumber,
-        note: replaced
-          ? '已覆盖同名 background，并生成新 draft 版本。'
-          : '已新增 background，并生成新 draft 版本。',
-      });
-    },
+    handler: handleAddBackgroundToScript,
   },
 
   {
