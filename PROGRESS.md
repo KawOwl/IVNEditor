@@ -1,7 +1,7 @@
 # 项目进度
 
 ## 当前状态
-7.3 signal_input_needed 空停补刀落地，待 rollout。
+7.3 signal_input_needed 空停补刀已上线 staging（v27，commit 086ead3）。
 
 llm-client.generate 结束后若 toolCallLog 里没 signal_input_needed / end_scenario，
 自动追发一次 streamText，toolChoice 协议级强制 signal_input_needed。follow-up 的
@@ -10,8 +10,14 @@ step 带 isFollowup=true 让 game-session 的 onStep 跳过覆盖 currentStepBat
 干净的 assistant message。对 DeepSeek V4 thinking + tool_calls 的 replay 协议
 （必须带 reasoning_content）友好。bun test 136/136 全绿，tsc clean，bun start 正常。
 
+Rollout：`ivn-k3s-staging` deployment/ivn-engine 已切到
+`memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com/ivn/engine:v27`，
+2/2 replicas Running，/health ok。下次有玩家试玩空停场景时观察 Langfuse
+trace 里补刀 step 是否出现 + narrative_entries 里 signal_input 是否与
+narrative 同 batchId。
+
 ## 当前任务
-（待 rollout 后转为"完成"）
+（暂无 — 7.3 rollout 完毕，等用户指派或验证反馈）
 
 ## 已完成的里程碑
 
