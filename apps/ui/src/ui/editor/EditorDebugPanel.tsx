@@ -15,7 +15,8 @@ import { useState } from 'react';
 import { useGameStore } from '../../stores/game-store';
 import { useRawStreamingStore } from '../../stores/raw-streaming-store';
 import { cn } from '../../lib/utils';
-import type { SceneState } from '@ivn/core/types';
+import type { Sentence } from '../../stores/game-store';
+import { toSentenceDebugModel } from './sentence-debug-presenter';
 
 type DebugSection = 'prompt' | 'messages' | 'tokens' | 'state' | 'tools' | 'memory' | 'sentences' | 'raw';
 
@@ -462,93 +463,22 @@ function SentencesSection() {
   );
 }
 
-function SentenceRow({ sentence }: { sentence: import('../../stores/game-store').Sentence }) {
-  if (sentence.kind === 'narration') {
-    return (
-      <div className="border-l-2 border-zinc-700 pl-2 py-0.5">
-        <div className="text-[9px] text-zinc-600">
-          #{sentence.index} · narration · turn {sentence.turnNumber}
-        </div>
-        <div className="text-zinc-300 whitespace-pre-wrap">{sentence.text}</div>
-      </div>
-    );
-  }
-  if (sentence.kind === 'dialogue') {
-    return (
-      <div className="border-l-2 border-blue-700 pl-2 py-0.5">
-        <div className="text-[9px] text-zinc-600">
-          #{sentence.index} · dialogue · turn {sentence.turnNumber}
-          {sentence.truncated && (
-            <span className="text-red-400 ml-1">[truncated]</span>
-          )}
-        </div>
-        <div className="text-blue-300 text-[10px]">
-          <span className="text-blue-400">{sentence.pf.speaker}</span>
-          {sentence.pf.addressee && (
-            <>
-              {' → '}
-              <span className="text-cyan-400">{sentence.pf.addressee.join(', ')}</span>
-            </>
-          )}
-          {sentence.pf.overhearers && (
-            <>
-              {' +'}
-              <span className="text-yellow-500">{sentence.pf.overhearers.join(',')}</span>
-            </>
-          )}
-          {sentence.pf.eavesdroppers && (
-            <>
-              {' ?'}
-              <span className="text-red-400">{sentence.pf.eavesdroppers.join(',')}</span>
-            </>
-          )}
-        </div>
-        <div className="text-zinc-200 whitespace-pre-wrap">{sentence.text}</div>
-      </div>
-    );
-  }
-  if (sentence.kind === 'player_input') {
-    return (
-      <div className="border-l-2 border-sky-700 pl-2 py-0.5">
-        <div className="text-[9px] text-zinc-600">
-          #{sentence.index} · player_input · turn {sentence.turnNumber}
-          {sentence.selectedIndex !== undefined && (
-            <span className="ml-1 text-amber-500">[choice {sentence.selectedIndex}]</span>
-          )}
-        </div>
-        <div className="text-sky-200 whitespace-pre-wrap text-[11px]">{sentence.text}</div>
-      </div>
-    );
-  }
-  if (sentence.kind === 'signal_input') {
-    return (
-      <div className="border-l-2 border-amber-700 pl-2 py-0.5">
-        <div className="text-[9px] text-zinc-600">
-          #{sentence.index} · signal_input · turn {sentence.turnNumber} · {sentence.choices.length} choice(s)
-        </div>
-        <div className="text-amber-300 text-[11px] whitespace-pre-wrap">{sentence.hint}</div>
-        {sentence.choices.length > 0 && (
-          <div className="text-[10px] text-zinc-500">
-            {sentence.choices.map((c, i) => `${i + 1}. ${c}`).join(' / ')}
-          </div>
+function SentenceRow({ sentence }: { sentence: Sentence }) {
+  const row = toSentenceDebugModel(sentence);
+
+  return (
+    <div className={cn('border-l-2 pl-2 py-0.5', row.borderClassName)}>
+      <div className="text-[9px] text-zinc-600">
+        {row.header}
+        {row.headerBadge && (
+          <span className={row.headerBadge.className}>{row.headerBadge.text}</span>
         )}
       </div>
-    );
-  }
-  // scene_change
-  return (
-    <div className="border-l-2 border-emerald-700 pl-2 py-0.5">
-      <div className="text-[9px] text-zinc-600">
-        #{sentence.index} · scene_change · turn {sentence.turnNumber}
-        {sentence.transition && <span className="ml-1">[{sentence.transition}]</span>}
-      </div>
-      <div className="text-[10px] text-emerald-300">
-        bg: {sentence.scene.background ?? 'null'}
-        {' · sprites: '}
-        {sentence.scene.sprites.length === 0
-          ? '—'
-          : sentence.scene.sprites.map((s: SceneState['sprites'][number]) => `${s.id}:${s.emotion}`).join(', ')}
-      </div>
+      {row.speakerLine && (
+        <div className={row.speakerLine.className}>{row.speakerLine.text}</div>
+      )}
+      <div className={row.body.className}>{row.body.text}</div>
+      {row.footer && <div className={row.footer.className}>{row.footer.text}</div>}
     </div>
   );
 }
