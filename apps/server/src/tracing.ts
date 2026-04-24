@@ -18,7 +18,7 @@ import type {
   GenerateTraceHandle,
   ToolCallTraceHandle,
 } from '@ivn/core/game-session';
-import { getServerEnv } from './env';
+import { getServerEnv } from '#internal/env';
 
 // ============================================================================
 // Client 单例

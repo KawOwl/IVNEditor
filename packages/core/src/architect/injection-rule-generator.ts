@@ -8,8 +8,8 @@
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import type { LanguageModel } from 'ai';
-import type { UploadedDocument, InjectionRuleResult } from './types';
-import type { InjectionRule, PromptSegment } from '../types';
+import type { UploadedDocument, InjectionRuleResult } from '#internal/architect/types';
+import type { InjectionRule, PromptSegment } from '#internal/types';
 
 // ============================================================================
 // Extraction Prompt

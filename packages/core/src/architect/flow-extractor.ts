@@ -11,8 +11,8 @@
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import type { LanguageModel } from 'ai';
-import type { UploadedDocument, FlowExtractionResult } from './types';
-import type { FlowGraph } from '../types';
+import type { UploadedDocument, FlowExtractionResult } from '#internal/architect/types';
+import type { FlowGraph } from '#internal/types';
 
 // ============================================================================
 // Extraction Prompt

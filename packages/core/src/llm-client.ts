@@ -17,7 +17,7 @@
 import { streamText, stepCountIs, hasToolCall, tool, zodSchema, type ToolSet, type ModelMessage } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createAnthropic } from '@ai-sdk/anthropic';
-import type { ToolHandler } from './tool-executor';
+import type { ToolHandler } from '#internal/tool-executor';
 
 // ============================================================================
 // Types

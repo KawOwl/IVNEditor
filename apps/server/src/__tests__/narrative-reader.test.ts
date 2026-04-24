@@ -5,10 +5,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterAll } from 'bun:test';
-import { createNarrativeHistoryReader } from '#server/services/narrative-reader';
-import { playthroughService } from '#server/services/playthrough-service';
-import { db, schema } from '#server/db';
-import { assertTestDatabase } from './_db-guard';
+import { createNarrativeHistoryReader } from '#internal/services/narrative-reader';
+import { playthroughService } from '#internal/services/playthrough-service';
+import { db, schema } from '#internal/db';
+import { assertTestDatabase } from '#internal/__tests__/_db-guard';
 import type { ScriptManifest } from '@ivn/core/types';
 
 async function cleanTables() {

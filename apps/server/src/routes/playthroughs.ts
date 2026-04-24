@@ -15,12 +15,12 @@
 
 import { Elysia } from 'elysia';
 import { eq, inArray } from 'drizzle-orm';
-import { db, schema } from '#server/db';
-import { playthroughService } from '#server/services/playthrough-service';
-import { scriptVersionService } from '#server/services/script-version-service';
-import { scriptService } from '#server/services/script-service';
-import { llmConfigService } from '#server/services/llm-config-service';
-import { requireAnyIdentity, isResponse } from '#server/auth-identity';
+import { db, schema } from '#internal/db';
+import { playthroughService } from '#internal/services/playthrough-service';
+import { scriptVersionService } from '#internal/services/script-version-service';
+import { scriptService } from '#internal/services/script-service';
+import { llmConfigService } from '#internal/services/llm-config-service';
+import { requireAnyIdentity, isResponse } from '#internal/auth-identity';
 
 export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
 

@@ -30,6 +30,32 @@ function extensionOf(path) {
   return match?.[0] ?? '';
 }
 
+function lineOf(text, index) {
+  return text.slice(0, index).split(/\r?\n/).length;
+}
+
+function collectImportSpecifiers(text) {
+  const specifiers = [];
+  const patterns = [
+    /\b(?:import|export)\s+(?:type\s+)?[\s\S]*?\bfrom\s*(['"])([^'"]+)\1/g,
+    /\bimport\s*(['"])([^'"]+)\1/g,
+    /\bimport\s*\(\s*(['"])([^'"]+)\1\s*\)/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const specifier = match[2];
+      if (specifier !== undefined) {
+        specifiers.push({
+          specifier,
+          line: lineOf(text, match.index ?? 0),
+        });
+      }
+    }
+  }
+  return specifiers;
+}
+
 async function* walk(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
@@ -62,6 +88,18 @@ for await (const file of walk(root)) {
     const idx = lines.findIndex((line) => rule.pattern.test(line));
     if (idx >= 0) {
       violations.push({ file: rel, rule: rule.id, line: idx + 1 });
+    }
+  }
+
+  for (const { specifier, line } of collectImportSpecifiers(text)) {
+    if (specifier.startsWith('.')) {
+      violations.push({ file: rel, rule: 'relative-import', line });
+    }
+    if (/^@ivn\/[^/]+\/src\//.test(specifier)) {
+      violations.push({ file: rel, rule: 'package-src-deep-import', line });
+    }
+    if (specifier === '#server' || specifier.startsWith('#server/')) {
+      violations.push({ file: rel, rule: 'legacy-server-internal-alias', line });
     }
   }
 }

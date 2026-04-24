@@ -11,7 +11,7 @@
  * 下线，IDB 封装整个被删，但存档格式本身还要保留，所以单独拎出来。
  */
 
-import type { ScriptManifest } from './types';
+import type { ScriptManifest } from '#internal/types';
 
 // ============================================================================
 // Types

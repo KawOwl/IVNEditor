@@ -19,7 +19,7 @@
  */
 
 import { sql } from 'drizzle-orm';
-import { db } from '#server/db';
+import { db } from '#internal/db';
 
 /**
  * 只有 DB 名字里含 "test" 才放行（大小写不敏感）。

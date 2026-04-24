@@ -10,7 +10,7 @@ import type {
   StateSchema,
   ChangelogEntry,
   ChangelogFilter,
-} from './types';
+} from '#internal/types';
 
 // ============================================================================
 // ID Generator

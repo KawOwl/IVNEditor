@@ -1,5 +1,5 @@
-import type { ScenePatch } from '../tool-executor';
-import type { SceneState, SpriteState } from '../types';
+import type { ScenePatch } from '#internal/tool-executor';
+import type { SceneState, SpriteState } from '#internal/types';
 
 export type SceneTransition = 'fade' | 'cut' | 'dissolve';
 

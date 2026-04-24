@@ -34,7 +34,7 @@ interface ReasoningPart {
   type: 'reasoning';
   text: string;
 }
-import { estimateTokens } from './tokens';
+import { estimateTokens } from '#internal/tokens';
 
 import {
   isNarrativeEntry,
@@ -43,7 +43,7 @@ import {
   isPlayerInputEntry,
   readChoices,
   type NarrativeEntry,
-} from './persistence-entry';
+} from '#internal/persistence-entry';
 
 // ============================================================================
 // Public API

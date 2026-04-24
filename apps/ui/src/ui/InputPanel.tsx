@@ -8,8 +8,8 @@
  */
 
 import { useState, useCallback, type KeyboardEvent } from 'react';
-import { useGameStore } from '../stores/game-store';
-import { cn } from '../lib/utils';
+import { useGameStore } from '#internal/stores/game-store';
+import { cn } from '#internal/lib/utils';
 
 const DEFAULT_HINT = '你想做什么？';
 

@@ -10,9 +10,9 @@
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import type { LanguageModel } from 'ai';
-import type { UploadedDocument, PromptSplitResult } from './types';
-import type { PromptSegment } from '../types';
-import { estimateTokens } from '../tokens';
+import type { UploadedDocument, PromptSplitResult } from '#internal/architect/types';
+import type { PromptSegment } from '#internal/types';
+import { estimateTokens } from '#internal/tokens';
 
 // ============================================================================
 // Hash Helper

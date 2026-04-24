@@ -14,14 +14,14 @@
 
 import { Elysia } from 'elysia';
 import { cors } from '@elysiajs/cors';
-import { scriptRoutes } from './routes/scripts';
-import { scriptVersionsForScriptRoutes, scriptVersionRoutes } from './routes/script-versions';
-import { sessionRoutes } from './routes/sessions';
-import { llmConfigRoutes } from './routes/llm-configs';
-import { authRoutes } from './routes/auth';
-import { playthroughRoutes } from './routes/playthroughs';
-import { assetRoutes } from './routes/assets';
-import { mcpRoutes } from './routes/mcp';
+import { scriptRoutes } from '#internal/routes/scripts';
+import { scriptVersionsForScriptRoutes, scriptVersionRoutes } from '#internal/routes/script-versions';
+import { sessionRoutes } from '#internal/routes/sessions';
+import { llmConfigRoutes } from '#internal/routes/llm-configs';
+import { authRoutes } from '#internal/routes/auth';
+import { playthroughRoutes } from '#internal/routes/playthroughs';
+import { assetRoutes } from '#internal/routes/assets';
+import { mcpRoutes } from '#internal/routes/mcp';
 
 export function buildApp() {
   return new Elysia()

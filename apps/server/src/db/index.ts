@@ -9,8 +9,8 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Pool } from 'pg';
 import { fileURLToPath } from 'node:url';
-import * as schema from './schema';
-import { getServerEnv } from '#server/env';
+import * as schema from '#internal/db/schema';
+import { getServerEnv } from '#internal/env';
 
 const env = getServerEnv();
 const databaseUrl = env.DATABASE_URL;

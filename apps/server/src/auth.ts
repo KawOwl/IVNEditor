@@ -15,7 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { eq, sql } from 'drizzle-orm';
-import { db, schema } from './db';
+import { db, schema } from '#internal/db';
 
 /** 登录返回体 */
 export interface LoginResult {

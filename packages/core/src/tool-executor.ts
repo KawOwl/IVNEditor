@@ -16,10 +16,10 @@
  */
 
 import { z } from 'zod/v4';
-import type { StateStore } from './state-store';
-import type { Memory } from './memory/types';
-import type { PromptSegment } from './types';
-import { requireToolMetadata } from './tool-catalog';
+import type { StateStore } from '#internal/state-store';
+import type { Memory } from '#internal/memory/types';
+import type { PromptSegment } from '#internal/types';
+import { requireToolMetadata } from '#internal/tool-catalog';
 
 // ============================================================================
 // Types

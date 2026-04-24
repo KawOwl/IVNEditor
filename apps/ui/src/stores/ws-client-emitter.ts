@@ -8,9 +8,9 @@
  * WS URL 通过 query 传递：sessionId (auth) + playthroughId (游玩记录)
  */
 
-import { useGameStore } from './game-store';
-import { ensureSessionId, fetchWithAuth } from './player-session-store';
-import { handleSessionMessage, type WSMessage } from './ws-message-handlers';
+import { useGameStore } from '#internal/stores/game-store';
+import { ensureSessionId, fetchWithAuth } from '#internal/stores/player-session-store';
+import { handleSessionMessage, type WSMessage } from '#internal/stores/ws-message-handlers';
 
 // ============================================================================
 // Types

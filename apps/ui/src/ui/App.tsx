@@ -11,13 +11,13 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { useAppStore } from '../stores/app-store';
-import { useAuthStore } from '../stores/auth-store';
-import { ensureSessionId, fetchWithAuth } from '../stores/player-session-store';
-import { HomePage } from './home/HomePage';
-import { PlayPage } from './play/PlayPage';
-import { EditorPage } from './editor/EditorPage';
-import { LoginModal } from './auth/LoginModal';
+import { useAppStore } from '#internal/stores/app-store';
+import { useAuthStore } from '#internal/stores/auth-store';
+import { ensureSessionId, fetchWithAuth } from '#internal/stores/player-session-store';
+import { HomePage } from '#internal/ui/home/HomePage';
+import { PlayPage } from '#internal/ui/play/PlayPage';
+import { EditorPage } from '#internal/ui/editor/EditorPage';
+import { LoginModal } from '#internal/ui/auth/LoginModal';
 import { getBackendUrl } from '@/lib/backend-url';
 import type { ScriptManifest } from '@ivn/core/types';
 

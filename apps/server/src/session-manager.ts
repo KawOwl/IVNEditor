@@ -12,11 +12,11 @@ import { GameSession } from '@ivn/core/game-session';
 import type { GameSessionConfig, RestoreConfig } from '@ivn/core/game-session';
 import type { ScriptManifest, PromptSegment } from '@ivn/core/types';
 import type { LLMConfig } from '@ivn/core/llm-client';
-import { createWebSocketEmitter } from './ws-session-emitter';
-import { createPlaythroughPersistence } from './services/playthrough-persistence';
-import { createNarrativeHistoryReader } from './services/narrative-reader';
-import { createBoundTracing } from './tracing';
-import { getServerEnv } from './env';
+import { createWebSocketEmitter } from '#internal/ws-session-emitter';
+import { createPlaythroughPersistence } from '#internal/services/playthrough-persistence';
+import { createNarrativeHistoryReader } from '#internal/services/narrative-reader';
+import { createBoundTracing } from '#internal/tracing';
+import { getServerEnv } from '#internal/env';
 
 // ============================================================================
 // Config

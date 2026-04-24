@@ -3,9 +3,9 @@ import type {
   PromptSegment,
   SceneState,
   StateSchema,
-} from '../types';
-import type { LLMConfig } from '../llm-client';
-import type { NarrativeHistoryReader } from '../memory/narrative-reader';
+} from '#internal/types';
+import type { LLMConfig } from '#internal/llm-client';
+import type { NarrativeHistoryReader } from '#internal/memory/narrative-reader';
 
 /**
  * SessionPersistence — 可选的持久化回调接口

@@ -1,5 +1,5 @@
 import { defineConfig } from 'drizzle-kit';
-import { getServerEnv } from './src/env';
+import { getServerEnv } from '#internal/env';
 
 const env = getServerEnv();
 

@@ -14,7 +14,7 @@ import type {
   ToolCallEntry,
   SceneState,
   Sentence,
-} from './types';
+} from '#internal/types';
 
 // ============================================================================
 // Types

@@ -12,8 +12,8 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { NarrativeParser, parseDialogueAttrs, extractPlainText } from '../narrative-parser';
-import type { ParticipationFrame } from '../types';
+import { NarrativeParser, parseDialogueAttrs, extractPlainText } from '#internal/narrative-parser';
+import type { ParticipationFrame } from '#internal/types';
 
 interface Event {
   type: 'narration' | 'd_start' | 'd_chunk' | 'd_end';

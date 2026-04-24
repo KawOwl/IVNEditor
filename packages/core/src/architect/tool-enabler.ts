@@ -8,8 +8,8 @@
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import type { LanguageModel } from 'ai';
-import type { UploadedDocument, ToolEnablementResult } from './types';
-import type { StateSchema } from '../types';
+import type { UploadedDocument, ToolEnablementResult } from '#internal/architect/types';
+import type { StateSchema } from '#internal/types';
 
 // ============================================================================
 // Constants

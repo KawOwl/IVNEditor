@@ -16,7 +16,7 @@
  *   - 纯读接口，无副作用（不影响持久化状态）
  */
 
-import type { EntryKind, NarrativeEntry } from '../persistence-entry';
+import type { EntryKind, NarrativeEntry } from '#internal/persistence-entry';
 
 export interface NarrativeHistoryReader {
   /**

@@ -8,8 +8,8 @@
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import type { LanguageModel } from 'ai';
-import type { UploadedDocument, ClassificationResult, DocumentRole } from './types';
-import { estimateTokens } from '../tokens';
+import type { UploadedDocument, ClassificationResult, DocumentRole } from '#internal/architect/types';
+import { estimateTokens } from '#internal/tokens';
 
 // ============================================================================
 // Classification Prompt

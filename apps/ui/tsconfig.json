@@ -21,6 +21,7 @@
 
     /* Paths */
     "paths": {
+      "#internal/*": ["./src/*"],
       "@/*": ["./src/*"],
       "@scenario/*": ["../../scenario/*"],
       "@ivn/core/*": ["../../packages/core/src/*"],

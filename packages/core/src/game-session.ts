@@ -20,22 +20,24 @@
  *   - stop(): 停止
  */
 
-import type { PromptSegment, Sentence, ParticipationFrame, SceneState } from './types';
-import { StateStore } from './state-store';
-import type { Memory } from './memory/types';
-import { createMemory } from './memory/factory';
-import { estimateTokens } from './tokens';
-import { assembleContext } from './context-assembler';
-import { computeFocus } from './focus';
-import { createTools, getEnabledTools } from './tool-executor';
-import type { SignalInputOptions } from './tool-executor';
-import { LLMClient } from './llm-client';
-import type { SessionEmitter } from './session-emitter';
-import { NarrativeParser, extractPlainText } from './narrative-parser';
-import { serializeMessagesForDebug } from './messages-builder';
-import { createNarrationAccumulator } from './game-session/narration';
-import { computeReceivePayload } from './game-session/input-payload';
-import { applyScenePatchToState } from './game-session/scene-state';
+import type { PromptSegment, Sentence, ParticipationFrame, SceneState } from '#internal/types';
+import { StateStore } from '#internal/state-store';
+import type { Memory } from '#internal/memory/types';
+import { createMemory } from '#internal/memory/factory';
+import { estimateTokens } from '#internal/tokens';
+import { assembleContext } from '#internal/context-assembler';
+import { computeFocus } from '#internal/focus';
+import { createTools, getEnabledTools } from '#internal/tool-executor';
+import type { ScenePatch } from '#internal/tool-executor';
+import type { SignalInputOptions } from '#internal/tool-executor';
+import { LLMClient } from '#internal/llm-client';
+import type { LLMConfig } from '#internal/llm-client';
+import type { SessionEmitter } from '#internal/session-emitter';
+import { NarrativeParser, extractPlainText } from '#internal/narrative-parser';
+import { serializeMessagesForDebug } from '#internal/messages-builder';
+import { createNarrationAccumulator } from '#internal/game-session/narration';
+import { computeReceivePayload } from '#internal/game-session/input-payload';
+import { applyScenePatchToState } from '#internal/game-session/scene-state';
 import type {
   GameSessionConfig,
   GenerateTraceHandle,
@@ -43,16 +45,16 @@ import type {
   SessionPersistence,
   SessionTracing,
   ToolCallTraceHandle,
-} from './game-session/types';
+} from '#internal/game-session/types';
 
 export {
   NARRATION_HARD_LIMIT,
   NARRATION_SOFT_LIMIT,
   createNarrationAccumulator,
   findNarrationCut,
-} from './game-session/narration';
-export { computeReceivePayload } from './game-session/input-payload';
-export { applyScenePatchToState } from './game-session/scene-state';
+} from '#internal/game-session/narration';
+export { computeReceivePayload } from '#internal/game-session/input-payload';
+export { applyScenePatchToState } from '#internal/game-session/scene-state';
 export type {
   GameSessionConfig,
   GenerateTraceHandle,
@@ -60,7 +62,7 @@ export type {
   SessionPersistence,
   SessionTracing,
   ToolCallTraceHandle,
-} from './game-session/types';
+} from '#internal/game-session/types';
 
 // ============================================================================
 // GameSession
@@ -133,7 +135,7 @@ export class GameSession {
    * start() 时从 manifest.defaultScene 或 {background:null, sprites:[]} 初始化，
    * restore() 时从 DB 恢复。每次变化会发给 emitter 并在 generate 结束后持久化。
    */
-  private currentScene: import('./types').SceneState = {
+  private currentScene: SceneState = {
     background: null,
     sprites: [],
   };
@@ -212,7 +214,7 @@ export class GameSession {
   }
 
   /** 即时更新 LLM 配置（下一次 generate 生效，无需重启会话） */
-  updateLLMConfig(patch: Partial<import('./llm-client').LLMConfig>): void {
+  updateLLMConfig(patch: Partial<LLMConfig>): void {
     this.llmClient?.updateConfig(patch);
   }
 
@@ -1162,7 +1164,7 @@ export class GameSession {
    *   2. 通过 scenePatchEmitter（由 generate() 装载）emit WS 事件 + Sentence
    *   3. onGenerateComplete 时把 currentScene 持久化到 DB
    */
-  private applyScenePatch(patch: import('./tool-executor').ScenePatch): void {
+  private applyScenePatch(patch: ScenePatch): void {
     const { scene, transition } = applyScenePatchToState(this.currentScene, patch);
     this.currentScene = scene;
     this.scenePatchEmitter?.(transition);

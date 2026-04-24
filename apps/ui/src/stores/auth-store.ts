@@ -21,7 +21,7 @@ import {
   setSessionId,
   clearSessionId,
   fetchWithAuth,
-} from './player-session-store';
+} from '#internal/stores/player-session-store';
 
 // ============================================================================
 // Types

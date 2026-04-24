@@ -10,9 +10,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterAll } from 'bun:test';
-import { PlaythroughService } from '#server/services/playthrough-service';
-import { db, schema } from '#server/db';
-import { assertTestDatabase } from './_db-guard';
+import { PlaythroughService } from '#internal/services/playthrough-service';
+import { db, schema } from '#internal/db';
+import { assertTestDatabase } from '#internal/__tests__/_db-guard';
 import type { ScriptManifest } from '@ivn/core/types';
 
 const service = new PlaythroughService();

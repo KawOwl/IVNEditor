@@ -51,11 +51,11 @@ import type {
 } from '@ivn/core/types';
 import { rehashSegment } from '@ivn/core/architect/prompt-splitter';
 import { estimateTokens } from '@ivn/core/tokens';
-import { scriptService } from '#server/services/script-service';
-import { scriptVersionService } from '#server/services/script-version-service';
-import { assetService, type AssetKind } from '#server/services/asset-service';
-import { getAssetStorage } from '#server/services/asset-storage';
-import { requireAdmin, isResponse, type Identity } from '#server/auth-identity';
+import { scriptService } from '#internal/services/script-service';
+import { scriptVersionService } from '#internal/services/script-version-service';
+import { assetService, type AssetKind } from '#internal/services/asset-service';
+import { getAssetStorage } from '#internal/services/asset-storage';
+import { requireAdmin, isResponse, type Identity } from '#internal/auth-identity';
 
 // ============================================================================
 // JSON-RPC 2.0 types

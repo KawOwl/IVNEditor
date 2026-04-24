@@ -13,11 +13,11 @@
  * - mem0（Phase 3）：mem0 云端长期记忆；API key 由宿主运行时注入
  */
 
-import type { Memory, CreateMemoryOptions } from './types';
-import { LegacyMemory } from './legacy/manager';
-import { truncatingCompressFn } from './legacy/compress';
-import { LLMSummarizerMemory } from './llm-summarizer/manager';
-import { Mem0Memory } from './mem0/adapter';
+import type { Memory, CreateMemoryOptions } from '#internal/memory/types';
+import { LegacyMemory } from '#internal/memory/legacy/manager';
+import { truncatingCompressFn } from '#internal/memory/legacy/compress';
+import { LLMSummarizerMemory } from '#internal/memory/llm-summarizer/manager';
+import { Mem0Memory } from '#internal/memory/mem0/adapter';
 
 export async function createMemory(options: CreateMemoryOptions): Promise<Memory> {
   const kind = options.config.provider ?? 'legacy';

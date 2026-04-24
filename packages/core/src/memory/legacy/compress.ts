@@ -5,7 +5,7 @@
  * 行为保持用，不是长期方案。Phase 2 LLMSummarizer 会用真 LLM 替换这里。
  */
 
-import type { CompressFn } from './manager';
+import type { CompressFn } from '#internal/memory/legacy/manager';
 
 export const truncatingCompressFn: CompressFn = async (entries) => {
   return entries

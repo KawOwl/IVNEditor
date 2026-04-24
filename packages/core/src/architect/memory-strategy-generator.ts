@@ -12,8 +12,8 @@
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import type { LanguageModel } from 'ai';
-import type { UploadedDocument, MemoryStrategyResult } from './types';
-import type { MemoryConfig } from '../types';
+import type { UploadedDocument, MemoryStrategyResult } from '#internal/architect/types';
+import type { MemoryConfig } from '#internal/types';
 
 // ============================================================================
 // Extraction Prompt

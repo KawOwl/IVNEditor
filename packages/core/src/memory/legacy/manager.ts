@@ -26,9 +26,9 @@ import type {
   MemoryRetrieval,
   MemorySnapshot,
   RecentMessagesResult,
-} from '../types';
-import type { NarrativeHistoryReader } from '../narrative-reader';
-import { narrativeEntriesToMemoryEntries } from '../narrative-entry-mapping';
+} from '#internal/memory/types';
+import type { NarrativeHistoryReader } from '#internal/memory/narrative-reader';
+import { narrativeEntriesToMemoryEntries } from '#internal/memory/narrative-entry-mapping';
 
 // ============================================================================
 // Compress function contract

@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { buildApp } from '#server/app';
+import { buildApp } from '#internal/app';
 
 describe('App startup smoke test', () => {
   it('should build Elysia app without route conflicts', async () => {

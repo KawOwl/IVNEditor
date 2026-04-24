@@ -12,7 +12,7 @@ import type {
 } from '@ivn/core/memory/narrative-reader';
 import type { EntryKind, NarrativeEntry } from '@ivn/core/persistence-entry';
 import { isKnownEntryKind } from '@ivn/core/persistence-entry';
-import { playthroughService, type NarrativeEntryRow } from './playthrough-service';
+import { playthroughService, type NarrativeEntryRow } from '#internal/services/playthrough-service';
 
 /** DB Row → core 层 NarrativeEntry */
 function rowToEntry({

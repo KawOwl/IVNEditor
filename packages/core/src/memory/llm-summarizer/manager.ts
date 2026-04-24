@@ -17,10 +17,10 @@ import type {
   MemoryRetrieval,
   MemorySnapshot,
   RecentMessagesResult,
-} from '../types';
-import type { NarrativeHistoryReader } from '../narrative-reader';
-import { narrativeEntriesToMemoryEntries } from '../narrative-entry-mapping';
-import { makeLLMCompressFn, type CompressFn } from './compress';
+} from '#internal/memory/types';
+import type { NarrativeHistoryReader } from '#internal/memory/narrative-reader';
+import { narrativeEntriesToMemoryEntries } from '#internal/memory/narrative-entry-mapping';
+import { makeLLMCompressFn, type CompressFn } from '#internal/memory/llm-summarizer/compress';
 
 // ============================================================================
 // Snapshot kind

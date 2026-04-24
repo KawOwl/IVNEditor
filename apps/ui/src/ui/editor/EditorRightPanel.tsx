@@ -1,8 +1,8 @@
-import { EditorDebugPanel } from './EditorDebugPanel';
-import { PromptPreviewPanel } from './PromptPreviewPanel';
-import { ScriptInfoPanel } from './ScriptInfoPanel';
-import { PlayPanel } from '../play/PlayPanel';
-import { LLMSettingsPanel } from '../settings/LLMSettingsPanel';
+import { EditorDebugPanel } from '#internal/ui/editor/EditorDebugPanel';
+import { PromptPreviewPanel } from '#internal/ui/editor/PromptPreviewPanel';
+import { ScriptInfoPanel } from '#internal/ui/editor/ScriptInfoPanel';
+import { PlayPanel } from '#internal/ui/play/PlayPanel';
+import { LLMSettingsPanel } from '#internal/ui/settings/LLMSettingsPanel';
 import { cn } from '@/lib/utils';
 import type {
   BackgroundAsset,

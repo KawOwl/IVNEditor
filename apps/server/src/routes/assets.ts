@@ -25,11 +25,11 @@
 import { Elysia } from 'elysia';
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
-import { requireAdmin, isResponse } from '#server/auth-identity';
-import { scriptService } from '#server/services/script-service';
-import { assetService, type AssetKind } from '#server/services/asset-service';
-import { getAssetStorage } from '#server/services/asset-storage';
-import { getServerEnv } from '#server/env';
+import { requireAdmin, isResponse } from '#internal/auth-identity';
+import { scriptService } from '#internal/services/script-service';
+import { assetService, type AssetKind } from '#internal/services/asset-service';
+import { getAssetStorage } from '#internal/services/asset-storage';
+import { getServerEnv } from '#internal/env';
 
 /** 尝试从 MIME 推一个扩展名（纯为美观/诊断，storage_key 不依赖它） */
 function extFromMime(mime: string | undefined): string {

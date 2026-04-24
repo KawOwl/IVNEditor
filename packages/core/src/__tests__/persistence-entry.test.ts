@@ -14,8 +14,8 @@ import {
   readSelectedIndex,
   readChoices,
   KNOWN_ENTRY_KINDS,
-} from '../persistence-entry';
-import type { NarrativeEntry } from '../persistence-entry';
+} from '#internal/persistence-entry';
+import type { NarrativeEntry } from '#internal/persistence-entry';
 
 function makeEntry(partial: Partial<NarrativeEntry> & Pick<NarrativeEntry, 'kind'>): NarrativeEntry {
   return {

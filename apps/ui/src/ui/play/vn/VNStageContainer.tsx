@@ -19,10 +19,10 @@
 
 import { useCallback, useEffect } from 'react';
 import { useGameStore } from '@/stores/game-store';
-import { VNStage } from './VNStage';
-import { Backlog } from './Backlog';
-import { useDialogTypewriter } from './useDialogTypewriter';
-import { getTypewriterSpeed } from '../typewriter-speed';
+import { VNStage } from '#internal/ui/play/vn/VNStage';
+import { Backlog } from '#internal/ui/play/vn/Backlog';
+import { useDialogTypewriter } from '#internal/ui/play/vn/useDialogTypewriter';
+import { getTypewriterSpeed } from '#internal/ui/play/typewriter-speed';
 import type { CharacterAsset, BackgroundAsset, Sentence } from '@ivn/core/types';
 
 export interface VNStageContainerProps {

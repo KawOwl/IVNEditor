@@ -13,7 +13,7 @@ import {
   findNarrationCut,
   NARRATION_SOFT_LIMIT,
   NARRATION_HARD_LIMIT,
-} from '../game-session';
+} from '#internal/game-session';
 
 describe('findNarrationCut', () => {
   it('短文本无段落边界 → null（继续累积）', () => {

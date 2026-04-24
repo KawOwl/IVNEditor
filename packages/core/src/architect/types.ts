@@ -10,7 +10,7 @@ import type {
   InjectionRule,
   StateSchema,
   MemoryConfig,
-} from '../types';
+} from '#internal/types';
 
 // ============================================================================
 // Document Classification (Step 2.1)

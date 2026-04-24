@@ -8,8 +8,8 @@ import { describe, it, expect } from 'bun:test';
 import {
   narrativeToMemoryEntry,
   narrativeEntriesToMemoryEntries,
-} from '../memory/narrative-entry-mapping';
-import type { NarrativeEntry } from '../persistence-entry';
+} from '#internal/memory/narrative-entry-mapping';
+import type { NarrativeEntry } from '#internal/persistence-entry';
 
 function mk(partial: Partial<NarrativeEntry> & Pick<NarrativeEntry, 'kind'>): NarrativeEntry {
   return {

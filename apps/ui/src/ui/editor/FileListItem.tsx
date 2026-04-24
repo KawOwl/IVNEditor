@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { estimateTokens } from '@ivn/core/tokens';
 import { cn } from '@/lib/utils';
-import type { EditorDocument } from './editor-documents';
+import type { EditorDocument } from '#internal/ui/editor/editor-documents';
 
 export function FileListItem({
   doc,

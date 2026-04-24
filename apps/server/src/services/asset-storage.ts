@@ -24,7 +24,7 @@ import {
 import { Upload } from '@aws-sdk/lib-storage';
 import type { Readable as NodeReadable } from 'node:stream';
 import { createServerAssetStorageEnv } from '@ivn/specification/env';
-import { getServerEnv } from '#server/env';
+import { getServerEnv } from '#internal/env';
 
 // ============================================================================
 // Types

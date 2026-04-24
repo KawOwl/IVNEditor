@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { useGameStore } from '../game-store';
+import { useGameStore } from '#internal/stores/game-store';
 import type { Sentence, SceneState } from '@ivn/core/types';
 
 const scene: SceneState = { background: null, sprites: [] };

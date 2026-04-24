@@ -16,13 +16,13 @@ import type { ModelMessage } from 'ai';
 import type {
   PromptSegment,
   FocusState,
-} from './types';
-import type { Memory } from './memory/types';
-import type { StateStore } from './state-store';
-import { serializeStateVars } from './state-store';
-import { estimateTokens } from './tokens';
-import { ENGINE_RULES_CONTENT } from './engine-rules';
-import { rankSegments, scoreSegment } from './focus';
+} from '#internal/types';
+import type { Memory } from '#internal/memory/types';
+import type { StateStore } from '#internal/state-store';
+import { serializeStateVars } from '#internal/state-store';
+import { estimateTokens } from '#internal/tokens';
+import { ENGINE_RULES_CONTENT } from '#internal/engine-rules';
+import { rankSegments, scoreSegment } from '#internal/focus';
 
 // ============================================================================
 // Types

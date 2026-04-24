@@ -26,8 +26,8 @@
 import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
-import { db, schema } from '#server/db';
-import { getServerEnv } from '#server/env';
+import { db, schema } from '#internal/db';
+import { getServerEnv } from '#internal/env';
 import type { AdminUserEnv } from '@ivn/specification/env';
 
 async function upsertAdmin(entry: AdminUserEnv): Promise<{

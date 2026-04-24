@@ -27,7 +27,7 @@
  *   parser.finalize();           // 流结束时调（处理未闭合 tag）
  */
 
-import type { ParticipationFrame } from './types';
+import type { ParticipationFrame } from '#internal/types';
 
 export interface NarrativeParserCallbacks {
   /** 旁白文本增量。可能同一段被分多次调 callback。 */

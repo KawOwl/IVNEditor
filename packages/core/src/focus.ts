@@ -18,7 +18,7 @@
  *   - 未来 B2 升级时 rankSegments 返回的结果变成"过滤注入白名单"
  */
 
-import type { PromptSegment, FocusState } from './types';
+import type { PromptSegment, FocusState } from '#internal/types';
 
 /**
  * 从 state_vars 推断当前 focus。

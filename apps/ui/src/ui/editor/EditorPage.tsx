@@ -13,12 +13,12 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { useAppStore } from '@/stores/app-store';
-import type { VersionSummary } from './VersionHistoryList';
+import type { VersionSummary } from '#internal/ui/editor/VersionHistoryList';
 import { exportScript, parseImportedScript } from '@ivn/core/script-archive';
 import { useAuthStore } from '@/stores/auth-store';
 import { useLLMConfigsStore } from '@/stores/llm-configs-store';
-import { LocalBackupGate } from './LocalBackupGate';
-import { buildEditorManifest, buildEditorScriptRecord } from './editor-manifest';
+import { LocalBackupGate } from '#internal/ui/editor/LocalBackupGate';
+import { buildEditorManifest, buildEditorScriptRecord } from '#internal/ui/editor/editor-manifest';
 import {
   createScript,
   createScriptVersion,
@@ -30,17 +30,17 @@ import {
   publishScriptVersion,
   renameScript,
   updateScriptMetadata,
-} from './editor-script-api';
+} from '#internal/ui/editor/editor-script-api';
 import {
   EditorDocumentWorkspace,
-} from './EditorDocumentWorkspace';
-import { EditorHeader } from './EditorHeader';
-import { EditorRightPanel, type RightTab } from './EditorRightPanel';
-import { EditorSidebar } from './EditorSidebar';
-import type { ScriptListItem } from './ScriptListEntry';
-import { useAIRewrite } from './use-ai-rewrite';
-import { useEditorDraftState } from './use-editor-draft-state';
-import { usePlaytestLlmConfigId } from './use-playtest-llm-config';
+} from '#internal/ui/editor/EditorDocumentWorkspace';
+import { EditorHeader } from '#internal/ui/editor/EditorHeader';
+import { EditorRightPanel, type RightTab } from '#internal/ui/editor/EditorRightPanel';
+import { EditorSidebar } from '#internal/ui/editor/EditorSidebar';
+import type { ScriptListItem } from '#internal/ui/editor/ScriptListEntry';
+import { useAIRewrite } from '#internal/ui/editor/use-ai-rewrite';
+import { useEditorDraftState } from '#internal/ui/editor/use-editor-draft-state';
+import { usePlaytestLlmConfigId } from '#internal/ui/editor/use-playtest-llm-config';
 import type { ScriptManifest } from '@ivn/core/types';
 
 // ============================================================================

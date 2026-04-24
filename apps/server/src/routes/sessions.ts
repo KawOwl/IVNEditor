@@ -15,11 +15,11 @@
  */
 
 import { Elysia } from 'elysia';
-import { SessionManager } from '#server/session-manager';
-import { playthroughService } from '#server/services/playthrough-service';
-import { scriptVersionService } from '#server/services/script-version-service';
-import { llmConfigService } from '#server/services/llm-config-service';
-import { resolvePlayerSession } from '#server/auth-identity';
+import { SessionManager } from '#internal/session-manager';
+import { playthroughService } from '#internal/services/playthrough-service';
+import { scriptVersionService } from '#internal/services/script-version-service';
+import { llmConfigService } from '#internal/services/llm-config-service';
+import { resolvePlayerSession } from '#internal/auth-identity';
 import type { LLMConfig } from '@ivn/core/llm-client';
 
 const sessionManager = new SessionManager();

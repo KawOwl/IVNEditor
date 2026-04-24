@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { computeReceivePayload } from '../game-session';
+import { computeReceivePayload } from '#internal/game-session';
 
 describe('computeReceivePayload', () => {
   it('choices null → freetext', () => {

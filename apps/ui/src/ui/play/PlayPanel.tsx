@@ -10,8 +10,8 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import { InputPanel } from '../InputPanel';
-import { VNStageContainer } from './vn/VNStageContainer';
+import { InputPanel } from '#internal/ui/InputPanel';
+import { VNStageContainer } from '#internal/ui/play/vn/VNStageContainer';
 import { useGameStore } from '@/stores/game-store';
 import {
   createRemoteSession,

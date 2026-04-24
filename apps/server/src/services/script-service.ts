@@ -11,7 +11,7 @@
  */
 
 import { eq, sql, desc } from 'drizzle-orm';
-import { db, schema } from '#server/db';
+import { db, schema } from '#internal/db';
 
 // ============================================================================
 // Types

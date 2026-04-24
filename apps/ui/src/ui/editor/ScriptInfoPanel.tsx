@@ -18,7 +18,7 @@ import type {
 } from '@ivn/core/types';
 import { listTools } from '@ivn/core/tool-catalog';
 import { useLLMConfigsStore } from '@/stores/llm-configs-store';
-import { useAssetUpload } from './use-asset-upload';
+import { useAssetUpload } from '#internal/ui/editor/use-asset-upload';
 import { getBackendUrl } from '@/lib/backend-url';
 import { cn } from '@/lib/utils';
 

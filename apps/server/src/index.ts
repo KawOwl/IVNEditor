@@ -14,11 +14,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildApp } from './app';
-import { testConnection, runMigrations, closePool } from './db';
-import { shutdownTracing } from './tracing';
-import { llmConfigService } from './services/llm-config-service';
-import { getServerEnv } from './env';
+import { buildApp } from '#internal/app';
+import { testConnection, runMigrations, closePool } from '#internal/db';
+import { shutdownTracing } from '#internal/tracing';
+import { llmConfigService } from '#internal/services/llm-config-service';
+import { getServerEnv } from '#internal/env';
 import { createLlmConfigSeedFromEnv } from '@ivn/specification/env';
 
 const env = getServerEnv();

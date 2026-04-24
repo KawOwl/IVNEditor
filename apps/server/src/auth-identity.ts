@@ -10,7 +10,7 @@
  */
 
 import { eq, gt, and } from 'drizzle-orm';
-import { db, schema } from './db';
+import { db, schema } from '#internal/db';
 
 // ============================================================================
 // Types

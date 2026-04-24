@@ -20,9 +20,9 @@
  * 这类上下文，可以把 signal_input 也返回成 role='system' 的记忆。
  */
 
-import { estimateTokens } from '../tokens';
-import type { MemoryEntry } from '../types';
-import type { NarrativeEntry } from '../persistence-entry';
+import { estimateTokens } from '#internal/tokens';
+import type { MemoryEntry } from '#internal/types';
+import type { NarrativeEntry } from '#internal/persistence-entry';
 
 /**
  * 把一条 NarrativeEntry 映射成 MemoryEntry。

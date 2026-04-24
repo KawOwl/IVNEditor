@@ -12,10 +12,10 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { assembleContext } from '../context-assembler';
-import { StateStore } from '../state-store';
-import type { PromptSegment } from '../types';
-import type { Memory } from '../memory/types';
+import { assembleContext } from '#internal/context-assembler';
+import { StateStore } from '#internal/state-store';
+import type { PromptSegment } from '#internal/types';
+import type { Memory } from '#internal/memory/types';
 
 function makeSeg(partial: Partial<PromptSegment> & Pick<PromptSegment, 'id' | 'content'>): PromptSegment {
   return {

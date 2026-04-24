@@ -8,9 +8,9 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { createTools } from '../tool-executor';
-import { StateStore } from '../state-store';
-import type { Memory } from '../memory/types';
+import { createTools } from '#internal/tool-executor';
+import { StateStore } from '#internal/state-store';
+import type { Memory } from '#internal/memory/types';
 
 // ============================================================================
 // Mock Memory（不做任何真事，signal_input_needed 不会用到）

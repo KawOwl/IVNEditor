@@ -8,7 +8,7 @@ import type {
   ScriptManifest,
   StateSchema,
 } from '@ivn/core/types';
-import { docToSegment, type EditorDocument } from './editor-documents';
+import { docToSegment, type EditorDocument } from '#internal/ui/editor/editor-documents';
 
 export interface EditorManifestInput {
   id: string;

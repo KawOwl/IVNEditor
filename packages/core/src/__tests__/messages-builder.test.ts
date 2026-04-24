@@ -10,8 +10,8 @@ import {
   buildMessagesFromEntries,
   capMessagesByBudgetFromTail,
   serializeMessagesForDebug,
-} from '../messages-builder';
-import type { NarrativeEntry } from '../persistence-entry';
+} from '#internal/messages-builder';
+import type { NarrativeEntry } from '#internal/persistence-entry';
 import type { AssistantModelMessage, ModelMessage, ToolModelMessage, UserModelMessage } from 'ai';
 
 // ============================================================================

@@ -13,8 +13,8 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { LegacyMemory } from '../legacy/manager';
-import type { NarrativeHistoryReader } from '../narrative-reader';
+import { LegacyMemory } from '#internal/memory/legacy/manager';
+import type { NarrativeHistoryReader } from '#internal/memory/narrative-reader';
 import type { NarrativeEntry, EntryKind } from '@ivn/core/persistence-entry';
 import type { MemoryConfig, MemoryEntry } from '@ivn/core/types';
 

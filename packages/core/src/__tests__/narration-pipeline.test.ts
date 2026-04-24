@@ -11,8 +11,8 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { NarrativeParser } from '../narrative-parser';
-import { createNarrationAccumulator, NARRATION_SOFT_LIMIT, NARRATION_HARD_LIMIT } from '../game-session';
+import { NarrativeParser } from '#internal/narrative-parser';
+import { createNarrationAccumulator, NARRATION_SOFT_LIMIT, NARRATION_HARD_LIMIT } from '#internal/game-session';
 
 /**
  * 把 raw text 按 N 字切成 chunk，模拟流式 LLM 的 onTextChunk 调用。

@@ -10,7 +10,7 @@
  */
 
 import { eq, and } from 'drizzle-orm';
-import { db, schema } from '#server/db';
+import { db, schema } from '#internal/db';
 
 export type AssetKind = 'background' | 'sprite';
 

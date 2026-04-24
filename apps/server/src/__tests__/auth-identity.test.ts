@@ -16,11 +16,11 @@ import {
   requireAdmin,
   requireAnyIdentity,
   isResponse,
-} from '#server/auth-identity';
-import { userService } from '#server/services/user-service';
-import { db, schema } from '#server/db';
+} from '#internal/auth-identity';
+import { userService } from '#internal/services/user-service';
+import { db, schema } from '#internal/db';
 import { eq } from 'drizzle-orm';
-import { assertTestDatabase } from './_db-guard';
+import { assertTestDatabase } from '#internal/__tests__/_db-guard';
 
 // ============================================================================
 // Helpers

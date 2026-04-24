@@ -14,7 +14,9 @@
  */
 
 import type { ModelMessage } from 'ai';
-import type { MemoryEntry, MemoryConfig } from '../types';
+import type { MemoryEntry, MemoryConfig } from '#internal/types';
+import type { LLMClient } from '#internal/llm-client';
+import type { NarrativeHistoryReader } from '#internal/memory/narrative-reader';
 
 /**
  * Memory scope —— 绑定到具体的 playthrough
@@ -172,7 +174,7 @@ export interface CreateMemoryOptions {
   scope: MemoryScope;
   config: MemoryConfig;
   /** LLMSummarizer 需要；legacy / mem0 忽略 */
-  llmClient?: import('../llm-client').LLMClient;
+  llmClient?: LLMClient;
   /** Mem0 adapter 需要；由宿主运行时读取并验证 env 后注入，core 不读 process.env。 */
   mem0ApiKey?: string;
   /**
@@ -185,5 +187,5 @@ export interface CreateMemoryOptions {
    *
    * 详见 .claude/plans/memory-refactor-v2.md
    */
-  reader?: import('./narrative-reader').NarrativeHistoryReader;
+  reader?: NarrativeHistoryReader;
 }

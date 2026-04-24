@@ -13,7 +13,7 @@
 
 import { create } from 'zustand';
 import { getBackendUrl } from '@/lib/backend-url';
-import { fetchWithAuth } from './player-session-store';
+import { fetchWithAuth } from '#internal/stores/player-session-store';
 import type { LLMConfig } from '@ivn/core/llm-client';
 
 // ============================================================================

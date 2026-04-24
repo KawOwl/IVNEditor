@@ -9,14 +9,14 @@ import type { LanguageModel } from 'ai';
 import type {
   ArchitectResult,
   AgentProgressCallback,
-} from './types';
-import { classifyDocuments } from './document-classifier';
-import { extractStateVariables } from './state-extractor';
-import { extractFlowGraph } from './flow-extractor';
-import { splitPrompts } from './prompt-splitter';
-import { generateInjectionRules } from './injection-rule-generator';
-import { determineToolEnablement } from './tool-enabler';
-import { generateMemoryStrategy } from './memory-strategy-generator';
+} from '#internal/architect/types';
+import { classifyDocuments } from '#internal/architect/document-classifier';
+import { extractStateVariables } from '#internal/architect/state-extractor';
+import { extractFlowGraph } from '#internal/architect/flow-extractor';
+import { splitPrompts } from '#internal/architect/prompt-splitter';
+import { generateInjectionRules } from '#internal/architect/injection-rule-generator';
+import { determineToolEnablement } from '#internal/architect/tool-enabler';
+import { generateMemoryStrategy } from '#internal/architect/memory-strategy-generator';
 
 export async function runArchitectPipeline(
   rawDocuments: Array<{ filename: string; content: string }>,

@@ -1,7 +1,7 @@
 import { useCallback, useRef, type ChangeEvent } from 'react';
-import type { EditorDocument } from './editor-documents';
-import { FileListItem } from './FileListItem';
-import { ScriptListEntry, type ScriptListItem } from './ScriptListEntry';
+import type { EditorDocument } from '#internal/ui/editor/editor-documents';
+import { FileListItem } from '#internal/ui/editor/FileListItem';
+import { ScriptListEntry, type ScriptListItem } from '#internal/ui/editor/ScriptListEntry';
 
 export interface EditorSidebarProps {
   documents: EditorDocument[];

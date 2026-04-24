@@ -18,11 +18,11 @@ import {
   readEditorDocumentsFromFiles,
   type EditorDocument,
   type EditorDocumentMetaField,
-} from './editor-documents';
+} from '#internal/ui/editor/editor-documents';
 import {
   buildEditorManifest,
   type EditorManifestInput,
-} from './editor-manifest';
+} from '#internal/ui/editor/editor-manifest';
 
 export interface EditorRecordSnapshot {
   id: string;

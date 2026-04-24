@@ -55,7 +55,7 @@
  *   - 如果线上已经是新 schema（比如之前跑过一次），脚本会跳过所有已有结构
  */
 
-import { db } from '#server/db';
+import { db } from '#internal/db';
 import { sql } from 'drizzle-orm';
 
 // ============================================================================

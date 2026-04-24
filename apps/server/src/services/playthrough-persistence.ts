@@ -7,7 +7,7 @@
 
 import type { SessionPersistence } from '@ivn/core/game-session';
 import { extractPlainText } from '@ivn/core/narrative-parser';
-import { playthroughService } from './playthrough-service';
+import { playthroughService } from '#internal/services/playthrough-service';
 
 /**
  * 为指定 playthrough 创建 SessionPersistence 实现

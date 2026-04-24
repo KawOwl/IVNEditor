@@ -1,6 +1,6 @@
 import type { ScriptManifest } from '@ivn/core/types';
 import { getBackendUrl } from '@/lib/backend-url';
-import type { VersionSummary } from './VersionHistoryList';
+import type { VersionSummary } from '#internal/ui/editor/VersionHistoryList';
 
 export type AuthHeaders = Record<string, string>;
 

@@ -1,10 +1,10 @@
-import { CodeEditor } from './CodeEditor';
-import { DiffEditor } from './DiffEditor';
-import { DocMetaBar } from './DocMetaBar';
-import { VersionHistoryList, type VersionSummary } from './VersionHistoryList';
+import { CodeEditor } from '#internal/ui/editor/CodeEditor';
+import { DiffEditor } from '#internal/ui/editor/DiffEditor';
+import { DocMetaBar } from '#internal/ui/editor/DocMetaBar';
+import { VersionHistoryList, type VersionSummary } from '#internal/ui/editor/VersionHistoryList';
 import { cn } from '@/lib/utils';
-import type { EditorDocument, EditorDocumentMetaField } from './editor-documents';
-import type { RewriteProgress } from './use-ai-rewrite';
+import type { EditorDocument, EditorDocumentMetaField } from '#internal/ui/editor/editor-documents';
+import type { RewriteProgress } from '#internal/ui/editor/use-ai-rewrite';
 import type { StateVarInfo } from '@/lib/editor/completion-sources';
 
 export interface EditorDocumentWorkspaceProps {

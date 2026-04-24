@@ -1,9 +1,9 @@
 import { NarrativeParser } from '@ivn/core/narrative-parser';
 import type { SceneState, Sentence } from '@ivn/core/types';
 
-import type { GameState } from './game-store';
-import { fetchWithAuth } from './player-session-store';
-import { useRawStreamingStore } from './raw-streaming-store';
+import type { GameState } from '#internal/stores/game-store';
+import { fetchWithAuth } from '#internal/stores/player-session-store';
+import { useRawStreamingStore } from '#internal/stores/raw-streaming-store';
 
 export interface WSMessage {
   type: string;

@@ -6,7 +6,7 @@
  * - content 类型变更 → 仅更新内容，不重算
  */
 
-import type { PromptSegment, SegmentType } from './types';
+import type { PromptSegment, SegmentType } from '#internal/types';
 
 // ============================================================================
 // Types

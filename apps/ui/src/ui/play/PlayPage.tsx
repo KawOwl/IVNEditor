@@ -9,9 +9,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useAppStore } from '@/stores/app-store';
 import { useGameStore } from '@/stores/game-store';
-import { PlayPanel } from './PlayPanel';
-import { PlaythroughList } from './PlaythroughList';
-import { getTypewriterSpeed, setTypewriterSpeed } from './typewriter-speed';
+import { PlayPanel } from '#internal/ui/play/PlayPanel';
+import { PlaythroughList } from '#internal/ui/play/PlaythroughList';
+import { getTypewriterSpeed, setTypewriterSpeed } from '#internal/ui/play/typewriter-speed';
 import type { ScriptManifest } from '@ivn/core/types';
 import { cn } from '@/lib/utils';
 

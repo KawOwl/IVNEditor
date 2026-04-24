@@ -18,9 +18,9 @@ import type {
   CharacterAsset,
   BackgroundAsset,
 } from '@ivn/core/types';
-import { SceneBackground, type SceneTransition } from './SceneBackground';
-import { SpriteLayer } from './SpriteLayer';
-import { DialogBox } from './DialogBox';
+import { SceneBackground, type SceneTransition } from '#internal/ui/play/vn/SceneBackground';
+import { SpriteLayer } from '#internal/ui/play/vn/SpriteLayer';
+import { DialogBox } from '#internal/ui/play/vn/DialogBox';
 
 export interface VNStageProps {
   /** 当前场景快照（背景 + 立绘） */
