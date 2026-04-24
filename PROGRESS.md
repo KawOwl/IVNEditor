@@ -1,15 +1,20 @@
 # 项目进度
 
 ## 当前状态
-MCP.1 + MCP.2 完成，待 commit + 部署 staging。
+MCP.1 + MCP.2 已上线 staging（v26，commit 830f40a）。
 
 新加的 MCP server 挂在 `/api/mcp`（手写 JSON-RPC 2.0 over Streamable HTTP），
 给编剧的 Claude Desktop 通过 `mcp-remote` 接入，让 AI 可以直接读写剧本 +
 上传立绘 / 背景图。12 个 tool 全覆盖 read / edit-segment / edit-manifest /
 upload-image / publish。bun test 136/136 全绿。
 
+Rollout：`ivn-k3s-staging` deployment/ivn-engine 已切到
+`memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com/ivn/engine:v26`，
+2/2 replicas Running，/health ok，/api/mcp 403 Forbidden（无 Bearer token，符合
+admin-gated 设计）。
+
 ## 当前任务
-（MCP 代码完成，准备 commit + build v26 image + rollout 到 ivn-k3s-staging）
+（暂无 — MCP feature 部署完毕。下一轮任务等用户指派。）
 
 ## 已完成的里程碑
 
