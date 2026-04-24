@@ -434,6 +434,20 @@ export class PlaythroughService {
   }
 
   /**
+   * 统计 playthrough 的 entries 总数（Bug C v29，2026-04-24）。
+   *
+   * 用途：GET /:id/entries 分页端点要让客户端判断是否还有更多可取。
+   * 单独抽一个方法避免 caller 重复写 count sql。
+   */
+  async countEntries(playthroughId: string): Promise<number> {
+    const result = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(schema.narrativeEntries)
+      .where(eq(schema.narrativeEntries.playthroughId, playthroughId));
+    return Number(result[0]?.count ?? 0);
+  }
+
+  /**
    * 加载"最近 N 条"entries（按 orderIdx 升序返回，即 chronological order）。
    *
    * 实现：DB 侧 DESC + limit N 拿到最新 N 条，之后在内存反转成 ASC 返回

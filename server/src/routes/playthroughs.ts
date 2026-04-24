@@ -231,6 +231,46 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
     return detail;
   })
 
+  // GET /:id/entries — **轻量**分页读 entries（Bug C v29，2026-04-24）
+  //
+  // 存在意义：断线重连的 restore 流程在 WS 'open' 时只能一次性吃 50 条
+  // （getById 的默认 entriesLimit），超过 50 的老 playthrough 客户端拼不出完整
+  // 历史。GET /:id 也能做到分页，但它每次都 join + SELECT playthroughs 全列
+  // （memorySnapshot / stateVars JSON 很大），fetchMore 每次都传一遍太浪费。
+  //
+  // 这个端点只返回 { entries, offset, limit, totalEntries, hasMore }。
+  // 前端 ws-client-emitter 收到 'restored' 后如果 hasMore=true，就循环调这个
+  // 端点（用 HTTP 而不是再占 WS，保持 WS 专注推流）直到拉完。
+  //
+  // ownership 校验：通过 getOwnerId 查 playthrough 的 userId，和当前身份比。
+  .get('/:id/entries', async ({ params, query, request }) => {
+    const id = await requireAnyIdentity(request);
+    if (isResponse(id)) return id;
+
+    // ownership 预检：playthroughService.loadEntries 本身不查 userId，所以在 route
+    // 层用 getOwnerId 做一次防护。404 + 403 合并为 404 避免信息泄漏。
+    const ownerId = await playthroughService.getOwnerId(params.id);
+    if (ownerId === null || ownerId !== id.userId) {
+      return new Response(JSON.stringify({ error: 'Playthrough not found' }), { status: 404 });
+    }
+
+    const limit = Math.min(Number((query as any).limit) || 100, 500);
+    const offset = Number((query as any).offset) || 0;
+
+    const [entries, totalEntries] = await Promise.all([
+      playthroughService.loadEntries(params.id, limit, offset),
+      playthroughService.countEntries(params.id),
+    ]);
+
+    return {
+      entries,
+      offset,
+      limit,
+      totalEntries,
+      hasMore: offset + entries.length < totalEntries,
+    };
+  })
+
   // PATCH /:id — 更新（改标题/归档），ownership 强制
   .patch('/:id', async ({ params, body, request }) => {
     const id = await requireAnyIdentity(request);

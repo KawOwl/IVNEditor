@@ -449,5 +449,15 @@
     "ref": "server/src/routes/mcp.ts + server/src/__tests__/mcp-route.test.ts",
     "verify": "bun test 141 tests 全绿（新增 5 个 delete_script case：tools/list 含新 tool / 不传 confirm 走 dry-run 且剧本仍在 / confirm=true 但 scriptIdConfirm 不匹配 isError 且剧本仍在 / confirm=true + 匹配 scriptIdConfirm 成功级联删版本 / 不存在 id 返回 Script not found）",
     "note": "级联 DB 记录靠 scripts FK ON DELETE CASCADE（schema.ts scriptVersions/playthroughs/scriptAssets 均已声明），无需 tool 层手动 loop。OSS 物理对象不删是故意的——保留最后手段防脑抽误删。"
+  },
+  {
+    "id": "7.4",
+    "title": "v29 三 bug 合修：narrative pre-flush + step-start batchId + restore 分页",
+    "description": "一次性修三个互相独立但都由 Langfuse session fa6fc22d 触出的问题。(A) 读档后前端 history 乱：recordPendingSignal 在写 signal_input 前把 currentNarrativeBuffer flush 到 memory + DB，保证 narrative_entries.orderIdx 顺序和直播顺序一致（narrative → signal_input），restore 时不再把选项回放到旁白之前。新增 this.currentTurn 字段给 memory.appendTurn 用。(B) currentStepBatchId 更新太晚：LLMClient.generate 加 onStepStart 回调（experimental_onStepStart 内触发），game-session 订阅后在 step **开始**就同步 batchId；同 step 内 tool.execute 调用的 recordPendingSignal / onToolObserved 读到的永远是当前 step 的 batchId，不会拿到上一 step 的残留或 null。isFollowup 门控保持不变（补刀 step 不覆盖主轮最后 batchId）。(C) 读档 50 条截断：后端 playthroughService.countEntries + routes/playthroughs.ts GET /:id/entries 轻量分页端点；前端 ws-client-emitter case 'restored' 在 msg.hasMore=true 时循环 HTTP GET 加载剩余页（PAGE_SIZE=200、MAX_PAGES=50 硬上限）直到全部加载完再 setVisibleSentenceIndex 到末尾；replayEntries 抽成闭包让初始 + 分页共享 globalIndex / turnNumber。Bonus：tracing.recordStep 加 isFollowup metadata + Langfuse generation name 补 -followup 后缀，方便筛补刀 trace。",
+    "status": "done",
+    "type": "e2e",
+    "ref": "src/core/llm-client.ts + src/core/game-session.ts + server/src/routes/playthroughs.ts + server/src/services/playthrough-service.ts + src/stores/ws-client-emitter.ts + server/src/tracing.ts",
+    "verify": "bun tsc --noEmit（前端 + 后端）无新 error；cd server && bun test 141/141 全绿；cd server && bun start 正常启动 + Langfuse/DB 连接 + 监听 3001；v29 staging rollout 后跑 E2E：开新游玩 ≥ 55 条 entry → 断开重连 → 完整历史回放（不再 50 截断）+ history 顺序正确（没有选项跳到对应旁白之前）+ Langfuse trace 的 llm-step 在 narrative 出现前就有正确的 batchId 标记",
+    "note": "三个 bug 由 save-load 后的 history display 问题（用户反馈"少了一段"+"历史是乱的"）定位收敛到根因：A 是 DB 写入时序、B 是 step 生命周期钩子、C 是 WS restore 的 hardcoded limit。修法选择：A 直接 flush（只追加成本一次 memory.appendTurn）；B 暴露新回调而不是改 onStep 语义避免 breaking change；C 用客户端分页而非服务端一次塞满（限服务端内存 + 长 session 可增量 UI 显示）"
   }
 ]

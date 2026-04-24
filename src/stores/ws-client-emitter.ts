@@ -176,7 +176,7 @@ async function connectWebSocket(
     ws.onmessage = (event) => {
       try {
         const msg: WSMessage = JSON.parse(event.data);
-        handleMessage(msg, store);
+        handleMessage(msg, store, baseUrl);
 
         if (msg.type === 'connected') {
           clearTimeout(timeout);
@@ -225,7 +225,11 @@ async function connectWebSocket(
 // Message handler
 // ============================================================================
 
-function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameStore.getState>) {
+function handleMessage(
+  msg: WSMessage,
+  store: () => ReturnType<typeof useGameStore.getState>,
+  baseUrl: string,
+) {
   switch (msg.type) {
     case 'reset': {
       // M1 Step 1.3：不能做全量 reset——PlayPanel 在 WS 连接前已经
@@ -281,9 +285,15 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
       //
       // 注：sceneRef 能拿到的最好信息是 msg.currentScene（最后一帧），用它兜底；
       // 未来如果需要 per-turn 精确 sceneRef，可以把 scene 状态随 entries 一起持久化。
+      //
+      // Bug C 修复（2026-04-24）：服务端 'restored' 消息只带首 50 条（playthroughService.getById
+      // 的 entriesLimit 默认值），超过 50 条的长 playthrough 客户端只能看到开头一小截，
+      // backlog 翻页后面的内容都是空的。修复：msg.hasMore=true 时用 HTTP GET
+      // /api/playthroughs/:id/entries 分页继续拉，直到全部加载完，再 setVisibleSentenceIndex
+      // 到末尾。
       store().reset();
 
-      const entries = (msg.entries ?? []) as Array<{
+      type EntryRow = {
         role: string;
         /** migration 0010：'narrative' | 'signal_input' | 'player_input'（老数据默认 'narrative'） */
         kind?: string;
@@ -291,76 +301,82 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
         /** migration 0010：按 kind 自描述的结构化载荷 */
         payload?: Record<string, unknown> | null;
         orderIdx?: number;
-      }>;
+      };
+      const initialEntries = (msg.entries ?? []) as EntryRow[];
       const sceneRef: SceneState =
         (msg.currentScene as SceneState | null) ?? { background: null, sprites: [] };
 
-      let globalIndex = 0;
-      let turnNumber = 0;
-      for (const entry of entries) {
-        // migration 0010: signal_input 事件（hint + choices）
-        if (entry.kind === 'signal_input') {
-          const choices = Array.isArray((entry.payload as { choices?: unknown } | null)?.choices)
-            ? ((entry.payload as { choices?: string[] }).choices as string[])
-            : [];
-          const s: Sentence = {
-            kind: 'signal_input',
-            hint: entry.content,
-            choices,
-            sceneRef,
-            turnNumber,
-            index: globalIndex++,
-          };
-          store().appendSentence(s);
-          continue;
-        }
-        if (entry.role === 'receive') {
-          // 玩家的回复气泡 —— 合成一条 player_input Sentence 让 backlog 能重现
-          // migration 0010: payload.selectedIndex 让 backlog 知道"选的是第几个选项"
-          const selectedIndex = typeof (entry.payload as { selectedIndex?: unknown } | null)?.selectedIndex === 'number'
-            ? ((entry.payload as { selectedIndex: number }).selectedIndex)
-            : undefined;
-          const s: Sentence = {
-            kind: 'player_input',
-            text: entry.content,
-            ...(selectedIndex !== undefined ? { selectedIndex } : {}),
-            sceneRef,
-            turnNumber,
-            index: globalIndex++,
-          };
-          store().appendSentence(s);
-          continue;
-        }
-        if (entry.role !== 'generate') continue;
-        turnNumber++;
-        const parser = new NarrativeParser({
-          onNarrationChunk: (text) => {
+      // 把 entry → Sentence[] 的回放逻辑抽成闭包，initial + fetchMore 共用一份
+      // globalIndex / turnNumber 计数，保证分页前后 Sentence.index / turnNumber 连续。
+      const replayState = { globalIndex: 0, turnNumber: 0 };
+      const replayEntries = (entries: EntryRow[]) => {
+        for (const entry of entries) {
+          // migration 0010: signal_input 事件（hint + choices）
+          if (entry.kind === 'signal_input') {
+            const choices = Array.isArray((entry.payload as { choices?: unknown } | null)?.choices)
+              ? ((entry.payload as { choices?: string[] }).choices as string[])
+              : [];
             const s: Sentence = {
-              kind: 'narration',
-              text,
+              kind: 'signal_input',
+              hint: entry.content,
+              choices,
               sceneRef,
-              turnNumber,
-              index: globalIndex++,
+              turnNumber: replayState.turnNumber,
+              index: replayState.globalIndex++,
             };
             store().appendSentence(s);
-          },
-          onDialogueEnd: (pf, fullText, truncated) => {
-            const base = {
-              kind: 'dialogue' as const,
-              text: fullText,
-              pf,
+            continue;
+          }
+          if (entry.role === 'receive') {
+            // 玩家的回复气泡 —— 合成一条 player_input Sentence 让 backlog 能重现
+            // migration 0010: payload.selectedIndex 让 backlog 知道"选的是第几个选项"
+            const selectedIndex = typeof (entry.payload as { selectedIndex?: unknown } | null)?.selectedIndex === 'number'
+              ? ((entry.payload as { selectedIndex: number }).selectedIndex)
+              : undefined;
+            const s: Sentence = {
+              kind: 'player_input',
+              text: entry.content,
+              ...(selectedIndex !== undefined ? { selectedIndex } : {}),
               sceneRef,
-              turnNumber,
-              index: globalIndex++,
+              turnNumber: replayState.turnNumber,
+              index: replayState.globalIndex++,
             };
-            const s: Sentence =
-              truncated !== undefined ? { ...base, truncated } : base;
             store().appendSentence(s);
-          },
-        });
-        parser.push(entry.content);
-        parser.finalize();
-      }
+            continue;
+          }
+          if (entry.role !== 'generate') continue;
+          replayState.turnNumber++;
+          const parser = new NarrativeParser({
+            onNarrationChunk: (text) => {
+              const s: Sentence = {
+                kind: 'narration',
+                text,
+                sceneRef,
+                turnNumber: replayState.turnNumber,
+                index: replayState.globalIndex++,
+              };
+              store().appendSentence(s);
+            },
+            onDialogueEnd: (pf, fullText, truncated) => {
+              const base = {
+                kind: 'dialogue' as const,
+                text: fullText,
+                pf,
+                sceneRef,
+                turnNumber: replayState.turnNumber,
+                index: replayState.globalIndex++,
+              };
+              const s: Sentence =
+                truncated !== undefined ? { ...base, truncated } : base;
+              store().appendSentence(s);
+            },
+          });
+          parser.push(entry.content);
+          parser.finalize();
+        }
+      };
+
+      replayEntries(initialEntries);
 
       // 应用最后一帧场景（change_scene 事件不会在 restore 流里重放）
       store().setCurrentScene(sceneRef);
@@ -374,9 +390,58 @@ function handleMessage(msg: WSMessage, store: () => ReturnType<typeof useGameSto
       }
       store().setStatus(msg.status as any);
 
-      // 把游标落在最后一句，玩家看到的是"你最后停在这里"，而不是从头开始读
-      const total = store().parsedSentences.length;
-      if (total > 0) store().setVisibleSentenceIndex(total - 1);
+      // fetchMore 分页拉 —— fire-and-forget。每页拉完就 append；全部拉完再
+      // setVisibleSentenceIndex 到最后一条。如果 hasMore=false（或老服务端
+      // 没给这个字段），直接定位末尾。
+      const hasMore = Boolean(msg.hasMore);
+      const playthroughIdForFetch =
+        typeof msg.playthroughId === 'string' ? msg.playthroughId : null;
+
+      const finalizeCursor = () => {
+        const total = store().parsedSentences.length;
+        if (total > 0) store().setVisibleSentenceIndex(total - 1);
+      };
+
+      if (!hasMore || !playthroughIdForFetch) {
+        finalizeCursor();
+      } else {
+        const PAGE_SIZE = 200;
+        // 硬上限：200 × 50 = 10000 条。超长 playthrough 也能扛，同时防 API 死循环。
+        const MAX_PAGES = 50;
+
+        const runFetchMore = async () => {
+          let offset = initialEntries.length;
+          for (let page = 0; page < MAX_PAGES; page++) {
+            let res: Response;
+            try {
+              res = await fetchWithAuth(
+                `${baseUrl}/api/playthroughs/${encodeURIComponent(playthroughIdForFetch)}/entries?offset=${offset}&limit=${PAGE_SIZE}`,
+              );
+            } catch (err) {
+              console.error('[restored] fetchMore network error:', err);
+              break;
+            }
+            if (!res.ok) {
+              console.error('[restored] fetchMore HTTP', res.status);
+              break;
+            }
+            let data: { entries: EntryRow[]; hasMore: boolean; totalEntries: number };
+            try {
+              data = await res.json();
+            } catch (err) {
+              console.error('[restored] fetchMore parse error:', err);
+              break;
+            }
+            if (data.entries.length === 0) break;
+            replayEntries(data.entries);
+            offset += data.entries.length;
+            if (!data.hasMore) break;
+          }
+          finalizeCursor();
+        };
+
+        void runFetchMore();
+      }
       break;
     }
 

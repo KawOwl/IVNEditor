@@ -166,6 +166,11 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
     stepInputMessages?: Array<{ role: string; content: string }>;
     /** 该 step 实际发给 LLM 的 system（Focus Injection D）。没有则 fallback 到 initialInput.systemPrompt */
     effectiveSystemPrompt?: string;
+    /**
+     * 该 step 是否为 llm-client 的 post-step 补刀（2026-04-24）。
+     * 在 Langfuse metadata 里暴露出来，方便按这个维度过滤/分析 "本轮是否被补刀触发"。
+     */
+    isFollowup?: boolean;
   }): void {
     try {
       // 创建一个已完成的 generation span（创建时即 end）
@@ -196,6 +201,8 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
         : hasToolCall
           ? 'tool'
           : 'empty';
+      // follow-up step（补刀）在 name 上加一个后缀，在 Langfuse UI 可视区分
+      const nameSuffix = step.isFollowup ? '-followup' : '';
 
       // --- Input 策略 ---
       // 优先用 stepInputMessages（来自 experimental_onStepStart，是该 step
@@ -221,7 +228,7 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
           : undefined;
 
       const gen = this.trace.generation({
-        name: `llm-step-${step.stepNumber}-${kindSuffix}`,
+        name: `llm-step-${step.stepNumber}-${kindSuffix}${nameSuffix}`,
         model: step.model,
         input: stepInput,
         startTime,
@@ -232,6 +239,7 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
           hasNarrative,
           hasToolCall,
           messageCount: step.stepInputMessages?.length ?? 0,
+          isFollowup: step.isFollowup === true,
         },
       });
       gen.end({

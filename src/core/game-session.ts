@@ -373,6 +373,11 @@ export interface GenerateTraceHandle {
      * 让 Langfuse UI 里每 step 的 input.system 反映真实内容。
      */
     effectiveSystemPrompt?: string;
+    /**
+     * 该 step 是否是 llm-client 的 post-step 补刀（2026-04-24）。
+     * tracing 层据此在 generation name / metadata 上标记，方便事后筛选。
+     */
+    isFollowup?: boolean;
   }): void;
 
   /** 开始一次工具调用，返回 handle 用于结束 */
@@ -597,9 +602,26 @@ export class GameSession {
    * 一并透传给 persistence，让 narrative_entries.batch_id 统一标记"同一次 LLM
    * 响应产出的 entries"。
    *
-   * 生命周期：onStep 触发时更新；generate() 结束时（finally 块）清空。
+   * 生命周期：onStepStart 触发时更新（Bug B 修复 2026-04-24：原先是 onStep
+   * 即 stepFinish 才更新，导致同 step 内 tool.execute 时读到**上一 step** 的
+   * batchId，signal_input / narrative 挂错批次）；onStep 仍然兜底重复写一遍
+   * 以防 onStepStart 回调某种异常未触发；generate() 结束时（finally 块）清空。
    */
   private currentStepBatchId: string | null = null;
+
+  /**
+   * 当前 generate 回合的 turn number（Bug A 修复 2026-04-24）。
+   *
+   * 用途：recordPendingSignal 里在 signal_input 写入**之前**，要把 currentNarrativeBuffer
+   * pre-flush 到 memory + DB，保证 narrative_entries 的 orderIdx 顺序和玩家看到的
+   * 顺序一致（narrative → signal_input）。memory.appendTurn 需要 turn 参数，而 turn
+   * 是 coreLoop 内 `const turn` 局部变量，recordPendingSignal 在另一个栈里看不到，
+   * 所以存一份到 this。
+   *
+   * 生命周期：coreLoop 每次 generate 开始时赋值；不在 finally 里清零（没必要，
+   * 下一次 generate 会覆写）。
+   */
+  private currentTurn: number = 0;
 
   // 用于中断进行中的 generate()（停止/重置时防挂死）
   private abortController: AbortController | null = null;
@@ -833,6 +855,8 @@ export class GameSession {
       this.emitter.setStatus('generating');
       const turn = this.stateStore.getTurn() + 1;
       this.stateStore.setTurn(turn);
+      // Bug A 修复：把 turn 挂到实例，recordPendingSignal 里 memory.appendTurn 要用
+      this.currentTurn = turn;
 
       // ① 持久化：generate 开始
       await this.persistence?.onGenerateStart(turn).catch((e) =>
@@ -1115,8 +1139,22 @@ export class GameSession {
               handle?.end(toolResult);
             }
           },
+          onStepStart: (info) => {
+            // Bug B 修复（2026-04-24）：在 step **开始时**就把当前 step 的 batchId
+            // 挂到 this.currentStepBatchId，这样本 step 内 tool.execute 调用的
+            // recordPendingSignal / onToolObserved 读到的永远是当前 step 的 batchId，
+            // 而不是上一 step 的或 null。isFollowup 的 step 跳过（见下方 onStep 的
+            // isFollowup 注释），保持在主 generate 最后一个 step 的 batchId。
+            if (!info.isFollowup) {
+              this.currentStepBatchId = info.batchId;
+            }
+          },
           onStep: (step) => {
             // migration 0011：缓存当前 step 的 batchId 供挂起期 / finalize 期挂载
+            //
+            // Bug B 修复后（2026-04-24）：主路径已经由 onStepStart 接管，这里保留
+            // 是作为兜底（万一 onStepStart 某种异常没跑）；值和 onStepStart 一致，
+            // 重复写不会错。
             //
             // isFollowup 门控（方案 A post-step 补刀，2026-04-24）：
             //   follow-up step 是 llm-client 在主 generate 空停时自动追发的
@@ -1147,6 +1185,7 @@ export class GameSession {
               stepStartAt: step.stepStartAt,
               stepInputMessages: step.stepInputMessages,
               effectiveSystemPrompt: step.effectiveSystemPrompt,
+              isFollowup: step.isFollowup,
             });
           },
           // migration 0011 / PR-M1：非 signal/end 类工具调用写 kind='tool_call' entry
@@ -1454,21 +1493,65 @@ export class GameSession {
     const choices = options.choices ?? [];
 
     // ★ 1. flush 累积的 narration 段落 Sentence 到 VN UI（WS 'sentence' 事件），
-    //    让玩家先看到叙事再看到选项。注意这只 emit Sentence，**不**写 DB ——
-    //    DB 写入由 generate() 返回后的通用路径统一处理（见下方 ★ 注释）。
+    //    让玩家先看到叙事再看到选项。
     this.pendingNarrationFlusher?.();
 
-    // ★ 2. 不主动 flush currentNarrativeBuffer 到 DB。
-    //    历史（挂起模式 v1 时代）这里会先写 narrative → 再写 signal_input，
-    //    理由是"保证顺序 + 避免挂起期间断线丢失"。方案 B 下：
-    //      - 挂起已删，generate() stopWhen 后正常返回
-    //      - coreLoop 的 L1151 通用路径会 flush currentNarrativeBuffer 进 DB
-    //      - narrative 和 signal_input 同属当前 LLM step → 同 batchId
-    //      - messages-builder 按 batchId 分组合并成一个 assistant message，
-    //        orderIdx 顺序颠倒不影响合并结果（见 messages-builder.test.ts
-    //        "A1. signal_input orderIdx < narrative orderIdx 但同 batchId" 用例）
-    //    所以这里的 flush 变冗余，删掉减少代码路径 + 减少 mem0 adapter 的
-    //    重复 push 云端。
+    // ★ 2. Bug A 修复（2026-04-24）：把 currentNarrativeBuffer pre-flush 到
+    //    memory + DB，**之后**再写 signal_input entry。
+    //
+    //    为什么必须现在刷：narrative_entries 的 orderIdx 是 DB INSERT 时分配
+    //    的自增序号，restore 时前端按 orderIdx ASC 回放。如果 signal_input
+    //    先 insert（orderIdx=N），narrative 留到 generate 结束才 insert
+    //    （orderIdx=N+1），restore 回放顺序就变成"选项 → 旁白"，和直播顺序
+    //    （旁白 → 选项）完全颠倒，玩家读档后看到的历史一塌糊涂（Bug A 现象）。
+    //
+    //    之前的注释说"messages-builder 按 batchId 分组 orderIdx 颠倒不影响" ——
+    //    那是对 LLM 看到的 assistant message 上下文的修复，messages-builder
+    //    确实能按 batchId 合并。但 **history restore 给前端** 走的是
+    //    loadEntries → Sentence 序列（ws-client-emitter case 'restored'），
+    //    这条路径没有 messages-builder，它按 orderIdx 逐条 replay，所以这里
+    //    的顺序颠倒就是玩家可见的问题。
+    //
+    //    流程：
+    //      a. 把 buffer 快照出来 + 清空 this 字段，防止后面被重复 flush
+    //      b. memory.appendTurn（memory 里也要按发生顺序追加）
+    //      c. persistence.onNarrativeSegmentFinalized（DB insert，orderIdx=N）
+    //      d. 紧接着 ★ 4 走 signal_input（DB insert，orderIdx=N+1）
+    //      e. 后续 coreLoop 尾部通用路径会看到 currentNarrativeBuffer='' →
+    //         跳过（避免重复写）
+    if (this.currentNarrativeBuffer) {
+      const buffered = this.currentNarrativeBuffer;
+      const bufferedReasoning = this.currentReasoningBuffer;
+      this.currentNarrativeBuffer = '';
+      this.currentReasoningBuffer = '';
+
+      try {
+        await this.memory.appendTurn({
+          turn: this.currentTurn,
+          role: 'generate',
+          content: buffered,
+          tokenCount: estimateTokens(buffered),
+        });
+      } catch (e) {
+        console.error('[recordPendingSignal] memory.appendTurn failed:', e);
+      }
+
+      try {
+        await this.persistence?.onNarrativeSegmentFinalized({
+          entry: {
+            role: 'generate',
+            content: buffered,
+            reasoning: bufferedReasoning || undefined,
+            // 标记"signal_input 前预 flush"——tracing / debug 能区分这条 entry
+            // 是中途 flush 还是 generate 结束时 flush 的。
+            finishReason: 'signal-input-preflush',
+          },
+          batchId: this.currentStepBatchId,
+        });
+      } catch (e) {
+        console.error('[recordPendingSignal] onNarrativeSegmentFinalized failed:', e);
+      }
+    }
 
     // ★ 3. 缓存 pendingSignal 供 coreLoop Receive 阶段读（hint + choices + batchId）
     this.pendingSignal = {

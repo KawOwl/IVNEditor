@@ -1,20 +1,39 @@
 # 项目进度
 
 ## 当前状态
-MCP.3 delete_script tool 已上线 staging（v28，commit 2cc9dbe）。
+v29 打包三个 bug 修复，tsc + 141/141 server tests 已绿，等 rollout。
 
-新 tool：`delete_script`（admin only）。安全设计：
-- 双重确认：必须同时传 `confirm: true` 与 `scriptIdConfirm === scriptId`，任一缺失或不匹配即走 dry-run
-- dry-run 返回 impact 摘要：scriptLabel / versionCount / assetCount / publishedVersionIds
-- 级联删 DB 记录走 scripts FK ON DELETE CASCADE（script_versions / playthroughs / script_assets）
-- OSS 对象故意不自动物理删，提示用户按 `scripts/{scriptId}/` 前缀手动清（留最后手段防脑抽）
+- **Bug A**（读档后前端 history 乱）：`recordPendingSignal` 在写 signal_input 之前
+  先把 `currentNarrativeBuffer` flush 到 memory + DB。narrative_entries 的
+  `orderIdx` 顺序现在和玩家直播顺序一致（narrative → signal_input → player_input），
+  restore 回放给前端时不再把选项塞到对应旁白之前。
+- **Bug B**（`currentStepBatchId` 更新太晚）：`LLMClient.generate` 加 `onStepStart`
+  回调，在 `experimental_onStepStart` 内把新 batchId 回传给调用方；game-session
+  立刻更新 `this.currentStepBatchId`，同 step 内 `tool.execute` 读到的永远是当前
+  step 的 batchId。原先只在 `onStep`（= finish）里写，导致 mid-step 的
+  `recordPendingSignal` 读到上一 step 的或 null。
+- **Bug C**（restore 50 条截断）：后端新增 `GET /api/playthroughs/:id/entries?offset&limit`
+  轻量分页端点；前端 `ws-client-emitter.case 'restored'` 在 `msg.hasMore=true`
+  时循环 HTTP fetchMore 到全部加载完，再 `setVisibleSentenceIndex` 到末尾。
+  长 playthrough 读档后整个 backlog 完整可见。
+- **Bonus**：`tracing.recordStep` 加 `isFollowup` metadata + Langfuse generation
+  name 加 `-followup` 后缀，事后按这个维度筛 trace 直接可用。
 
-Rollout：`ivn-k3s-staging` deployment/ivn-engine 已切到
-`memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com/ivn/engine:v28`，
-2/2 replicas Running，/health ok。
+代码改动文件：
+- `src/core/llm-client.ts`（+ onStepStart 回调）
+- `src/core/game-session.ts`（wire onStepStart、currentTurn 字段、recordPendingSignal pre-flush narrative）
+- `server/src/services/playthrough-service.ts`（+ countEntries 方法）
+- `server/src/routes/playthroughs.ts`（+ GET /:id/entries 端点）
+- `src/stores/ws-client-emitter.ts`（restored handler 加 fetchMore 循环）
+- `server/src/tracing.ts`（+ isFollowup metadata & name 后缀）
 
 ## 当前任务
-（暂无 — MCP.3 rollout 完毕，等用户指派或验证反馈）
+**v29 rollout**
+- 类型：bug fix 打包 + 部署
+- 来源：用户指令 "一次性把三个一起修，Bug C用：B. 客户端分页方案。统一打 v29 rollout。"
+- 目标：commit → push → build v29 image → kubectl set image → 验证
+- 进展：代码改完 ✓；tsc（前端 + 后端） ✓；server tests 141/141 ✓；server 启动 smoke ✓；
+  待：commit、`ops/k3s-pressuretest/build-and-push.sh v29`、`kubectl set image`
 
 ## 已完成的里程碑
 

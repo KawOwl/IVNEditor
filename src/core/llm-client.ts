@@ -159,6 +159,20 @@ export interface GenerateOptions {
   /** 每个 step（内部 LLM API 调用）结束时触发，用于追踪/观测 */
   onStep?: (step: StepInfo) => void;
   /**
+   * 每个 step **开始时**触发（experimental_onStepStart 内部回调，发 provider 请求前）。
+   *
+   * 背景（Bug B，2026-04-24）：`currentStepBatchId` 之前只在 onStep（= onStepFinish）
+   * 里更新，但 signal_input_needed 的 `execute` 在**本 step 的 finish 回调之前**就
+   * 跑了 —— 调 recordPendingSignal 时读到的是**上一 step** 的 batchId（或首 step 的
+   * null）。同理，narrative 持久化若在 tool.execute 里发生也会错位。
+   *
+   * 修复：在 step 一开始就把新 batchId 通过 onStepStart 回传给调用方，调用方
+   * 立即更新 currentStepBatchId，这样后续 tool.execute 和 onToolObserved 读的都是
+   * 当前 step 的 batchId。follow-up step 的 isFollowup=true，调用方自行跳过以保
+   * 持在主 generate 最后一个 step 的 batchId 上（详见 StepInfo.isFollowup 注释）。
+   */
+  onStepStart?: (info: { stepNumber: number; batchId: string; isFollowup: boolean }) => void;
+  /**
    * 每个工具调用 finish 时触发（experimental_onToolCallFinish）—— 方案 B
    * 前置：把 tool_call 写入 narrative_entries.kind='tool_call'。
    *
@@ -290,6 +304,7 @@ export class LLMClient {
       onToolCall: onToolCallCb,
       onToolResult: onToolResultCb,
       onStep,
+      onStepStart,
       onToolObserved,
       prepareStepSystem,
     } = options;
@@ -344,8 +359,21 @@ export class LLMClient {
 
     const handleStepStart = (event: { stepNumber: number; messages?: readonly unknown[] }) => {
       stepStartAtMap.set(event.stepNumber, new Date());
-      stepBatchIdMap.set(event.stepNumber, crypto.randomUUID());
+      const batchId = crypto.randomUUID();
+      stepBatchIdMap.set(event.stepNumber, batchId);
       currentStepNumber = event.stepNumber;
+      // Bug B 修复：在 step 一开始就把 batchId 回传给调用方，让 tool.execute 里
+      // 调用的 recordPendingSignal / onToolObserved 读到的 currentStepBatchId
+      // 总是当前 step 的，而不是上一个 step 结束后遗留的值。
+      try {
+        onStepStart?.({
+          stepNumber: event.stepNumber,
+          batchId,
+          isFollowup: isFollowupRef.current,
+        });
+      } catch (err) {
+        console.error('[llm-client] onStepStart handler threw:', err);
+      }
       try {
         const simplified = (event.messages ?? []).map((m) => {
           const msg = m as { role: unknown; content: unknown };
