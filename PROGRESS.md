@@ -1,7 +1,7 @@
 # 项目进度
 
 ## 当前状态
-MCP.3 delete_script tool 已落地并通过全部测试（141/141），准备 rollout v28。
+MCP.3 delete_script tool 已上线 staging（v28，commit 2cc9dbe）。
 
 新 tool：`delete_script`（admin only）。安全设计：
 - 双重确认：必须同时传 `confirm: true` 与 `scriptIdConfirm === scriptId`，任一缺失或不匹配即走 dry-run
@@ -9,14 +9,12 @@ MCP.3 delete_script tool 已落地并通过全部测试（141/141），准备 ro
 - 级联删 DB 记录走 scripts FK ON DELETE CASCADE（script_versions / playthroughs / script_assets）
 - OSS 对象故意不自动物理删，提示用户按 `scripts/{scriptId}/` 前缀手动清（留最后手段防脑抽）
 
-7.3 signal_input_needed 空停补刀仍在 v27 staging（commit 086ead3）。
+Rollout：`ivn-k3s-staging` deployment/ivn-engine 已切到
+`memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com/ivn/engine:v28`，
+2/2 replicas Running，/health ok。
 
 ## 当前任务
-**Rollout v28：MCP.3 delete_script**
-- 类型：rollout
-- 来源：用户指派 "MCP server里先加一个删除剧本的tools，然后rollout"
-- 目标：build v28 → push ACR → kubectl set image → 验证 pods Ready + /health
-- 进展：代码已写 + tsc clean + bun test 141/141 + bun start 启动 ok，等 commit + push + docker build
+（暂无 — MCP.3 rollout 完毕，等用户指派或验证反馈）
 
 ## 已完成的里程碑
 
