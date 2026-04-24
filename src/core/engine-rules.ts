@@ -269,6 +269,8 @@ function buildNarrativeFormatV2(
     `\n` +
     `### 输出纪律（硬性禁止）\n` +
     `\n` +
+    `- **你回复的第一个字符必须是 \`<\`**。任何前导空行 / 说明 / 铺垫都会被严重降级。\n` +
+    `- **任何想对自己说的话，都必须写进 \`<scratch>\` 里**。\`<scratch>\` 可以出现任意次，每次不会渲染给玩家，但会被系统记录。\n` +
     `- **不要**写 markdown 代码块（\`\`\`） —— 输出只能是上面三种顶层容器\n` +
     `- **不要**写容器之外的裸文本 —— 所有文字必须在 \`<dialogue>\` / \`<narration>\` / \`<scratch>\` 里\n` +
     `- **不要**写其他标签（\`<scene>\` / \`<choice>\` / \`<bgm>\` / \`<div>\` 等） —— 选项走 \`signal_input_needed\` 工具\n` +
@@ -276,6 +278,32 @@ function buildNarrativeFormatV2(
     `- **不要**用中文显示名当 id（如 \`speaker="咲夜"\` 错，应该 \`speaker="sakuya"\`）\n` +
     `- **不要**调用 \`change_scene\` / \`change_sprite\` / \`clear_stage\` 工具 —— 视觉切换**只**通过 \`<background/>\` / \`<sprite/>\` / \`<stage/>\` 子标签表达\n` +
     `- **第一单元必须写 \`<background/>\`**，否则渲染时无背景\n` +
+    `\n` +
+    `### 反面示范（常见错误 · 一定不要这样写）\n` +
+    `\n` +
+    `❌ **错误**：回复开头漏了一段 meta 铺垫（裸文本在容器之外）：\n` +
+    `\n` +
+    `\`\`\`\n` +
+    `我先查一下当前状态，确认玩家信息。\n` +
+    `\n` +
+    `<narration>\n` +
+    `  <background scene="cafe_interior" />\n` +
+    `  咖啡店里飘着淡淡的豆香。\n` +
+    `</narration>\n` +
+    `\`\`\`\n` +
+    `\n` +
+    `✅ **正确**：同样的 meta 必须放进 \`<scratch>\`，回复的第一个字符是 \`<\`：\n` +
+    `\n` +
+    `\`\`\`\n` +
+    `<scratch>\n` +
+    `我先查一下当前状态，确认玩家信息。\n` +
+    `</scratch>\n` +
+    `\n` +
+    `<narration>\n` +
+    `  <background scene="cafe_interior" />\n` +
+    `  咖啡店里飘着淡淡的豆香。\n` +
+    `</narration>\n` +
+    `\`\`\`\n` +
     `\n` +
     `### 输出预算\n` +
     `\n` +

@@ -166,22 +166,76 @@ describe('reduce · narration 容器', () => {
 // ============================================================================
 
 describe('reduce · 容器外', () => {
-  it('纯空白裸文本 → 忽略，不产 sentence', () => {
+  it('纯空白裸文本 → finalize 时静默丢弃，无 sentence 无 degrade', () => {
     const { outputs } = run([
       { type: 'text', data: '\n   \t  \n' },
+      { type: 'finalize' },
     ]);
     expect(outputs.sentences).toHaveLength(0);
     expect(outputs.degrades).toHaveLength(0);
   });
 
-  it('非空白裸文本 → 降级 narration + degrade', () => {
+  it('非空白裸文本 → finalize 时合并为单条 degrade，不产 sentence', () => {
     const { outputs } = run([
       { type: 'text', data: 'lost text here' },
+      { type: 'finalize' },
     ]);
+    expect(outputs.sentences).toHaveLength(0);
+    expect(outputs.degrades).toMatchObject([
+      { code: 'bare-text-outside-container', detail: 'lost text here' },
+    ]);
+  });
+
+  it('多个 chunk 的裸文本 → 只合成一条 degrade（对抗 CJK 逐字 chunk）', () => {
+    const { outputs } = run([
+      { type: 'text', data: '我先' },
+      { type: 'text', data: '查' },
+      { type: 'text', data: '一下' },
+      { type: 'text', data: '状态。' },
+      { type: 'finalize' },
+    ]);
+    expect(outputs.sentences).toHaveLength(0);
+    const bare = outputs.degrades.filter(
+      (d) => d.code === 'bare-text-outside-container',
+    );
+    expect(bare).toHaveLength(1);
+    expect(bare[0]!.detail).toBe('我先查一下状态。');
+  });
+
+  it('容器前的裸文本 → opentag 时 flush 成一条 degrade，正文正常', () => {
+    const { outputs } = run([
+      { type: 'text', data: '先写点 meta：' },
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: '正文' },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    const bare = outputs.degrades.filter(
+      (d) => d.code === 'bare-text-outside-container',
+    );
+    expect(bare).toHaveLength(1);
+    expect(bare[0]!.detail).toBe('先写点 meta：');
     expect(outputs.sentences).toHaveLength(1);
     expect(outputs.sentences[0]!.kind).toBe('narration');
-    expect(outputs.sentences[0]!.text).toBe('lost text here');
-    expect(outputs.degrades).toMatchObject([{ code: 'bare-text-outside-container' }]);
+    expect(outputs.sentences[0]!.text).toBe('正文');
+  });
+
+  it('容器之间的裸文本 → 也合并成一条 degrade', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: 'a' },
+      { type: 'closetag', name: 'narration' },
+      { type: 'text', data: '中间的' },
+      { type: 'text', data: '裸文本' },
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: 'b' },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    const bare = outputs.degrades.filter(
+      (d) => d.code === 'bare-text-outside-container',
+    );
+    expect(bare).toHaveLength(1);
+    expect(bare[0]!.detail).toBe('中间的裸文本');
   });
 
   it('未知顶层 tag → degrade，其内部全部吞掉', () => {

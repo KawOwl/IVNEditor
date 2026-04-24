@@ -97,28 +97,80 @@ function onOpenTag(
     return { state: { ...state, unknownDepth: deeper }, outputs: EMPTY_OUTPUTS };
   }
 
+  // 任何新的 opentag 到来，先把容器外累积的裸文本合并成一条 degrade 丢弃。
+  // 之后再走正常的 top-level / visual-child / unknown 分支。
+  const flushed = flushBareText(state);
+
   if (isTopLevelTag(name)) {
-    return openTopLevel(state, name, attrs);
+    return mergeResult(flushed, openTopLevel(flushed.state, name, attrs));
   }
 
   if (isVisualChildTag(name)) {
-    return openVisualChild(state, name, attrs);
+    return mergeResult(flushed, openVisualChild(flushed.state, name, attrs));
   }
 
   // 未知标签：顶层 → 记 degrade 并进入吞噬模式
-  if (state.containerStack.length === 0) {
-    return {
-      state: { ...state, unknownDepth: 1 },
+  if (flushed.state.containerStack.length === 0) {
+    return mergeResult(flushed, {
+      state: { ...flushed.state, unknownDepth: 1 },
       outputs: {
         sentences: [],
         scratches: [],
         degrades: [{ code: 'unknown-toplevel-tag', detail: name }],
       },
-    };
+    });
   }
 
   // 容器内部的未知子 tag：吞掉，不算 degrade（保守）
-  return identityResult(state);
+  return mergeResult(flushed, identityResult(flushed.state));
+}
+
+/**
+ * 把两次 reducer step 的 outputs 合并。第二个 step 的 state 是权威 state
+ * （两个 step 是顺序的：先 flush 再 real action）。
+ */
+function mergeResult(first: ReducerResult, second: ReducerResult): ReducerResult {
+  if (
+    first.outputs.sentences.length === 0 &&
+    first.outputs.scratches.length === 0 &&
+    first.outputs.degrades.length === 0
+  ) {
+    return second;
+  }
+  return {
+    state: second.state,
+    outputs: {
+      sentences: [...first.outputs.sentences, ...second.outputs.sentences],
+      scratches: [...first.outputs.scratches, ...second.outputs.scratches],
+      degrades: [...first.outputs.degrades, ...second.outputs.degrades],
+    },
+  };
+}
+
+/**
+ * 把当前 `bareTextBuffer` 合并成一条 degrade 后清空。
+ * - 空 buffer / 全空白 → 清空 + identity，无 degrade
+ * - 非空白 → emit 一条 `bare-text-outside-container`，detail 带累计文本前 80 字符
+ *
+ * 调用时机：每次 opentag（进新容器前清帐）+ finalize（流结束兜底）。
+ */
+function flushBareText(state: ParserState): ReducerResult {
+  const raw = state.bareTextBuffer;
+  if (raw.length === 0) return identityResult(state);
+  const trimmed = raw.trim();
+  const nextState: ParserState = { ...state, bareTextBuffer: '' };
+  if (trimmed.length === 0) {
+    return { state: nextState, outputs: EMPTY_OUTPUTS };
+  }
+  const detail = trimmed.length > 80 ? trimmed.slice(0, 80) + '...' : trimmed;
+  return {
+    state: nextState,
+    outputs: {
+      sentences: [],
+      scratches: [],
+      degrades: [{ code: 'bare-text-outside-container', detail }],
+    },
+  };
 }
 
 function openTopLevel(
@@ -279,14 +331,16 @@ function onText(state: ParserState, data: string): ReducerResult {
   }
   const top = peekContainer(state.containerStack);
   if (!top) {
-    // 容器外裸文本——RFC §4.3 降级为 narration。
-    // 为保持 reducer 简单，降级策略是：把裸文本当作 "虚拟的 <narration>"
-    // 包装成独立 pending。但这里不起新容器，而是累积到一个"全局 bare text
-    // buffer"上，finalize 时产出。更简单的做法是忽略容器间的纯空白，
-    // 只有非空白才记 degrade（v1 历史行为：bare text emit 为 narration）。
-    if (data.trim().length === 0) return identityResult(state);
-    // 降级：开一个临时 narration 容器，放进文本，立刻 close
-    return emitBareTextAsNarration(state, data);
+    // 容器外裸文本 —— RFC §4.3 silent tolerance：不产 Sentence，
+    // 只在离开该窗口时（下一次 opentag 或 finalize）合并成**一条** degrade。
+    //
+    // SAX 对 CJK 会逐 chunk 发 text 事件（`我先` / `查` / `一下` …），如果每个
+    // chunk 独立产 sentence 会把 UI / Langfuse 搞得很乱。这里只 append 到 buffer，
+    // 真正的 degrade / 丢弃发生在 flushBareText 里。
+    return {
+      state: { ...state, bareTextBuffer: state.bareTextBuffer + data },
+      outputs: EMPTY_OUTPUTS,
+    };
   }
 
   // 容器内部累积文本
@@ -295,28 +349,6 @@ function onText(state: ParserState, data: string): ReducerResult {
     textBuffer: u.textBuffer + data,
   }));
   return { state: { ...state, containerStack: nextStack }, outputs: EMPTY_OUTPUTS };
-}
-
-function emitBareTextAsNarration(state: ParserState, data: string): ReducerResult {
-  // 裸文本不触发视觉变化：沿用 lastScene，纯 narration 产出。
-  const sceneRef = state.lastScene;
-  const sentence: Sentence = {
-    kind: 'narration',
-    text: data.trim(),
-    sceneRef,
-    turnNumber: state.turnNumber,
-    index: state.nextIndex,
-    bgChanged: false,
-    spritesChanged: false,
-  };
-  return {
-    state: { ...state, nextIndex: state.nextIndex + 1 },
-    outputs: {
-      sentences: [sentence],
-      scratches: [],
-      degrades: [{ code: 'bare-text-outside-container' }],
-    },
-  };
 }
 
 // ============================================================================
@@ -368,13 +400,19 @@ function onCloseTag(
 // ============================================================================
 
 function onFinalize(state: ParserState, manifest: ParserManifest): ReducerResult {
-  if (state.containerStack.length === 0) {
-    return { state: { ...state, finalized: true }, outputs: EMPTY_OUTPUTS };
+  // 先兜底 flush 容器外残留的裸文本（最后一个容器已关但后面又出现了裸文本的情况）。
+  const flushed = flushBareText(state);
+
+  if (flushed.state.containerStack.length === 0) {
+    return {
+      state: { ...flushed.state, finalized: true },
+      outputs: flushed.outputs,
+    };
   }
 
   // 从栈顶开始逐层 truncated close。每次 finalizeUnit 会把栈顶弹掉并累积 outputs。
   const drained = repeatUntil(
-    { state, outputs: EMPTY_OUTPUTS as ReducerOutputs },
+    { state: flushed.state, outputs: flushed.outputs as ReducerOutputs },
     (r) => r.state.containerStack.length === 0,
     (r) => {
       const { rest, top } = popContainer(r.state.containerStack);

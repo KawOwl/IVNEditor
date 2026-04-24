@@ -81,6 +81,19 @@ export interface ParserState {
   readonly containerStack: ReadonlyArray<PendingUnit>;
   /** 未知顶层标签的深度（用于丢弃未知标签内的所有内容） */
   readonly unknownDepth: number;
+  /**
+   * 容器外裸文本累积缓冲区。
+   *
+   * SAX 对中文等 CJK 文本会逐 chunk 发 text 事件（`我先` / `查` / `一下` ...）。
+   * 如果 LLM 在第一个顶层容器之前写了 meta-reasoning，每个 chunk 各自 emit 一条
+   * degrade + 一条 narration 会把 UI / Langfuse 搞得很乱。
+   *
+   * 策略：逐 chunk append 到本 buffer，**不产 Sentence**。在下一次 opentag 或
+   * finalize 时合并成**一条** `bare-text-outside-container` degrade（detail 带
+   * 累计文本前若干字符），然后丢弃。符合 RFC §4.3 silent tolerance 语义
+   * （原文本存在 degrade detail 里便于调试，但不会渲染给玩家）。
+   */
+  readonly bareTextBuffer: string;
   /** 是否已 finalize（之后拒绝新输入） */
   readonly finalized: boolean;
 }
@@ -96,6 +109,7 @@ export function initialParserState(init: {
     lastScene: init.initialScene,
     containerStack: [],
     unknownDepth: 0,
+    bareTextBuffer: '',
     finalized: false,
   };
 }
