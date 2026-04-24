@@ -1,23 +1,22 @@
 # 项目进度
 
 ## 当前状态
-7.3 signal_input_needed 空停补刀已上线 staging（v27，commit 086ead3）。
+MCP.3 delete_script tool 已落地并通过全部测试（141/141），准备 rollout v28。
 
-llm-client.generate 结束后若 toolCallLog 里没 signal_input_needed / end_scenario，
-自动追发一次 streamText，toolChoice 协议级强制 signal_input_needed。follow-up 的
-step 带 isFollowup=true 让 game-session 的 onStep 跳过覆盖 currentStepBatchId，
-最终 narrative + signal_input 共享主最后一步的 batchId，messages-builder 投成一个
-干净的 assistant message。对 DeepSeek V4 thinking + tool_calls 的 replay 协议
-（必须带 reasoning_content）友好。bun test 136/136 全绿，tsc clean，bun start 正常。
+新 tool：`delete_script`（admin only）。安全设计：
+- 双重确认：必须同时传 `confirm: true` 与 `scriptIdConfirm === scriptId`，任一缺失或不匹配即走 dry-run
+- dry-run 返回 impact 摘要：scriptLabel / versionCount / assetCount / publishedVersionIds
+- 级联删 DB 记录走 scripts FK ON DELETE CASCADE（script_versions / playthroughs / script_assets）
+- OSS 对象故意不自动物理删，提示用户按 `scripts/{scriptId}/` 前缀手动清（留最后手段防脑抽）
 
-Rollout：`ivn-k3s-staging` deployment/ivn-engine 已切到
-`memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com/ivn/engine:v27`，
-2/2 replicas Running，/health ok。下次有玩家试玩空停场景时观察 Langfuse
-trace 里补刀 step 是否出现 + narrative_entries 里 signal_input 是否与
-narrative 同 batchId。
+7.3 signal_input_needed 空停补刀仍在 v27 staging（commit 086ead3）。
 
 ## 当前任务
-（暂无 — 7.3 rollout 完毕，等用户指派或验证反馈）
+**Rollout v28：MCP.3 delete_script**
+- 类型：rollout
+- 来源：用户指派 "MCP server里先加一个删除剧本的tools，然后rollout"
+- 目标：build v28 → push ACR → kubectl set image → 验证 pods Ready + /health
+- 进展：代码已写 + tsc clean + bun test 141/141 + bun start 启动 ok，等 commit + push + docker build
 
 ## 已完成的里程碑
 

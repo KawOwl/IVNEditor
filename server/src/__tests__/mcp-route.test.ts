@@ -862,4 +862,143 @@ describe('mcp route', () => {
     const body = json as { result: { isError?: boolean; content: Array<{ text: string }> } };
     expect(body.result.isError).toBeUndefined();
   });
+
+  // --------------------------------------------------------------------------
+  // delete_script tool
+  // --------------------------------------------------------------------------
+
+  it('tools/list includes delete_script', async () => {
+    const app = buildApp();
+    const { sessionId } = await createTestAdmin();
+    const { json } = await jrpc(app, sessionId, {
+      jsonrpc: '2.0',
+      id: 200,
+      method: 'tools/list',
+    });
+    const body = json as { result: { tools: Array<{ name: string }> } };
+    const names = body.result.tools.map((t) => t.name);
+    expect(names).toContain('delete_script');
+  });
+
+  it('delete_script without confirm returns dry-run with impact summary', async () => {
+    const app = buildApp();
+    const { userId, sessionId } = await createTestAdmin();
+    const scriptId = crypto.randomUUID();
+    await scriptService.create({ id: scriptId, authorUserId: userId, label: 'to-delete' });
+    await scriptVersionService.create({
+      scriptId,
+      manifest: minimalManifest(scriptId),
+      status: 'published',
+    });
+
+    const { status, json } = await jrpc(app, sessionId, {
+      jsonrpc: '2.0',
+      id: 201,
+      method: 'tools/call',
+      params: { name: 'delete_script', arguments: { scriptId } },
+    });
+    expect(status).toBe(200);
+    const body = json as { result: { isError?: boolean; content: Array<{ text: string }> } };
+    expect(body.result.isError).toBeUndefined();
+    const payload = JSON.parse(body.result.content[0]!.text) as {
+      dryRun: boolean;
+      wouldDelete: { scriptId: string; versionCount: number };
+    };
+    expect(payload.dryRun).toBe(true);
+    expect(payload.wouldDelete.scriptId).toBe(scriptId);
+    expect(payload.wouldDelete.versionCount).toBe(1);
+
+    // 剧本仍然存在
+    const stillHere = await scriptService.getById(scriptId);
+    expect(stillHere).not.toBeNull();
+  });
+
+  it('delete_script with confirm=true but mismatched scriptIdConfirm → isError', async () => {
+    const app = buildApp();
+    const { userId, sessionId } = await createTestAdmin();
+    const scriptId = crypto.randomUUID();
+    await scriptService.create({ id: scriptId, authorUserId: userId, label: 'safety' });
+
+    const { json } = await jrpc(app, sessionId, {
+      jsonrpc: '2.0',
+      id: 202,
+      method: 'tools/call',
+      params: {
+        name: 'delete_script',
+        arguments: { scriptId, confirm: true, scriptIdConfirm: 'wrong-id' },
+      },
+    });
+    const body = json as { result: { isError?: boolean; content: Array<{ text: string }> } };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]!.text).toContain('Safety check failed');
+
+    // 剧本仍然存在
+    const stillHere = await scriptService.getById(scriptId);
+    expect(stillHere).not.toBeNull();
+  });
+
+  it('delete_script with confirm=true + matching scriptIdConfirm deletes script + cascades versions', async () => {
+    const app = buildApp();
+    const { userId, sessionId } = await createTestAdmin();
+    const scriptId = crypto.randomUUID();
+    await scriptService.create({ id: scriptId, authorUserId: userId, label: 'bye' });
+    await scriptVersionService.create({
+      scriptId,
+      manifest: minimalManifest(scriptId),
+      status: 'published',
+    });
+    await scriptVersionService.create({
+      scriptId,
+      manifest: { ...minimalManifest(scriptId), label: 'v2' },
+      status: 'draft',
+    });
+
+    const { status, json } = await jrpc(app, sessionId, {
+      jsonrpc: '2.0',
+      id: 203,
+      method: 'tools/call',
+      params: {
+        name: 'delete_script',
+        arguments: { scriptId, confirm: true, scriptIdConfirm: scriptId },
+      },
+    });
+    expect(status).toBe(200);
+    const body = json as { result: { isError?: boolean; content: Array<{ text: string }> } };
+    expect(body.result.isError).toBeUndefined();
+    const payload = JSON.parse(body.result.content[0]!.text) as {
+      ok: boolean;
+      deleted: { scriptId: string; versionCount: number };
+      warning: string;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.deleted.scriptId).toBe(scriptId);
+    expect(payload.deleted.versionCount).toBe(2);
+    expect(payload.warning).toContain('OSS');
+
+    // script + versions 都没了
+    expect(await scriptService.getById(scriptId)).toBeNull();
+    const remainingVersions = await scriptVersionService.listByScript(scriptId);
+    expect(remainingVersions.length).toBe(0);
+  });
+
+  it('delete_script on nonexistent id → isError', async () => {
+    const app = buildApp();
+    const { sessionId } = await createTestAdmin();
+    const { json } = await jrpc(app, sessionId, {
+      jsonrpc: '2.0',
+      id: 204,
+      method: 'tools/call',
+      params: {
+        name: 'delete_script',
+        arguments: {
+          scriptId: 'does-not-exist-' + crypto.randomUUID(),
+          confirm: true,
+          scriptIdConfirm: 'does-not-exist',
+        },
+      },
+    });
+    const body = json as { result: { isError?: boolean; content: Array<{ text: string }> } };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]!.text).toContain('Script not found');
+  });
 });

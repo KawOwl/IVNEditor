@@ -439,5 +439,15 @@
     "ref": "server/src/routes/mcp.ts",
     "verify": "bun test 19 个 mcp-route 全绿，含 9 个 asset 专项测试：新 tool 在 tools/list 里、纯上传不动 manifest、10MB 上限、MIME 白名单、新增/覆盖 background、创建 character + 加 sprite、append 第二张 sprite、覆盖同名 sprite、list_script_assets、data URL 前缀；__setAssetStorageForTesting 注入内存 bucket mock 避免真 S3 依赖",
     "note": "上传在前、manifest 改动在后；失败留孤儿 script_assets 行可事后 GC。OSS metadata 带 source=mcp 便于在控制台区分来源。未做：imageUrl 远程抓取 / delete_script_asset tool / script owner 细粒度校验（目前只 requireAdmin）"
+  },
+  {
+    "id": "MCP.3",
+    "title": "MCP delete_script tool（级联删剧本）",
+    "description": "在 MCP server 上挂一个高危 tool `delete_script`，用于让编剧在 Claude Desktop 里彻底删除一个剧本：级联删除 script_versions / playthroughs / script_assets 数据库记录（DB 层已是 ON DELETE CASCADE，调 scriptService.delete 一行搞定）。为防误删加双重确认：必须同时传 `confirm: true` 与 `scriptIdConfirm` 且 `scriptIdConfirm === scriptId`；任一缺失或不匹配就 dry-run，返回 impact 摘要（剧本 label / 版本数 / asset 数 / published 版本 id 列表）不真删。OSS 对象不自动物理删，提示用户去控制台按 `scripts/{scriptId}/` 前缀手动清。只暴露给 admin。",
+    "status": "done",
+    "type": "e2e",
+    "ref": "server/src/routes/mcp.ts + server/src/__tests__/mcp-route.test.ts",
+    "verify": "bun test 141 tests 全绿（新增 5 个 delete_script case：tools/list 含新 tool / 不传 confirm 走 dry-run 且剧本仍在 / confirm=true 但 scriptIdConfirm 不匹配 isError 且剧本仍在 / confirm=true + 匹配 scriptIdConfirm 成功级联删版本 / 不存在 id 返回 Script not found）",
+    "note": "级联 DB 记录靠 scripts FK ON DELETE CASCADE（schema.ts scriptVersions/playthroughs/scriptAssets 均已声明），无需 tool 层手动 loop。OSS 物理对象不删是故意的——保留最后手段防脑抽误删。"
   }
 ]

@@ -1009,6 +1009,81 @@ const tools: ToolDef[] = [
       });
     },
   },
+
+  {
+    name: 'delete_script',
+    description:
+      '【危险 · 不可逆】彻底删除一个剧本。级联删除：该剧本的所有版本（draft / published / archived）、' +
+      '所有 playthroughs（玩家和编剧试玩）、所有 script_assets 数据库记录。' +
+      '**OSS / S3 上的图片对象**不会被物理删除（只是 DB 里的引用没了），如需清理要管理员手动进 OSS 控制台。\n\n' +
+      '必须显式传 `confirm: true` + 同时传 `scriptIdConfirm` 与 `scriptId` 一致才真执行 —— 防止 LLM 误触。' +
+      '强烈建议：调用前先用 `list_scripts` 和 `get_script_overview` 跟用户再次确认要删的是哪个剧本。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scriptId: { type: 'string', description: '要删除的剧本 id' },
+        scriptIdConfirm: {
+          type: 'string',
+          description: '再输一次 scriptId，必须和上面完全一致 —— 防止传错',
+        },
+        confirm: {
+          type: 'boolean',
+          description: '必须传 true 才真删除；传 false 或不传 → 返回 "dry-run" 预览（告诉你会影响多少版本 / playthrough / asset）',
+        },
+      },
+      required: ['scriptId'],
+      additionalProperties: false,
+    },
+    async handler(args) {
+      const scriptId = String(args.scriptId);
+      const scriptIdConfirm = args.scriptIdConfirm ? String(args.scriptIdConfirm) : undefined;
+      const confirm = args.confirm === true;
+
+      // 先查出会被影响的东西，既用于 dry-run 响应，也让真删除的响应里带上删了什么
+      const script = await scriptService.getById(scriptId);
+      if (!script) throw new Error(`Script not found: ${scriptId}`);
+
+      const versions = await scriptVersionService.listByScript(scriptId);
+      const assets = await assetService.listByScript(scriptId);
+      // playthrough 数无法从 scriptService 直接查；不想为 MCP 单独开 service 方法，
+      // 先报 "不精确"提示（数据库 FK CASCADE 会自动清，不影响正确性）
+      const impact = {
+        scriptId,
+        scriptLabel: script.label,
+        versionCount: versions.length,
+        assetCount: assets.length,
+        publishedVersionIds: versions.filter((v) => v.status === 'published').map((v) => v.id),
+        note:
+          '级联删除：script_versions / playthroughs / script_assets 的数据库行会被 FK CASCADE 自动清理。' +
+          'OSS / S3 上的图片文件不会被物理删除。',
+      };
+
+      if (!confirm) {
+        return textResult({
+          dryRun: true,
+          wouldDelete: impact,
+          message:
+            '未传 confirm=true，已返回 dry-run。真要删请再调一次并带 `confirm: true`，同时 `scriptIdConfirm` 必须等于 scriptId。',
+        });
+      }
+      if (scriptIdConfirm !== scriptId) {
+        throw new Error(
+          `Safety check failed: scriptIdConfirm (${scriptIdConfirm ?? '<missing>'}) does not match scriptId (${scriptId}). ` +
+            'Re-enter scriptId in the scriptIdConfirm field to confirm.',
+        );
+      }
+
+      const ok = await scriptService.delete(scriptId);
+      if (!ok) throw new Error(`Delete failed (script vanished mid-op?): ${scriptId}`);
+
+      return textResult({
+        ok: true,
+        deleted: impact,
+        warning:
+          'OSS 上的 asset 文件未物理删除。如需清理，请在 OSS 控制台按 key 前缀 scripts/' + scriptId + '/ 手动删除。',
+      });
+    },
+  },
 ];
 
 const toolByName = new Map(tools.map((t) => [t.name, t]));
@@ -1045,6 +1120,7 @@ async function handleRequest(req: JsonRpcRequest, identity: Identity): Promise<J
             '  - 改文字：list_scripts → get_script_overview → update_segment_content → publish_script_version\n' +
             '  - 加图：add_background_to_script / add_character_sprite（一步完成上传+manifest 挂载+建 draft）\n' +
             '  - 查已传图：list_script_assets\n' +
+            '  - 删剧本：delete_script（不可逆；默认 dry-run，真删要显式 confirm=true + 重输 scriptIdConfirm）\n' +
             '写完务必让用户复核过再 publish。',
         });
       }
