@@ -22,7 +22,7 @@
  *   - 方案 B（turn-bounded）天然契合：每回合新 generate，自然接收 state 变化
  *
  * 运行：
- *   cd apps/server && bun run scripts/seed-test-e2e.ts
+ *   cd apps/server && bun run scripts/seed-test-e2e.mts
  */
 
 import { eq } from 'drizzle-orm';
@@ -419,7 +419,7 @@ async function main(): Promise<void> {
     .limit(1);
 
   if (adminRows.length === 0) {
-    console.error('[seed-test-e2e] 找不到 admin 用户，先跑 seed-admin.ts');
+    console.error('[seed-test-e2e] 找不到 admin 用户，先跑 seed-admin.mts');
     process.exit(1);
   }
   const admin = adminRows[0]!;

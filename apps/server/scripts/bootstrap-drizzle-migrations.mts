@@ -22,7 +22,7 @@
  *   表不存在/是空的，需要告诉 drizzle "这些迁移已经应用过了"。
  *
  * 使用方式（在 server 目录下）:
- *   bun run scripts/bootstrap-drizzle-migrations.ts
+ *   bun run scripts/bootstrap-drizzle-migrations.mts
  *
  * 安全性：
  *   - 幂等：__drizzle_migrations 已有记录时 pull-out，不做任何操作

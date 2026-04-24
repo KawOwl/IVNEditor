@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * verify-deepseek-reasoning.ts
+ * verify-deepseek-reasoning.mts
  *
  * 验证 DeepSeek 到底把"推理内容"放在哪里：
  *   (a) reasoning-delta 流事件（AI SDK 原生字段，正确）
@@ -8,7 +8,7 @@
  *   (c) 某种 provider 特有的扩展字段
  *
  * 用法：
- *   DEEPSEEK_API_KEY=sk-xxx bun run scripts/verify-deepseek-reasoning.ts
+ *   DEEPSEEK_API_KEY=sk-xxx bun run scripts/verify-deepseek-reasoning.mts
  *
  * 可选参数（环境变量）：
  *   DEEPSEEK_BASE_URL   默认 https://api.deepseek.com/v1
@@ -237,7 +237,7 @@ async function main() {
   console.log('');
   console.log('  对 deepseek-reasoner (R1) 跑一次:');
   console.log('    DEEPSEEK_MODEL=deepseek-reasoner DEEPSEEK_API_KEY=... \\');
-  console.log('      bun run scripts/verify-deepseek-reasoning.ts');
+  console.log('      bun run scripts/verify-deepseek-reasoning.mts');
 }
 
 main().catch((err) => {

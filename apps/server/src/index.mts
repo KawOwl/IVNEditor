@@ -46,7 +46,7 @@ const MIME_MAP: Record<string, string> = {
   '.eot': 'application/vnd.ms-fontobject',
 };
 
-// Elysia app 在 ./app.ts 里构造（纯函数 buildApp），供 tests 复用
+// Elysia app 在 ./app.mts 里构造（纯函数 buildApp），供 tests 复用
 const app = buildApp();
 
 // 托管前端静态资源（仅在 dist/ 存在时启用）
@@ -140,8 +140,8 @@ async function startup() {
   } catch (err) {
     console.error('[startup] DB initialization failed:', err);
     console.error('[startup] 如果线上首次部署，请先运行:');
-    console.error('  bun run scripts/migrate-player-identity.ts   # 升级老 schema');
-    console.error('  bun run scripts/bootstrap-drizzle-migrations.ts   # 标记 baseline');
+    console.error('  bun run scripts/migrate-player-identity.mts   # 升级老 schema');
+    console.error('  bun run scripts/bootstrap-drizzle-migrations.mts   # 标记 baseline');
     console.error('[startup] 拒绝启动服务，避免半残状态');
     process.exit(1);
   }

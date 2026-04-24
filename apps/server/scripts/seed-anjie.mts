@@ -7,7 +7,7 @@
  *   - 章节阶段说明 → 按章分散到各 chapter 的 segments
  *
  * 运行：
- *   cd apps/server && bun run scripts/seed-anjie.ts
+ *   cd apps/server && bun run scripts/seed-anjie.mts
  *
  * 幂等：script id 固定 anjie，scriptService.create 内部是 upsert；
  *      scriptVersionService.create 的内容 hash 若与已发布版本一致则复用。
@@ -1456,7 +1456,7 @@ async function main() {
     .limit(1);
 
   if (adminRows.length === 0) {
-    console.error('[seed-anjie] 找不到 admin 用户，先跑 seed-admin.ts');
+    console.error('[seed-anjie] 找不到 admin 用户，先跑 seed-admin.mts');
     process.exit(1);
   }
   const admin = adminRows[0]!;

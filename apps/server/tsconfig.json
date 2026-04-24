@@ -17,14 +17,14 @@
   "include": [
     "src/**/*",
     "scripts/**/*",
-    "drizzle.config.ts",
+    "drizzle.config.mts",
     "../../packages/core/src/**/*",
     "../../packages/specification/src/**/*"
   ],
   "exclude": [
     "../../packages/core/src/**/__tests__/**",
-    "../../packages/core/src/**/*.test.ts",
+    "../../packages/core/src/**/*.test.mts",
     "../../packages/specification/src/**/__tests__/**",
-    "../../packages/specification/src/**/*.test.ts"
+    "../../packages/specification/src/**/*.test.mts"
   ]
 }

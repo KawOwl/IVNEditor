@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * verify-xml-narrative.ts
+ * verify-xml-narrative.mts
  *
  * 验证 XML-lite 叙事格式对 LLM 的稳定性：
  *   - 对话用 <d s="X" to="Y"> 标签包裹（短属性名）
@@ -11,9 +11,9 @@
  * 输出每个测试场景的解析结果 + 综合评分。
  *
  * 用法：
- *   DEEPSEEK_API_KEY=sk-xxx bun run scripts/verify-xml-narrative.ts
+ *   DEEPSEEK_API_KEY=sk-xxx bun run scripts/verify-xml-narrative.mts
  *
- * 可配置环境变量（同 verify-deepseek-reasoning.ts）：
+ * 可配置环境变量（同 verify-deepseek-reasoning.mts）：
  *   DEEPSEEK_BASE_URL  默认 https://api.deepseek.com/v1
  *   DEEPSEEK_MODEL     默认 deepseek-chat
  */

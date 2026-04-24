@@ -26,7 +26,7 @@
  *   cd apps/server
  *
  *   # 1. 升级老 schema 到 drizzle/0000_boring_galactus.sql baseline 状态
- *   bun run scripts/migrate-player-identity.ts
+ *   bun run scripts/migrate-player-identity.mts
  *
  *   # 2. 初始化 drizzle 迁移追踪（标记 0000 baseline 为已应用）
  *   bun run db:bootstrap
@@ -37,13 +37,13 @@
  * ═════════════════════════════════════════════════════════════
  *  后续 schema 变更的标准流程
  * ═════════════════════════════════════════════════════════════
- *   1. 本地：修改 apps/server/src/db/schema.ts
+ *   1. 本地：修改 apps/server/src/db/schema.mts
  *   2. 本地：bun run db:generate   # 生成 drizzle/000N_xxx.sql
  *   3. 本地：bun run start         # 服务器启动时自动应用新迁移，做本地验证
  *   4. 提交 drizzle/ 下的迁移文件
  *   5. 线上部署：git pull + 重启服务，runMigrations() 自动应用
  *
- *   注意：不要在生产上再跑 db:push 或 migrate-player-identity.ts，
+ *   注意：不要在生产上再跑 db:push 或 migrate-player-identity.mts，
  *   那只是一次性的遗留升级工具。
  *
  * ═════════════════════════════════════════════════════════════

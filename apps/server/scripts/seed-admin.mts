@@ -13,9 +13,9 @@
  *   - username 不存在 → 创建新 users 行（随机 UUID 作为 id）+ role_id='admin'
  *
  * 运行：
- *   cd apps/server && bun run scripts/seed-admin.ts
+ *   cd apps/server && bun run scripts/seed-admin.mts
  * 或线上部署后：
- *   ADMIN_USERS=... bun run scripts/seed-admin.ts
+ *   ADMIN_USERS=... bun run scripts/seed-admin.mts
  *
  * 说明：
  *   - 此脚本是幂等的，可以反复跑

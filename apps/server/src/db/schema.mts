@@ -60,7 +60,7 @@ export const roles = pgTable('roles', {
  * - 匿名用户：username / password_hash 都为 null；role_id = 'user'
  * - 注册玩家（未来做登录）：username 非 null + password_hash；role_id = 'user'
  * - 管理员：username 非 null + password_hash；role_id = 'admin'
- *   管理员通过 seed 脚本从 env 一次性创建（见 scripts/seed-admin.ts）
+ *   管理员通过 seed 脚本从 env 一次性创建（见 scripts/seed-admin.mts）
  *
  * v2.6 之前 admin 走单独的 HMAC token 认证、不进 users 表。6.2b 合并进来：
  * admin 和玩家用同一套 user_sessions token，区别只在 role_id='admin'。

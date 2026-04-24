@@ -17,7 +17,7 @@
  *     关键节点调 change_scene / change_sprite
  *
  * 运行：
- *   cd apps/server && bun run scripts/seed-m3-cafe.ts
+ *   cd apps/server && bun run scripts/seed-m3-cafe.mts
  */
 
 import { eq } from 'drizzle-orm';
@@ -199,7 +199,7 @@ async function main() {
     .limit(1);
 
   if (adminRows.length === 0) {
-    console.error('[seed-m3-cafe] 找不到 admin 用户，先跑 seed-admin.ts');
+    console.error('[seed-m3-cafe] 找不到 admin 用户，先跑 seed-admin.mts');
     process.exit(1);
   }
   const admin = adminRows[0]!;
@@ -221,7 +221,7 @@ async function main() {
     manifest,
     status: 'published',
     label: 'v1 seed',
-    note: '通过 seed-m3-cafe.ts 创建',
+    note: '通过 seed-m3-cafe.mts 创建',
   });
   if (result.created) {
     console.log(`[seed-m3-cafe] 新版本 v${result.version.versionNumber} published (id=${result.version.id})`);

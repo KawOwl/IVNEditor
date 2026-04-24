@@ -82,6 +82,11 @@ for await (const file of walk(root)) {
     continue;
   }
 
+  if (rel.endsWith('.ts') && !rel.endsWith('.d.ts')) {
+    violations.push({ file: rel, rule: 'typescript-runtime-extension', line: 1 });
+    continue;
+  }
+
   const text = await readFile(file, 'utf8');
   const lines = text.split(/\r?\n/);
   for (const rule of rules) {

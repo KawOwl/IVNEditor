@@ -9,7 +9,7 @@
  * - 密码用 bcrypt 哈希存在 users.password_hash
  *
  * admin 用户通过 seed 脚本 `bun run seed:admin` 从 env 变量上架，
- * 详见 scripts/seed-admin.ts。
+ * 详见 scripts/seed-admin.mts。
  */
 
 import { randomUUID } from 'node:crypto';

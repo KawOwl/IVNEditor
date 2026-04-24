@@ -21,13 +21,13 @@
 
     /* Paths */
     "paths": {
-      "#internal/*": ["./src/*"],
-      "@/*": ["./src/*"],
+      "#internal/*": ["./src/*.mts", "./src/*.tsx", "./src/*"],
+      "@/*": ["./src/*.mts", "./src/*.tsx", "./src/*"],
       "@scenario/*": ["../../scenario/*"],
       "@ivn/core/*": ["../../packages/core/src/*"],
       "@ivn/specification/*": ["../../packages/specification/src/*"]
     }
   },
   "include": ["src"],
-  "exclude": ["src/**/__tests__/**", "src/**/*.test.ts"]
+  "exclude": ["src/**/__tests__/**", "src/**/*.test.mts"]
 }
