@@ -6,8 +6,8 @@
  */
 
 import { Elysia } from 'elysia';
-import { llmConfigService } from '../services/llm-config-service';
-import { requireAdmin, isResponse } from '../auth-identity';
+import { llmConfigService } from '#server/services/llm-config-service';
+import { requireAdmin, isResponse } from '#server/auth-identity';
 
 export const llmConfigRoutes = new Elysia({ prefix: '/api/llm-configs' })
 

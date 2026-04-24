@@ -90,55 +90,78 @@ export function VersionHistoryList({
           <div className="px-3 py-8 text-center text-[10px] text-zinc-600">暂无版本</div>
         ) : (
           <div className="py-1">
-            {versions.map((v) => {
-              const isCurrent = v.id === currentVersionId;
-              const badge = STATUS_BADGE[v.status];
-              const timeIso = v.publishedAt ?? v.archivedAt ?? v.createdAt;
-              const canPublish = v.status === 'draft';
-              return (
-                <div
-                  key={v.id}
-                  onClick={() => onSelect(v.id)}
-                  className={cn(
-                    'group px-3 py-2 cursor-pointer border-l-2 transition-colors',
-                    isCurrent
-                      ? 'border-l-emerald-600 bg-zinc-900'
-                      : 'border-l-transparent hover:bg-zinc-900/60',
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-1.5 mb-0.5">
-                    <span className="text-xs font-mono text-zinc-300">v{v.versionNumber}</span>
-                    <span
-                      className={cn(
-                        'text-[9px] px-1.5 py-[1px] rounded border font-medium',
-                        badge.cls,
-                      )}
-                    >
-                      {badge.label}
-                    </span>
-                  </div>
-                  {v.label && (
-                    <div className="text-[10px] text-zinc-400 truncate mb-0.5">{v.label}</div>
-                  )}
-                  <div className="text-[9px] text-zinc-600">{formatRelativeTime(timeIso)}</div>
-                  {canPublish && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onPublish(v.id);
-                      }}
-                      disabled={publishingVersionId === v.id}
-                      className="mt-1 w-full text-[10px] py-0.5 rounded border border-emerald-800/50 text-emerald-400 hover:bg-emerald-950/40 disabled:opacity-40 transition-colors"
-                    >
-                      {publishingVersionId === v.id ? '发布中...' : '发布此版本'}
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+            {versions.map((version) => (
+              <VersionHistoryItem
+                key={version.id}
+                version={version}
+                current={version.id === currentVersionId}
+                publishing={publishingVersionId === version.id}
+                onSelect={onSelect}
+                onPublish={onPublish}
+              />
+            ))}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function VersionHistoryItem({
+  version,
+  current,
+  publishing,
+  onSelect,
+  onPublish,
+}: {
+  version: VersionSummary;
+  current: boolean;
+  publishing: boolean;
+  onSelect: (versionId: string) => void;
+  onPublish: (versionId: string) => void;
+}) {
+  const { id, label, status, versionNumber } = version;
+  const badge = STATUS_BADGE[status];
+  const timeIso = version.publishedAt ?? version.archivedAt ?? version.createdAt;
+  const canPublish = status === 'draft';
+
+  return (
+    <div
+      onClick={() => onSelect(id)}
+      className={cn(
+        'group px-3 py-2 cursor-pointer border-l-2 transition-colors',
+        current
+          ? 'border-l-emerald-600 bg-zinc-900'
+          : 'border-l-transparent hover:bg-zinc-900/60',
+      )}
+    >
+      <div className="flex items-center justify-between gap-1.5 mb-0.5">
+        <span className="text-xs font-mono text-zinc-300">v{versionNumber}</span>
+        <span
+          className={cn(
+            'text-[9px] px-1.5 py-[1px] rounded border font-medium',
+            badge.cls,
+          )}
+        >
+          {badge.label}
+        </span>
+      </div>
+      {label && (
+        <div className="text-[10px] text-zinc-400 truncate mb-0.5">{label}</div>
+      )}
+      <div className="text-[9px] text-zinc-600">{formatRelativeTime(timeIso)}</div>
+      {canPublish && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPublish(id);
+          }}
+          disabled={publishing}
+          className="mt-1 w-full text-[10px] py-0.5 rounded border border-emerald-800/50 text-emerald-400 hover:bg-emerald-950/40 disabled:opacity-40 transition-colors"
+        >
+          {publishing ? '发布中...' : '发布此版本'}
+        </button>
+      )}
     </div>
   );
 }

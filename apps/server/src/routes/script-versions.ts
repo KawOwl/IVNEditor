@@ -18,9 +18,9 @@
 
 import { Elysia } from 'elysia';
 import type { ScriptManifest } from '@ivn/core/types';
-import { scriptService } from '../services/script-service';
-import { scriptVersionService } from '../services/script-version-service';
-import { requireAdmin, isResponse } from '../auth-identity';
+import { scriptService } from '#server/services/script-service';
+import { scriptVersionService } from '#server/services/script-version-service';
+import { requireAdmin, isResponse } from '#server/auth-identity';
 
 /**
  * 校验某剧本存在（不再做 ownership 检查——当前所有 admin 都能操作所有

@@ -29,9 +29,9 @@
 
 import { Elysia } from 'elysia';
 import type { ScriptManifest } from '@ivn/core/types';
-import { scriptService } from '../services/script-service';
-import { scriptVersionService } from '../services/script-version-service';
-import { requireAdmin, requireAnyIdentity, isResponse } from '../auth-identity';
+import { scriptService } from '#server/services/script-service';
+import { scriptVersionService } from '#server/services/script-version-service';
+import { requireAdmin, requireAnyIdentity, isResponse } from '#server/auth-identity';
 
 /** 剧本公开信息（不含 prompt segments，玩家可见） */
 interface PublicScriptInfo {

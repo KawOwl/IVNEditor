@@ -1,5 +1,5 @@
 import type { ScenePatch } from '../tool-executor';
-import type { SceneState } from '../types';
+import type { SceneState, SpriteState } from '../types';
 
 export type SceneTransition = 'fade' | 'cut' | 'dissolve';
 
@@ -8,36 +8,59 @@ export interface AppliedScenePatch {
   transition?: SceneTransition;
 }
 
+type FullScenePatch = Extract<ScenePatch, { kind: 'full' }>;
+type SingleSpritePatch = Extract<ScenePatch, { kind: 'single-sprite' }>;
+
 export function applyScenePatchToState(
   currentScene: SceneState,
   patch: ScenePatch,
 ): AppliedScenePatch {
-  if (patch.kind === 'clear') {
-    return { scene: { background: null, sprites: [] } };
+  switch (patch.kind) {
+    case 'clear':
+      return { scene: emptyScene() };
+    case 'full':
+      return applyFullScenePatch(currentScene, patch);
+    case 'single-sprite':
+      return applySingleSpritePatch(currentScene, patch);
   }
+}
 
-  if (patch.kind === 'full') {
-    return {
-      scene: {
-        background: patch.background !== undefined ? patch.background : currentScene.background,
-        sprites: patch.sprites !== undefined ? patch.sprites : currentScene.sprites,
-      },
-      transition: patch.transition,
-    };
-  }
+function emptyScene(): SceneState {
+  return { background: null, sprites: [] };
+}
 
-  const existing = currentScene.sprites.findIndex((sprite) => sprite.id === patch.sprite.id);
-  const nextSprites = [...currentScene.sprites];
-  if (existing >= 0) {
-    nextSprites[existing] = patch.sprite;
-  } else {
-    nextSprites.push(patch.sprite);
-  }
+function applyFullScenePatch(
+  { background: currentBackground, sprites: currentSprites }: SceneState,
+  { background, sprites, transition }: FullScenePatch,
+): AppliedScenePatch {
+  return {
+    scene: {
+      background: background !== undefined ? background : currentBackground,
+      sprites: sprites !== undefined ? sprites : currentSprites,
+    },
+    transition,
+  };
+}
 
+function applySingleSpritePatch(
+  currentScene: SceneState,
+  { sprite }: SingleSpritePatch,
+): AppliedScenePatch {
   return {
     scene: {
       ...currentScene,
-      sprites: nextSprites,
+      sprites: upsertSprite(currentScene.sprites, sprite),
     },
   };
+}
+
+function upsertSprite(sprites: SpriteState[], sprite: SpriteState): SpriteState[] {
+  const existing = sprites.findIndex(({ id }) => id === sprite.id);
+  const nextSprites = [...sprites];
+  if (existing >= 0) {
+    nextSprites[existing] = sprite;
+  } else {
+    nextSprites.push(sprite);
+  }
+  return nextSprites;
 }

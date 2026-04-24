@@ -6,7 +6,7 @@
  */
 
 import { eq, and, desc, asc, sql, inArray } from 'drizzle-orm';
-import { db, schema } from '../db';
+import { db, schema } from '#server/db';
 
 // ============================================================================
 // Types

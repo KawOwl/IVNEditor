@@ -13,8 +13,8 @@
 
 import { Elysia } from 'elysia';
 import { login } from '../auth';
-import { resolveIdentity, resolvePlayerSession } from '../auth-identity';
-import { userService } from '../services/user-service';
+import { resolveIdentity, resolvePlayerSession } from '#server/auth-identity';
+import { userService } from '#server/services/user-service';
 
 export const authRoutes = new Elysia({ prefix: '/api/auth' })
 

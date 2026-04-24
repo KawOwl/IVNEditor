@@ -16,7 +16,7 @@
 
 import { createHash } from 'node:crypto';
 import { eq, and, desc, sql } from 'drizzle-orm';
-import { db, schema } from '../db';
+import { db, schema } from '#server/db';
 import type { ScriptManifest } from '@ivn/core/types';
 
 // ============================================================================
