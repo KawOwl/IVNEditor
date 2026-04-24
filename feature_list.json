@@ -469,5 +469,15 @@
     "ref": "RFC-声明式视觉IR_2026-04-24.md#§11 Step V.1",
     "verify": "bun tsc --noEmit 通过；bun test 新 parser 单测全绿（50+ 用例含 silent-tolerance 每种 degrade、<scratch> 提取、bg/sprite 继承、unknown-id 保留、stream 未闭合截断）；v1 parser 27 测试全部保留无改动",
     "note": "V.1 完成。实测 73 测试（inheritance 12 + reducer 30 + parser 31，含 chunk 边界 1/2/3/5/7/13/50/1000 各 size 参数化）。v1 parser 34 tests 保留绿。实现期发现的关键 bug：createParser.finalize() 内部需要先 dispatch 'finalize' event 再 htmlParser.end()（反序会让 htmlparser2 合成 closetag 先 pop 栈，丢失 truncated:true 标记）。prod dep 新增 htmlparser2@12.0.0。RFC §13 开放问题 A/B/C/D 全部按推荐采纳。V.2 再做 game-session wiring。"
+  },
+  {
+    "id": "V.2",
+    "title": "声明式视觉 IR：Session 层接线 + 视觉继承",
+    "description": "RFC Step V.2 落地：在 GameSession.generate() 里按 manifest.protocolVersion 分叉选 parser。ScriptManifest 新增可选字段 protocolVersion: 'v1-tool-call' | 'v2-declarative-visual'（缺省 v1）；GameSessionConfig / RestoreConfig 增 protocolVersion + parserManifest 两个入参，v2 要求同时提供 parserManifest。generate() 内 parser 分叉点定义 feedTextChunk / finalizeParser / flushPendingNarration 三个 closure：v1 走老 NarrativeParser + createNarrationAccumulator；v2 直接 createParser(v2) + drainBatch（把 sentences 透给 emitter，更新 this.currentScene 自 sentence.sceneRef，emit ir-scratch / ir-degrade:* 事件，narration/dialogue truncated 同样走 narrative-truncation）。scenePatchEmitter 在 v2 path 置 null（RFC §6：v2 不再 emit scene-change WS 事件）。server/src/session-manager.ts buildConfig 按 manifest.protocolVersion 切并用 buildParserManifest(manifest) 生成白名单；restoreConfig 同步带上避免重连后跳变。",
+    "status": "done",
+    "type": "e2e",
+    "ref": "RFC-声明式视觉IR_2026-04-24.md#§11 Step V.2 + src/core/game-session.ts + server/src/session-manager.ts",
+    "verify": "bunx tsc --noEmit（前端）无 error；server bun test 141/141 全绿；frontend bun test src/core 221/221 全绿（含 V.1 的 73 parser v2 测试 + 原 narrative-parser 34 测试 + 其他所有 core 测试）；bun start 启动干净，migration 无 error，Langfuse/DB 连接正常",
+    "note": "不改 production/playtest 现有行为：所有存量 ScriptManifest 无 protocolVersion，自动落到 'v1-tool-call'，走原 parser + scenePatchEmitter 路径。V.3（编辑器把剧本标记为 v2）之前，玩家/编辑器都看不出差异。实现决策：(1) parserManifest 仅 v2 path 计算（v1 不算浪费）；(2) v2 path scenePatchEmitter = null 而不是包装 noop，让 change_scene 等 v1 tool 若误被调用时 nullref 崩而非静默（但 v2 也不会注册那些 tool）；(3) scratch 原文保留在 currentNarrativeBuffer 走 onTextChunk 自然入持久化 + 下一轮 assistant 历史，不做特殊路由；(4) restore 路径手动带 protocolVersion/parserManifest 沿用 2026-04-24 FIX 的教训注释"
   }
 ]

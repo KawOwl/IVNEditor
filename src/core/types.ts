@@ -161,6 +161,17 @@ export interface ScriptManifest {
   memoryConfig: MemoryConfig;
   enabledTools: string[];         // 启用的可选工具 ID 列表
   initialPrompt?: string;         // 首轮 user message（等效于 prompt.txt）
+  /**
+   * 视觉 IR 协议版本（RFC-声明式视觉IR_2026-04-24）。
+   *   - 'v1-tool-call'（默认 / 缺省）：change_scene / change_sprite / clear_stage
+   *     工具调用 + XML-lite（<d>/<n>）叙事解析。老 parser（v1 NarrativeParser）。
+   *   - 'v2-declarative-visual'：嵌套 XML 声明式视觉（<dialogue>/<narration>/
+   *     <scratch> + 子 <background/>/<sprite/>/<stage/>）。新 parser（
+   *     src/core/narrative-parser-v2）。视觉 tools 不启用。
+   * 两种协议的 playthrough 共存：session 启动时按此字段分叉 parser，v1 老
+   * playthrough 不受影响（RFC §6）。
+   */
+  protocolVersion?: 'v1-tool-call' | 'v2-declarative-visual';
   // --- 展示字段 ---
   coverImage?: string;            // 封面图 URL
   description?: string;           // 简介

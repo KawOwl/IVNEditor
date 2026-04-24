@@ -37,8 +37,22 @@ import { LLMClient } from './llm-client';
 import type { LLMConfig } from './llm-client';
 import type { SessionEmitter } from './session-emitter';
 import { NarrativeParser, extractPlainText } from './narrative-parser';
+import {
+  createParser as createParserV2,
+  type NarrativeParser as NarrativeParserV2,
+  type ParserManifest,
+  type DegradeEvent as DegradeEventV2,
+} from './narrative-parser-v2';
 import { serializeMessagesForDebug } from './messages-builder';
-import type { Sentence, ParticipationFrame, SceneState } from './types';
+import type { Sentence, ParticipationFrame, SceneState, ScratchBlock } from './types';
+
+/**
+ * 视觉 IR 协议版本（RFC-声明式视觉IR_2026-04-24 §6.1）。缺省（undefined）
+ * 视为 'v1-tool-call'：老 NarrativeParser + change_scene / change_sprite /
+ * clear_stage 工具驱动视觉；新剧本设 'v2-declarative-visual' 用 parser-v2
+ * 自己从嵌套 XML 子标签里推导视觉状态，视觉 tools 不启用。
+ */
+export type ProtocolVersion = 'v1-tool-call' | 'v2-declarative-visual';
 
 // ============================================================================
 // Types
@@ -454,6 +468,10 @@ export interface RestoreConfig {
    * server 侧传入 createNarrativeHistoryReader(playthroughId)。本地模式不传。
    */
   narrativeReader?: import('./memory/narrative-reader').NarrativeHistoryReader;
+  /** 视觉 IR 协议版本（RFC §6.1，同 GameSessionConfig）。 */
+  protocolVersion?: ProtocolVersion;
+  /** v2 parser 白名单。仅 protocolVersion='v2-declarative-visual' 时必填。 */
+  parserManifest?: ParserManifest;
 }
 
 export interface GameSessionConfig {
@@ -482,6 +500,15 @@ export interface GameSessionConfig {
    * server 侧传入 createNarrativeHistoryReader(playthroughId)。本地模式不传。
    */
   narrativeReader?: import('./memory/narrative-reader').NarrativeHistoryReader;
+  /**
+   * 声明式视觉 IR（RFC 2026-04-24 §6.1）。
+   *   - 缺省 / 'v1-tool-call'：走老 NarrativeParser + change_scene 系列工具
+   *   - 'v2-declarative-visual'：走 parser-v2 + 子标签推导视觉；要求同时
+   *     提供 parserManifest（白名单来源于剧本的 characters / backgrounds）
+   */
+  protocolVersion?: ProtocolVersion;
+  /** v2 parser 的白名单表。仅在 protocolVersion='v2-declarative-visual' 时必填。 */
+  parserManifest?: ParserManifest;
 }
 
 // ============================================================================
@@ -551,14 +578,27 @@ export class GameSession {
   private scenarioEndReason: string | undefined;
 
   /**
-   * VN 当前场景快照（M3）。由 change_scene / change_sprite / clear_stage 工具演进。
+   * VN 当前场景快照（M3）。
+   * v1 路径：由 change_scene / change_sprite / clear_stage 工具演进（applyScenePatch）。
+   * v2 路径（RFC 2026-04-24）：由 parser-v2 每条 Sentence 的 sceneRef 更新。
    * start() 时从 manifest.defaultScene 或 {background:null, sprites:[]} 初始化，
-   * restore() 时从 DB 恢复。每次变化会发给 emitter 并在 generate 结束后持久化。
+   * restore() 时从 DB 恢复。每次变化在 generate 结束后持久化。
    */
   private currentScene: import('./types').SceneState = {
     background: null,
     sprites: [],
   };
+
+  /**
+   * 视觉 IR 协议版本（RFC §6.1）。start()/restore() 时注入；缺省 v1-tool-call。
+   * generate() 据此选 parser 路径。
+   */
+  private protocolVersion: ProtocolVersion = 'v1-tool-call';
+
+  /**
+   * v2 parser 白名单。只在 protocolVersion='v2-declarative-visual' 时使用。
+   */
+  private parserManifest?: ParserManifest;
 
   /**
    * M3: applyScenePatch 完成后额外触发——发出 WS 事件 + 产出 scene_change Sentence。
@@ -668,6 +708,13 @@ export class GameSession {
       this.disabledSections = config.disabledSections;
       this.persistence = config.persistence;
       this.tracing = config.tracing;
+      this.protocolVersion = config.protocolVersion ?? 'v1-tool-call';
+      this.parserManifest = config.parserManifest;
+      if (this.protocolVersion === 'v2-declarative-visual' && !this.parserManifest) {
+        throw new Error(
+          '[GameSession] protocolVersion="v2-declarative-visual" 要求同时提供 parserManifest',
+        );
+      }
 
       // inheritedSummary 已从架构里移除：章节不再是 memory 生命周期事件。
 
@@ -723,6 +770,13 @@ export class GameSession {
       this.disabledSections = config.disabledSections;
       this.persistence = config.persistence;
       this.tracing = config.tracing;
+      this.protocolVersion = config.protocolVersion ?? 'v1-tool-call';
+      this.parserManifest = config.parserManifest;
+      if (this.protocolVersion === 'v2-declarative-visual' && !this.parserManifest) {
+        throw new Error(
+          '[GameSession] restore: protocolVersion="v2-declarative-visual" 要求同时提供 parserManifest',
+        );
+      }
 
       // 注入持久化快照
       this.stateStore.restore(config.stateVars, config.turn);
@@ -977,9 +1031,16 @@ export class GameSession {
           messages: debugMessages,
         });
 
-        // M3: 为本轮创建 XML-lite Narrative Parser
-        // Parser 从 text-delta 流里解析出结构化 Sentence[]，与旧的
-        // entries[] 机制并存（M1 做 VN UI 时消费 Sentence[]）。
+        // Parser 分叉（RFC 2026-04-24 §6.1）：按 protocolVersion 选 v1 / v2。
+        //
+        // 两条路径都暴露同一组局部 API 给下面的 generate() 循环使用：
+        //   - feedTextChunk(chunk)     : text-delta 喂给对应 parser
+        //   - finalizeParser()         : LLM 结束后 flush 剩余 open 容器
+        //   - flushPendingNarration()  : 在 scene-change / signal-suspend 边界
+        //                                 把 v1 累积器里未 emit 的 narration 推出；
+        //                                 v2 路径下无状态，noop
+        //
+        // 同时共享 turnSentenceIndex（Sentence.index 按每轮从 0 起）。
         let turnSentenceIndex = 0;
         const emitSentenceFrom = (
           partial:
@@ -1011,55 +1072,157 @@ export class GameSession {
           this.emitter.appendSentence(sentence);
         };
 
-        // Narration 跨 chunk 累积器：
-        //   parser 的 onNarrationChunk 按 chunk 粒度来；游戏 UI 需要段落粒度。
-        //   createNarrationAccumulator 把 chunk 攒起来，遇到段落边界 / 字数阈值
-        //   时 emit 成一条 narration Sentence。在 dialogue 开始 / 场景切换 /
-        //   signal 挂起 / generate 结束这些"叙事切换点"调 flush 把残余吐出。
-        const narrationAcc = createNarrationAccumulator((para) =>
-          emitSentenceFrom({ kind: 'narration', text: para }),
-        );
-        const flushPendingNarration = () => narrationAcc.flush();
+        // ────────────────────────────────────────────────────────────────
+        // Parser 分叉点
+        // ────────────────────────────────────────────────────────────────
+        let feedTextChunk: (chunk: string) => void;
+        let finalizeParser: () => void;
+        let flushPendingNarration: () => void;
 
-        const narrativeParser = new NarrativeParser({
-          onNarrationChunk: (text) => narrationAcc.push(text),
-          onDialogueStart: () => {
-            // 对话开始前把未出口的 narration 先 emit 掉，保证顺序
-            flushPendingNarration();
-          },
-          // onDialogueChunk 不单独 emit——等整段 end 一次性 emit Sentence
-          // （前端 VN 打字机从 Sentence 派生，无需子级 chunk 事件）
-          onDialogueEnd: (pf, fullText, truncated) => {
-            emitSentenceFrom({ kind: 'dialogue', text: fullText, pf, truncated });
-            // 🔭 tracing: XML-lite 流被截断（未闭合 </d>）记 Langfuse 事件
-            if (truncated) {
+        if (this.protocolVersion === 'v2-declarative-visual') {
+          // ── v2: 声明式嵌套 XML（parser-v2）────────────────────────────
+          // parser-v2 在内部做视觉状态继承：每条 Sentence 自带 sceneRef。
+          // 我们把 parser 返回的 sentence 透传给 emitter（不再经 emitSentenceFrom
+          // 读 this.currentScene，因为 sceneRef 已经是 resolved 后的），
+          // 并用最后一条 sentence 的 sceneRef 刷新 this.currentScene 用于持久化。
+          const parserV2: NarrativeParserV2 = createParserV2({
+            manifest: this.parserManifest!,
+            turnNumber: turn,
+            startIndex: 0,
+            initialScene: { ...this.currentScene },
+          });
+
+          const drainBatch = (batch: {
+            readonly sentences: ReadonlyArray<Sentence>;
+            readonly scratches: ReadonlyArray<ScratchBlock>;
+            readonly degrades: ReadonlyArray<DegradeEventV2>;
+          }) => {
+            for (const s of batch.sentences) {
+              // parser-v2 只 emit narration / dialogue（不 emit scene_change —— 视觉
+              // 状态转移由 sceneRef 本身编码，不再走离散的 scene_change Sentence）。
+              // 这里判掉 scene_change 分支仅作 TS 收窄用；运行时一定走 else。
+              if (s.kind === 'scene_change') {
+                this.emitter.appendSentence(s);
+                turnSentenceIndex = Math.max(turnSentenceIndex, s.index + 1);
+                continue;
+              }
+              // sceneRef 已经正确 resolve；作用于 this.currentScene
+              // 以便 onGenerateComplete / onWaitingInput 持久化到 DB。
+              this.currentScene = { ...s.sceneRef };
+              this.emitter.appendSentence(s);
+              // 继续推进 turn-local 索引（parser 内部也维护一个等价 counter）
+              turnSentenceIndex = Math.max(turnSentenceIndex, s.index + 1);
+              if (s.kind === 'dialogue' && s.truncated) {
+                traceHandle?.event(
+                  'narrative-truncation',
+                  { speaker: s.pf.speaker, partialLength: s.text.length },
+                  { turn, kind: 'dialogue' },
+                );
+              }
+              if (s.kind === 'narration' && s.truncated) {
+                traceHandle?.event(
+                  'narrative-truncation',
+                  { partialLength: s.text.length },
+                  { turn, kind: 'narration' },
+                );
+              }
+            }
+            if (batch.scratches.length > 0) {
+              // RFC §10.1：ir-scratch 为正常事件（非 degrade），count + totalChars
+              // 可用于观察 LLM 转移元叙述的频率。不渲染、不产 Sentence；
+              // 但 <scratch> 原文已在 currentNarrativeBuffer 里，messages-builder
+              // 下一轮自然 replay 到 assistant 历史，实现 in-context 强化。
               traceHandle?.event(
-                'narrative-truncation',
-                { speaker: pf.speaker, partialLength: fullText.length },
-                { turn, kind: 'dialogue' },
+                'ir-scratch',
+                {
+                  count: batch.scratches.length,
+                  totalChars: batch.scratches.reduce((n, s) => n + s.text.length, 0),
+                },
+                { turn },
               );
             }
-          },
-        });
+            for (const d of batch.degrades) {
+              // 每条 degrade 打一条独立 event，detail 作为 payload 保留
+              traceHandle?.event(
+                `ir-degrade:${d.code}`,
+                d.detail ? { detail: d.detail } : {},
+                { turn },
+              );
+            }
+          };
+
+          feedTextChunk = (chunk) => drainBatch(parserV2.feed(chunk));
+          finalizeParser = () => drainBatch(parserV2.finalize());
+          flushPendingNarration = () => {
+            // v2 parser 每个闭合 tag 即时 emit，没有 session 层累积器。noop。
+          };
+        } else {
+          // ── v1: 老 XML-lite + tool-driven scene ───────────────────────
+          // Narration 跨 chunk 累积器：parser 的 onNarrationChunk 按 chunk 粒度
+          // 来；游戏 UI 需要段落粒度。createNarrationAccumulator 把 chunk 攒起来，
+          // 遇到段落边界 / 字数阈值时 emit 成一条 narration Sentence。在 dialogue
+          // 开始 / 场景切换 / signal 挂起 / generate 结束这些"叙事切换点"调 flush
+          // 把残余吐出。
+          const narrationAcc = createNarrationAccumulator((para) =>
+            emitSentenceFrom({ kind: 'narration', text: para }),
+          );
+          flushPendingNarration = () => narrationAcc.flush();
+
+          const narrativeParser = new NarrativeParser({
+            onNarrationChunk: (text) => narrationAcc.push(text),
+            onDialogueStart: () => {
+              // 对话开始前把未出口的 narration 先 emit 掉，保证顺序
+              flushPendingNarration();
+            },
+            // onDialogueChunk 不单独 emit——等整段 end 一次性 emit Sentence
+            // （前端 VN 打字机从 Sentence 派生，无需子级 chunk 事件）
+            onDialogueEnd: (pf, fullText, truncated) => {
+              emitSentenceFrom({ kind: 'dialogue', text: fullText, pf, truncated });
+              // 🔭 tracing: XML-lite 流被截断（未闭合 </d>）记 Langfuse 事件
+              if (truncated) {
+                traceHandle?.event(
+                  'narrative-truncation',
+                  { speaker: pf.speaker, partialLength: fullText.length },
+                  { turn, kind: 'dialogue' },
+                );
+              }
+            },
+          });
+
+          feedTextChunk = (chunk) => narrativeParser.push(chunk);
+          finalizeParser = () => narrativeParser.finalize();
+        }
         // 暴露 flushPendingNarration 给 scene change / signal 挂起 / generate 结束，
         // 让这些"叙事边界"把正在攒的 narration 推给前端。
         // (TS: 这里用 closure，不暴露到 this —— 下面同 try 块内调用即可)
-        // 把 applyScenePatch 包装一层：除了更新 this.currentScene，
-        // 还要 emit scene-change 事件 + 产出一条 scene_change Sentence + Langfuse 事件
-        this.scenePatchEmitter = (transition) => {
-          // 先把攒着的 narration emit 掉，再插 scene-change，保证玩家看到的顺序是
-          // "前一段旁白 → 场景切换 → 后一段旁白"
-          flushPendingNarration();
-          this.emitter.emitSceneChange(this.currentScene, transition);
-          emitSentenceFrom({ kind: 'scene_change', scene: { ...this.currentScene }, transition });
-          traceHandle?.event(
-            'scene-change',
-            { scene: this.currentScene, transition },
-            { turn },
-          );
-        };
+        //
+        // V.2：scenePatchEmitter 仅在 v1 path 启用。
+        //   - v1：change_scene/change_sprite/clear_stage 工具调 applyScenePatch，
+        //     会通过 scenePatchEmitter emit 一条 scene-change WS event + scene_change Sentence。
+        //   - v2：声明式 IR 里视觉状态随 Sentence.sceneRef 走，不再 emit scene-change
+        //     WS event（RFC §6）。v2 也不注册那三个工具，applyScenePatch 根本不会被调。
+        //     留 null 即可。
+        if (this.protocolVersion === 'v2-declarative-visual') {
+          this.scenePatchEmitter = null;
+        } else {
+          // 把 applyScenePatch 包装一层：除了更新 this.currentScene，
+          // 还要 emit scene-change 事件 + 产出一条 scene_change Sentence + Langfuse 事件
+          this.scenePatchEmitter = (transition) => {
+            // 先把攒着的 narration emit 掉，再插 scene-change，保证玩家看到的顺序是
+            // "前一段旁白 → 场景切换 → 后一段旁白"
+            flushPendingNarration();
+            this.emitter.emitSceneChange(this.currentScene, transition);
+            emitSentenceFrom({ kind: 'scene_change', scene: { ...this.currentScene }, transition });
+            traceHandle?.event(
+              'scene-change',
+              { scene: this.currentScene, transition },
+              { turn },
+            );
+          };
+        }
         // signal_input_needed record-only 前 game-session 需要把攒的 narration emit 给前端。
         // 把 flush 暴露到实例字段，让 recordPendingSignal 能调用到这个 closure。
+        // v2 path flushPendingNarration 是 noop（parser-v2 即时 emit），这里也安全。
         this.pendingNarrationFlusher = flushPendingNarration;
 
         // Call LLM (agentic tool loop — stopWhen 在 signal_input_needed / end_scenario 触发时拦截)
@@ -1112,7 +1275,9 @@ export class GameSession {
             this.currentNarrativeBuffer += chunk;
             this.emitter.appendToStreamingEntry(chunk);
             // M3: 同步喂给 Narrative Parser 产出结构化 Sentence[]
-            narrativeParser.push(chunk);
+            // V.2：v1 走老 parser（narrativeParser.push），v2 走 parser-v2；
+            // feedTextChunk 是上面 if/else 里定义的分叉点。
+            feedTextChunk(chunk);
           },
           onReasoningChunk: (chunk) => {
             this.currentReasoningBuffer += chunk;
@@ -1204,7 +1369,8 @@ export class GameSession {
         this.abortController = null;
 
         // M3: parser 末尾降级（把未闭合 <d> 当 truncated 结束）
-        narrativeParser.finalize();
+        // V.2：v1 走老 parser.finalize()，v2 走 parser-v2.finalize() 并 drainBatch
+        finalizeParser();
         // finalize 会把 parser 里剩余的 narrationBuffer emit 成 onNarrationChunk，
         // 最后再 flush 一次 session 层累积器，保证整 generate 的 narration 全到前端
         flushPendingNarration();

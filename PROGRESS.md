@@ -1,12 +1,28 @@
 # 项目进度
 
 ## 当前状态
-声明式视觉 IR Step V.1 parser 重写完成并过绿。73 v2 单测 + v1 34 单测全绿，tsc 0 error。下一步 V.2：把 v2 parser 接线到 game-session，产出 ScratchBlock 进 tracing + 下一轮 messages（in-context 强化）。
+声明式视觉 IR Step V.2 session 层接线完成并过绿。frontend tsc 0 error，server tests 141/141 + frontend core tests 221/221 全绿，bun start 正常。manifest.protocolVersion 缺省 'v1-tool-call' —— 存量剧本零行为变化；V.3（编辑器把剧本标记为 v2）之前所有 playthrough 继续走老路径。下一步：本地连 ivn-test 测试再决定 rollout。
 
 ## 当前任务
-**（空闲）等待用户指派下一步。候选：V.2 game-session wiring；或其他 feature_list 中 pending 条目。**
+**（空闲）V.2 done。本地连 ivn-test 跑一轮验证后再决定是否 rollout；不 push 远端。**
 
 ## 最近完成
+**V.2 Session 层接线 + 视觉继承（2026-04-24）**
+- `ScriptManifest` 新增可选字段 `protocolVersion: 'v1-tool-call' | 'v2-declarative-visual'`（缺省 v1）
+- `GameSessionConfig` / `RestoreConfig` 增 `protocolVersion` + `parserManifest` 两入参；v2 path 要求同时提供 parserManifest（否则构造期抛）
+- `GameSession.generate()` 按 protocolVersion 分叉 parser：
+  - v1 → 原 `NarrativeParser` + `createNarrationAccumulator`
+  - v2 → `createParser(v2)` + `drainBatch({ sentences, scratches, degrades })`
+    - sentences 透传给 emitter，this.currentScene 从 `sentence.sceneRef` 复制（parser 内部已 resolve 继承）
+    - narration/dialogue truncated 继续走 narrative-truncation 事件
+    - `<scratch>` batch 聚合 emit `ir-scratch { count, totalChars }` 事件（非 degrade）
+    - 每条 degrade emit `ir-degrade:{code}` 独立事件
+  - 共享 closure：`feedTextChunk` / `finalizeParser` / `flushPendingNarration`
+- v2 path `scenePatchEmitter = null`（RFC §6：v2 不再发 scene-change WS 事件）；v1 path 保留原包装
+- ScratchBlock 无需特殊路由：`<scratch>...</scratch>` 原文已由 `onTextChunk` 进 `currentNarrativeBuffer` → 入 narrative_entries → 下一轮 messages-builder 自然 replay 到 assistant 历史
+- server `session-manager.buildConfig()`：按 `manifest.protocolVersion` 分叉；v2 用 `buildParserManifest(manifest)` 生成白名单；restoreConfig 同步带上避免重连后 parser 选型跳变
+- 验证：frontend tsc 干净、server tests 141/141、frontend core tests 221/221（含 V.1 的 73 parser v2）、bun start migration + Langfuse/DB 干净
+
 **V.1 parser 重写（2026-04-24）**
 - RFC 收尾：§2 加原则 #6 #7、§3.1 加 `<scratch>`、§7 加 scratch 出口 + few-shot、§10.1 加 ir-scratch、§11 V.1 加 FP 约束
 - 新目录 `src/core/narrative-parser-v2/` 5 个文件：tag-schema（声明式 schema 表）→ state（纯数据 + 栈助手）→ inheritance（纯函数视觉推导）→ reducer（`(state, event) → { state, outputs }`）→ index（htmlparser2 组合层 + `buildParserManifest` helper）

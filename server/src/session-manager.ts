@@ -9,9 +9,10 @@
  */
 
 import { GameSession } from '../../src/core/game-session';
-import type { GameSessionConfig, RestoreConfig } from '../../src/core/game-session';
+import type { GameSessionConfig, RestoreConfig, ProtocolVersion } from '../../src/core/game-session';
 import type { ScriptManifest, PromptSegment } from '../../src/core/types';
 import type { LLMConfig } from '../../src/core/llm-client';
+import { buildParserManifest, type ParserManifest } from '../../src/core/narrative-parser-v2';
 import { createWebSocketEmitter } from './ws-session-emitter';
 import { createPlaythroughPersistence } from './services/playthrough-persistence';
 import { createNarrativeHistoryReader } from './services/narrative-reader';
@@ -131,6 +132,10 @@ export class GameSessionWrapper {
       // start() 走 buildConfig() 整包传所以没踩；restore() 手工挑字段漏了这个。
       // 下次新增 GameSessionConfig 字段要警惕这里同步更新，或者干脆直接 `...base`。
       narrativeReader: base.narrativeReader,
+      // V.2：parser 分叉键 + 白名单；restore 路径和 start 走同一份，保证重连后
+      // parser 选型不跳变
+      protocolVersion: base.protocolVersion,
+      parserManifest: base.parserManifest,
       ...snapshot,
       // M3: currentScene 从 snapshot 取，defaultScene 从 manifest 取（restore 时用作 fallback）
       defaultScene: base.defaultScene,
@@ -178,6 +183,14 @@ export class GameSessionWrapper {
     const manifest = this.manifest;
     const allSegments: PromptSegment[] = manifest.chapters.flatMap((ch) => ch.segments);
 
+    // V.2：parser 分叉的触发键。
+    //   - manifest.protocolVersion 缺省 → 'v1-tool-call'（老剧本 / 未迁移剧本）
+    //   - 'v2-declarative-visual' → 启用 parser-v2，不再注册 change_scene 等工具
+    const protocolVersion: ProtocolVersion = manifest.protocolVersion ?? 'v1-tool-call';
+    // parserManifest 只有 v2 需要。v1 下计算也无害但多余，所以按需算。
+    const parserManifest: ParserManifest | undefined =
+      protocolVersion === 'v2-declarative-visual' ? buildParserManifest(manifest) : undefined;
+
     return {
       // Memory scope —— 构造 Memory adapter 时绑定
       playthroughId: this.playthroughId,
@@ -195,6 +208,9 @@ export class GameSessionWrapper {
       disabledSections: manifest.disabledAssemblySections,
       // M3: 把剧本 manifest 的默认场景透传给 GameSession 初始化
       defaultScene: manifest.defaultScene,
+      // V.2: 声明式视觉 IR 开关 + parser 白名单
+      protocolVersion,
+      parserManifest,
       // mem0 adapter 需要 API key —— 从 env 读后注入。没配也没事，只有 provider='mem0' 时 factory 才检查。
       mem0ApiKey: process.env.MEM0_API_KEY,
       persistence: createPlaythroughPersistence(this.playthroughId),
