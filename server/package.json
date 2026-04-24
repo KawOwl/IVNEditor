@@ -29,6 +29,7 @@
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.45.2",
     "elysia": "^1.2.25",
+    "htmlparser2": "^12.0.0",
     "langfuse": "^3.38.20",
     "mem0ai": "^3.0.1",
     "pg": "^8.20.0",
