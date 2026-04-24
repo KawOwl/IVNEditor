@@ -299,96 +299,192 @@ interface Score {
   checks: Array<{ name: string; passed: boolean; detail?: string }>;
 }
 
+interface WeightedCheck {
+  name: string;
+  passed: boolean;
+  points: number;
+  detail?: string;
+}
+
+type ExpectationKey = keyof TestCase['expects'];
+
+interface ScenarioRule {
+  expectation: ExpectationKey;
+  evaluate: (parsed: ParsedOutput) => WeightedCheck;
+}
+
+const BASE_SCORE_RULES: Array<(parsed: ParsedOutput) => WeightedCheck> = [
+  scoreDTagBalance,
+  scoreShortAttributes,
+  scoreNoNarrTag,
+  scoreNoChoiceTag,
+  scoreNoChineseSpeakerId,
+];
+
+const SCENARIO_SCORE_RULES: ScenarioRule[] = [
+  { expectation: 'hasDialogueTags', evaluate: scoreHasDialogueTags },
+  { expectation: 'hasNarrationNoTag', evaluate: scoreHasNarrationNoTag },
+  { expectation: 'hasSoliloquy', evaluate: scoreHasSoliloquy },
+  { expectation: 'hasSceneTag', evaluate: scoreHasSceneTag },
+  { expectation: 'hasMultiAddressee', evaluate: scoreHasMultiAddressee },
+  { expectation: 'hasBroadcast', evaluate: scoreHasBroadcast },
+  { expectation: 'hasOverhearer', evaluate: scoreHasOverhearer },
+  { expectation: 'hasEavesdropper', evaluate: scoreHasEavesdropper },
+  { expectation: 'shouldUseToolForChoice', evaluate: scoreChoiceToolUse },
+];
+
 function scoreOutput(testCase: TestCase, parsed: ParsedOutput): Score {
-  const checks: Score['checks'] = [];
-  let points = 0;
-
-  // C1: tag 开闭平衡（+2）
-  const balanced = parsed.openDCount === parsed.closeDCount && parsed.openDCount > 0;
-  const balanceDetail = `${parsed.openDCount} open / ${parsed.closeDCount} close`;
-  checks.push({ name: 'D 标签开闭平衡', passed: balanced, detail: balanceDetail });
-  if (balanced) points += 2;
-
-  // C2: 用短属性名（+2）
-  const shortAttr = parsed.badAttrNames.length === 0;
-  checks.push({ name: '使用短属性名（s/to/hear/eav）', passed: shortAttr, detail: parsed.badAttrNames.length ? `用了长名: ${parsed.badAttrNames.join(', ')}` : undefined });
-  if (shortAttr) points += 2;
-
-  // C3: 不把旁白包在 <narr> 里（+1）
-  const noNarrTag = parsed.narrTagsFound === 0;
-  checks.push({ name: '旁白不包 <narr>', passed: noNarrTag });
-  if (noNarrTag) points += 1;
-
-  // C4: 不把选择包在 <choice> 里（+1）
-  const noChoiceTag = parsed.choiceTagsFound === 0;
-  checks.push({ name: '选择不包 <choice>/<option>', passed: noChoiceTag, detail: parsed.choiceTagsFound ? `找到 ${parsed.choiceTagsFound} 个` : undefined });
-  if (noChoiceTag) points += 1;
-
-  // C5: 用 snake_case speaker id，不用中文（+1）
-  const noChineseId = parsed.chineseSpeakerIds.length === 0;
-  checks.push({ name: '用 id 不用中文名', passed: noChineseId, detail: parsed.chineseSpeakerIds.length ? `用了中文: ${parsed.chineseSpeakerIds.join(', ')}` : undefined });
-  if (noChineseId) points += 1;
-
-  // 场景特定项
-  if (testCase.expects.hasDialogueTags) {
-    const has = parsed.dialogueTags.length > 0;
-    checks.push({ name: '有 <d> 对话', passed: has });
-    if (has) points += 1;
-  }
-
-  if (testCase.expects.hasNarrationNoTag) {
-    const has = parsed.narrationOutsideLength > 10;
-    checks.push({ name: '有裸写旁白', passed: has, detail: `tag 外文本 ${parsed.narrationOutsideLength} 字` });
-    if (has) points += 1;
-  }
-
-  if (testCase.expects.hasSoliloquy) {
-    const soliloquy = parsed.dialogueTags.some((t) => t.attrs.s && !t.attrs.to);
-    checks.push({ name: '有独白（有 s 无 to）', passed: soliloquy });
-    if (soliloquy) points += 2;
-  }
-
-  if (testCase.expects.hasSceneTag) {
-    const has = parsed.sceneTagsFound > 0;
-    checks.push({ name: '有 <scene> 切换', passed: has });
-    if (has) points += 2;
-  }
-
-  if (testCase.expects.hasMultiAddressee) {
-    const has = parsed.dialogueTags.some((t) => t.attrs.to?.includes(','));
-    checks.push({ name: '有多受话（to="a,b"）', passed: has });
-    if (has) points += 2;
-  }
-
-  if (testCase.expects.hasBroadcast) {
-    const has = parsed.dialogueTags.some((t) => t.attrs.to === '*');
-    checks.push({ name: '有广播（to="*"）', passed: has });
-    if (has) points += 2;
-  }
-
-  if (testCase.expects.hasOverhearer) {
-    const has = parsed.dialogueTags.some((t) => t.attrs.hear);
-    checks.push({ name: '有 hear 属性', passed: has });
-    if (has) points += 2;
-  }
-
-  if (testCase.expects.hasEavesdropper) {
-    const has = parsed.dialogueTags.some((t) => t.attrs.eav);
-    checks.push({ name: '有 eav 属性', passed: has });
-    if (has) points += 2;
-  }
-
-  if (testCase.expects.shouldUseToolForChoice) {
-    const has = parsed.toolCallsSeen.includes('signal_input_needed');
-    checks.push({ name: '调用了 signal_input_needed 工具', passed: has });
-    if (has) points += 2;
-  }
+  const weightedChecks = [
+    ...BASE_SCORE_RULES.map((rule) => rule(parsed)),
+    ...scenarioChecks(testCase.expects, parsed),
+  ];
 
   return {
     testId: testCase.id,
-    points,
+    points: totalPassedPoints(weightedChecks),
     maxPoints: testCase.expectedMaxPoints,
-    checks,
+    checks: weightedChecks.map(toPublicCheck),
+  };
+}
+
+function scenarioChecks(
+  expects: TestCase['expects'],
+  parsed: ParsedOutput,
+): WeightedCheck[] {
+  return SCENARIO_SCORE_RULES
+    .filter((rule) => expects[rule.expectation])
+    .map((rule) => rule.evaluate(parsed));
+}
+
+function totalPassedPoints(checks: WeightedCheck[]): number {
+  return checks.reduce((sum, check) => sum + (check.passed ? check.points : 0), 0);
+}
+
+function toPublicCheck(check: WeightedCheck): Score['checks'][number] {
+  return {
+    name: check.name,
+    passed: check.passed,
+    ...(check.detail !== undefined ? { detail: check.detail } : {}),
+  };
+}
+
+function scoreDTagBalance(parsed: ParsedOutput): WeightedCheck {
+  const passed = parsed.openDCount === parsed.closeDCount && parsed.openDCount > 0;
+  return {
+    name: 'D 标签开闭平衡',
+    passed,
+    points: 2,
+    detail: `${parsed.openDCount} open / ${parsed.closeDCount} close`,
+  };
+}
+
+function scoreShortAttributes(parsed: ParsedOutput): WeightedCheck {
+  const hasBadAttrs = parsed.badAttrNames.length > 0;
+  return {
+    name: '使用短属性名（s/to/hear/eav）',
+    passed: !hasBadAttrs,
+    points: 2,
+    detail: hasBadAttrs ? `用了长名: ${parsed.badAttrNames.join(', ')}` : undefined,
+  };
+}
+
+function scoreNoNarrTag(parsed: ParsedOutput): WeightedCheck {
+  return {
+    name: '旁白不包 <narr>',
+    passed: parsed.narrTagsFound === 0,
+    points: 1,
+  };
+}
+
+function scoreNoChoiceTag(parsed: ParsedOutput): WeightedCheck {
+  return {
+    name: '选择不包 <choice>/<option>',
+    passed: parsed.choiceTagsFound === 0,
+    points: 1,
+    detail: parsed.choiceTagsFound ? `找到 ${parsed.choiceTagsFound} 个` : undefined,
+  };
+}
+
+function scoreNoChineseSpeakerId(parsed: ParsedOutput): WeightedCheck {
+  const hasChineseIds = parsed.chineseSpeakerIds.length > 0;
+  return {
+    name: '用 id 不用中文名',
+    passed: !hasChineseIds,
+    points: 1,
+    detail: hasChineseIds ? `用了中文: ${parsed.chineseSpeakerIds.join(', ')}` : undefined,
+  };
+}
+
+function scoreHasDialogueTags(parsed: ParsedOutput): WeightedCheck {
+  return {
+    name: '有 <d> 对话',
+    passed: parsed.dialogueTags.length > 0,
+    points: 1,
+  };
+}
+
+function scoreHasNarrationNoTag(parsed: ParsedOutput): WeightedCheck {
+  return {
+    name: '有裸写旁白',
+    passed: parsed.narrationOutsideLength > 10,
+    points: 1,
+    detail: `tag 外文本 ${parsed.narrationOutsideLength} 字`,
+  };
+}
+
+function scoreHasSoliloquy(parsed: ParsedOutput): WeightedCheck {
+  return {
+    name: '有独白（有 s 无 to）',
+    passed: parsed.dialogueTags.some((tag) => tag.attrs.s && !tag.attrs.to),
+    points: 2,
+  };
+}
+
+function scoreHasSceneTag(parsed: ParsedOutput): WeightedCheck {
+  return {
+    name: '有 <scene> 切换',
+    passed: parsed.sceneTagsFound > 0,
+    points: 2,
+  };
+}
+
+function scoreHasMultiAddressee(parsed: ParsedOutput): WeightedCheck {
+  return {
+    name: '有多受话（to="a,b"）',
+    passed: parsed.dialogueTags.some((tag) => tag.attrs.to?.includes(',')),
+    points: 2,
+  };
+}
+
+function scoreHasBroadcast(parsed: ParsedOutput): WeightedCheck {
+  return {
+    name: '有广播（to="*"）',
+    passed: parsed.dialogueTags.some((tag) => tag.attrs.to === '*'),
+    points: 2,
+  };
+}
+
+function scoreHasOverhearer(parsed: ParsedOutput): WeightedCheck {
+  return {
+    name: '有 hear 属性',
+    passed: parsed.dialogueTags.some((tag) => tag.attrs.hear),
+    points: 2,
+  };
+}
+
+function scoreHasEavesdropper(parsed: ParsedOutput): WeightedCheck {
+  return {
+    name: '有 eav 属性',
+    passed: parsed.dialogueTags.some((tag) => tag.attrs.eav),
+    points: 2,
+  };
+}
+
+function scoreChoiceToolUse(parsed: ParsedOutput): WeightedCheck {
+  return {
+    name: '调用了 signal_input_needed 工具',
+    passed: parsed.toolCallsSeen.includes('signal_input_needed'),
+    points: 2,
   };
 }
 

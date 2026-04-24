@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath } from 'node:url'
 
 const srcDir = fileURLToPath(new URL('./src', import.meta.url))
+const scenarioDir = fileURLToPath(new URL('../../scenario', import.meta.url))
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -13,6 +14,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': srcDir,
+      '@scenario': scenarioDir,
     },
   },
 })

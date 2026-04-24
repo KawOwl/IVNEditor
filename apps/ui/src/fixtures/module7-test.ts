@@ -13,12 +13,12 @@
  */
 
 // Vite ?raw imports — 加载原始文本
-import gmPromptCh1 from '../../../../scenario/MODULE_7/MODULE7_GM_Prompt_序章第一章_v3_0_refine.md?raw';
-import gmPromptCh2 from '../../../../scenario/MODULE_7/MODULE7_GM_Prompt_第二章_共鸣池_v3_0.md?raw';
-import pcPrompt from '../../../../scenario/MODULE_7/MODULE7_PC_Prompt_v1_0.md?raw';
-import worldTimeline from '../../../../scenario/MODULE_7/世界观——时间线（大事年表）_草案v3.md?raw';
-import resonancePool from '../../../../scenario/MODULE_7/共鸣池（地点C）—— 场景完整设定.md?raw';
-import projectPlan from '../../../../scenario/MODULE_7/MODULE7_项目策划案_v1.1.txt?raw';
+import gmPromptCh1 from '@scenario/MODULE_7/MODULE7_GM_Prompt_序章第一章_v3_0_refine.md?raw';
+import gmPromptCh2 from '@scenario/MODULE_7/MODULE7_GM_Prompt_第二章_共鸣池_v3_0.md?raw';
+import pcPrompt from '@scenario/MODULE_7/MODULE7_PC_Prompt_v1_0.md?raw';
+import worldTimeline from '@scenario/MODULE_7/世界观——时间线（大事年表）_草案v3.md?raw';
+import resonancePool from '@scenario/MODULE_7/共鸣池（地点C）—— 场景完整设定.md?raw';
+import projectPlan from '@scenario/MODULE_7/MODULE7_项目策划案_v1.1.txt?raw';
 
 import type {
   ScriptManifest,
