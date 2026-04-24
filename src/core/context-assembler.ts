@@ -16,12 +16,15 @@ import type { ModelMessage } from 'ai';
 import type {
   PromptSegment,
   FocusState,
+  ProtocolVersion,
+  CharacterAsset,
+  BackgroundAsset,
 } from './types';
 import type { Memory } from './memory/types';
 import type { StateStore } from './state-store';
 import { serializeStateVars } from './state-store';
 import { estimateTokens } from './tokens';
-import { ENGINE_RULES_CONTENT } from './engine-rules';
+import { buildEngineRules } from './engine-rules';
 import { rankSegments, scoreSegment } from './focus';
 
 // ============================================================================
@@ -93,6 +96,22 @@ export interface AssembleOptions {
   focus?: FocusState;
   assemblyOrder?: string[]; // 自定义组装顺序（section ID 列表，含虚拟 section）
   disabledSections?: string[]; // 被禁用的 section ID 列表（不参与组装）
+  /**
+   * 声明式视觉 IR 协议版本。
+   *   - 'v1-tool-call'（缺省）→ 引擎规则输出老 XML-lite `<d>` 格式
+   *   - 'v2-declarative-visual' → 输出 `<dialogue>/<narration>/<background>/<sprite>/<stage>/<scratch>` 嵌套格式
+   */
+  protocolVersion?: ProtocolVersion;
+  /**
+   * 剧本白名单：character IDs + moods。v2 prompt 自动内联到规则里，提醒 LLM 只能
+   * 使用这些 ID；非白名单角色发言要转写到 `<narration>` 旁白（RFC §12.1.1）。
+   * 缺省空数组 → prompt 里显示"（无预置角色）"。
+   */
+  characters?: ReadonlyArray<CharacterAsset>;
+  /**
+   * 剧本白名单：background IDs。v2 prompt 自动内联。
+   */
+  backgrounds?: ReadonlyArray<BackgroundAsset>;
 }
 
 // ============================================================================
@@ -173,6 +192,9 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
     focus,
     assemblyOrder,
     disabledSections,
+    protocolVersion = 'v1-tool-call',
+    characters = [],
+    backgrounds = [],
   } = options;
 
   const availableBudget = tokenBudget - outputReserve;
@@ -268,9 +290,13 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
   }
 
   // Engine rules (can be disabled)
+  //
+  // v2 按 protocolVersion 走不同规则体 + 白名单插值；v1 保留老 ENGINE_RULES_CONTENT
+  // 的输出（buildEngineRules('v1-tool-call') 的字节输出跟 ENGINE_RULES_CONTENT 完全等价）。
   if (!disabledSet.has(VIRTUAL_IDS.RULES)) {
-    sectionContent.set(VIRTUAL_IDS.RULES, ENGINE_RULES_CONTENT);
-    sectionTokens.set(VIRTUAL_IDS.RULES, estimateTokens(ENGINE_RULES_CONTENT));
+    const rulesContent = buildEngineRules({ protocolVersion, characters, backgrounds });
+    sectionContent.set(VIRTUAL_IDS.RULES, rulesContent);
+    sectionTokens.set(VIRTUAL_IDS.RULES, estimateTokens(rulesContent));
   }
 
   // --- 3. Determine assembly order ---

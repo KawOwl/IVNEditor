@@ -136,6 +136,9 @@ export class GameSessionWrapper {
       // parser 选型不跳变
       protocolVersion: base.protocolVersion,
       parserManifest: base.parserManifest,
+      // V.3：prompt 白名单。restore 路径同样透传。
+      characters: base.characters,
+      backgrounds: base.backgrounds,
       ...snapshot,
       // M3: currentScene 从 snapshot 取，defaultScene 从 manifest 取（restore 时用作 fallback）
       defaultScene: base.defaultScene,
@@ -211,6 +214,10 @@ export class GameSessionWrapper {
       // V.2: 声明式视觉 IR 开关 + parser 白名单
       protocolVersion,
       parserManifest,
+      // V.3: prompt 白名单插值用的角色/背景数组。v1 下传了也无害（buildEngineRules 只在 v2 分支读），
+      // 所以直接无条件透传，保持字段语义跟 manifest 一致。
+      characters: manifest.characters,
+      backgrounds: manifest.backgrounds,
       // mem0 adapter 需要 API key —— 从 env 读后注入。没配也没事，只有 provider='mem0' 时 factory 才检查。
       mem0ApiKey: process.env.MEM0_API_KEY,
       persistence: createPlaythroughPersistence(this.playthroughId),

@@ -153,6 +153,15 @@ export interface MemoryConfig {
 // Script Manifest — 剧本清单（IR 的顶层容器）
 // ============================================================================
 
+/**
+ * 视觉 IR 协议版本（RFC-声明式视觉IR_2026-04-24）。
+ *
+ * 历史上定义在 `game-session.ts`，为了让 engine-rules / schemas 等纯类型层
+ * 能引用而不触发到 runtime 模块，V.3 提上来 `types.ts`。
+ * `game-session.ts` 仍 re-export 此类型向后兼容。
+ */
+export type ProtocolVersion = 'v1-tool-call' | 'v2-declarative-visual';
+
 export interface ScriptManifest {
   id: string;
   label: string;
@@ -171,7 +180,7 @@ export interface ScriptManifest {
    * 两种协议的 playthrough 共存：session 启动时按此字段分叉 parser，v1 老
    * playthrough 不受影响（RFC §6）。
    */
-  protocolVersion?: 'v1-tool-call' | 'v2-declarative-visual';
+  protocolVersion?: ProtocolVersion;
   // --- 展示字段 ---
   coverImage?: string;            // 封面图 URL
   description?: string;           // 简介

@@ -479,5 +479,15 @@
     "ref": "RFC-声明式视觉IR_2026-04-24.md#§11 Step V.2 + src/core/game-session.ts + server/src/session-manager.ts",
     "verify": "bunx tsc --noEmit（前端）无 error；server bun test 141/141 全绿；frontend bun test src/core 221/221 全绿（含 V.1 的 73 parser v2 测试 + 原 narrative-parser 34 测试 + 其他所有 core 测试）；bun start 启动干净，migration 无 error，Langfuse/DB 连接正常",
     "note": "不改 production/playtest 现有行为：所有存量 ScriptManifest 无 protocolVersion，自动落到 'v1-tool-call'，走原 parser + scenePatchEmitter 路径。V.3（编辑器把剧本标记为 v2）之前，玩家/编辑器都看不出差异。实现决策：(1) parserManifest 仅 v2 path 计算（v1 不算浪费）；(2) v2 path scenePatchEmitter = null 而不是包装 noop，让 change_scene 等 v1 tool 若误被调用时 nullref 崩而非静默（但 v2 也不会注册那些 tool）；(3) scratch 原文保留在 currentNarrativeBuffer 走 onTextChunk 自然入持久化 + 下一轮 assistant 历史，不做特殊路由；(4) restore 路径手动带 protocolVersion/parserManifest 沿用 2026-04-24 FIX 的教训注释"
+  },
+  {
+    "id": "V.3",
+    "title": "声明式视觉 IR：System prompt v2 + few-shot + 白名单插值",
+    "description": "RFC Step V.3 落地：engine-rules.ts 重写为 buildEngineRules({protocolVersion,characters,backgrounds}) 工厂。拆三段（RULES_PROLOGUE / NARRATIVE_FORMAT_V1 | buildNarrativeFormatV2 / RULES_EPILOGUE），v1/v2 共享 prologue + epilogue 字节一致保 prompt cache 命中。v2 prompt 覆盖：顶层三容器（dialogue/narration/scratch）用法、视觉子标签（background/sprite/stage）、四条继承规则、manifest 白名单从 characters/backgrounds 动态插值（empty hint 兜底）、硬性条款'非白名单角色转写到 <narration>'（RFC §12.1.1 Shape C 补丁）、禁用 change_scene/change_sprite/clear_stage 工具、输出预算救场、8 单元 few-shot 示例。AssembleOptions 扩三字段（protocolVersion/characters/backgrounds），context-assembler 把 VIRTUAL_IDS.RULES 从静态 ENGINE_RULES_CONTENT 改成 buildEngineRules(...)。GameSessionConfig/RestoreConfig 增 characters/backgrounds 并透到 assembleContext。server/session-manager.ts buildConfig + restoreConfig 从 manifest.characters/backgrounds 透传。PromptPreviewPanel/EditorPage 新增 protocolVersion/characters/backgrounds props，editor 保存/加载时 round-trip manifest.protocolVersion。ProtocolVersion 类型从 game-session.ts 挪到 types.ts（纯类型层可 import）。ENGINE_RULES_CONTENT 导出保留为 buildEngineRules('v1-tool-call') 的 alias，v1 字节回归测试兜底 prompt cache 不破。",
+    "status": "done",
+    "type": "e2e",
+    "ref": "RFC-声明式视觉IR_2026-04-24.md#§11 Step V.3 + src/core/engine-rules.ts",
+    "verify": "bunx tsc --noEmit 前端无 error；bun test src/core 233/233 全绿（新增 12 个 engine-rules 测试：v1 字节回归 + v1/v2 共享 prologue 前缀一致 + 空/非空/ghost character 白名单插值 + NPC 转写硬性规则 + 禁用 v1 工具规则 + scratch 解释 + 继承规则四条 + 白名单变化非 no-op）；cd server && bun test 141/141 全绿；cd server && bun start 启动干净 migration + Langfuse/DB 连接 + 监听 3001",
+    "note": "实现决策：(1) ProtocolVersion 类型挪 types.ts 而非 engine-rules 独立定义，避免 engine-rules 导入 runtime game-session 模块的循环；(2) 白名单用 ReadonlyArray<{id, sprites}> 的结构化入参而非直接吃 ParserManifest（Set/Map），因为 prompt 需要保序（Set 迭代顺序弱）；(3) ENGINE_RULES_CONTENT 保留作 buildEngineRules('v1-tool-call') 的 frozen alias，AI 改写等 legacy 消费者不用迁；(4) v2 prompt 的共享 prologue 用前 500 字符做前缀比对（test），保证 cache-friendly；(5) EditorPage 新增 protocolVersion state 从 manifest 回填 + 保存时只在非 v1 时写入 manifest（保持老剧本干净）；(6) 不加 UI toggle 让编剧手切 v2 —— v2 自我成熟后再在 M2 UI 里加；目前 v2 剧本只能通过 MCP/手工创建 manifest 走进。Follow-up：protocolVersion 切 v2 的编辑器 UI 入口、v2 下禁止编辑老 change_scene 等工具段、prompt preview 上显示白名单源头指引"
   }
 ]

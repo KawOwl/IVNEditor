@@ -1,12 +1,24 @@
 # 项目进度
 
 ## 当前状态
-声明式视觉 IR Step V.2 session 层接线完成并过绿。frontend tsc 0 error，server tests 141/141 + frontend core tests 221/221 全绿，bun start 正常。manifest.protocolVersion 缺省 'v1-tool-call' —— 存量剧本零行为变化；V.3（编辑器把剧本标记为 v2）之前所有 playthrough 继续走老路径。下一步：本地连 ivn-test 测试再决定 rollout。
+声明式视觉 IR Step V.3（System prompt v2 + few-shot + 白名单插值）完成并过绿。frontend tsc 0 error，frontend core tests 233/233 全绿（含 12 个新增 engine-rules 测试），server tests 141/141 全绿，bun start 启动干净。`buildEngineRules({protocolVersion, characters, backgrounds})` 工厂产出按版本分叉的引擎规则；v2 剧本 prompt 里直接嵌入 manifest 白名单 + 硬性"非白名单 NPC 转写到 `<narration>`"条款（RFC §12.1.1 Shape C 补丁）+ 8 单元 few-shot；v1 字节回归保 prompt cache 不破。存量剧本 protocolVersion 缺省 v1，零行为变化。下一步：本地连 ivn-test 验证后再决定 rollout；V.4（runtime 视觉 patch emission）继续推。
 
 ## 当前任务
-**（空闲）V.2 done。本地连 ivn-test 跑一轮验证后再决定是否 rollout；不 push 远端。**
+**（空闲）V.3 done。本地连 ivn-test 跑一轮验证后再决定是否 rollout；不 push 远端。**
 
 ## 最近完成
+**V.3 System prompt v2 + 白名单插值（2026-04-24）**
+- `src/core/engine-rules.ts` 重写：拆 `RULES_PROLOGUE` / `NARRATIVE_FORMAT_V1` | `buildNarrativeFormatV2(chars,bgs)` / `RULES_EPILOGUE` 三段，导出 `buildEngineRules({protocolVersion, characters, backgrounds})` 工厂。v1/v2 共享 prologue + epilogue **字节级一致**（prompt cache 命中不破）。
+- v2 prompt 覆盖：顶层三容器（`<dialogue>` / `<narration>` / `<scratch>`）语义 + 属性、视觉子标签（`<background/>` / `<sprite/>` / `<stage/>`）、四条视觉继承规则、manifest 白名单动态插值（空数组 → "（剧本未定义任何 X）" 兜底）、RFC §12.1.1 硬性条款**"非白名单角色转写到 `<narration>`"**、禁用 change_scene/change_sprite/clear_stage 工具、输出预算救场、8 单元 few-shot 示例。
+- `src/core/types.ts`：`ProtocolVersion` 类型从 game-session.ts 挪到这里（纯类型层，engine-rules / schemas 可引，不形成 runtime 模块循环）。
+- `src/core/context-assembler.ts`：`AssembleOptions` 扩 `protocolVersion` / `characters` / `backgrounds` 三字段；`VIRTUAL_IDS.RULES` 从静态 `ENGINE_RULES_CONTENT` 改走 `buildEngineRules(...)`。
+- `src/core/game-session.ts`：`GameSessionConfig` / `RestoreConfig` + 类 private 字段增 `characters` / `backgrounds`；`runAssemble` 透传至 `assembleContext`。
+- `server/src/session-manager.ts`：`buildConfig()` + `restoreConfig` 从 `manifest.characters` / `manifest.backgrounds` 直接透传（v1 下也传不影响，prompt 层按版本决定是否读）。
+- `src/ui/editor/PromptPreviewPanel.tsx` + `src/ui/editor/EditorPage.tsx`：新增 `protocolVersion` / `characters` / `backgrounds` props 链路；EditorPage 新增 `protocolVersion` state 从 `manifest.protocolVersion` 回填 + 保存时仅非 v1 写入（保持老剧本 manifest 干净）。
+- `ENGINE_RULES_CONTENT` 导出保留作 `buildEngineRules('v1-tool-call')` 的 alias，编辑器 AI 改写等 legacy 消费者无需迁移。
+- **12 个新单测**（`src/core/__tests__/engine-rules.test.ts`）：v1 字节回归（缺省 / 显式 v1 都等于 `ENGINE_RULES_CONTENT`）、v1 保留老 `<d>` XML-lite 标志、v1/v2 前 500 字符共享前缀、v2 空白名单兜底文案、v2 非空白名单插值 char/mood/bg id、v2 sprites 空的 character 单独兜底、v2 必须含 NPC 转写规则 + 禁用 v1 工具 + `<scratch>` 解释 + 继承规则四条、v2 白名单变化非 no-op（alice vs bob）。
+- 验证：`bunx tsc --noEmit` 前端干净；`bun test src/core` 233/233（老 221 + 12 新）；`cd server && bun test` 141/141；`cd server && bun start` migration + Langfuse/DB 连接 + 监听 3001 全干净。
+
 **V.2 Session 层接线 + 视觉继承（2026-04-24）**
 - `ScriptManifest` 新增可选字段 `protocolVersion: 'v1-tool-call' | 'v2-declarative-visual'`（缺省 v1）
 - `GameSessionConfig` / `RestoreConfig` 增 `protocolVersion` + `parserManifest` 两入参；v2 path 要求同时提供 parserManifest（否则构造期抛）

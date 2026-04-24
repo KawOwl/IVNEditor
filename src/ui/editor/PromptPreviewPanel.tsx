@@ -13,9 +13,15 @@
  */
 
 import { useState, useMemo, useRef, useCallback } from 'react';
-import type { PromptSegment, StateSchema } from '../../core/types';
+import type {
+  PromptSegment,
+  StateSchema,
+  ProtocolVersion,
+  CharacterAsset,
+  BackgroundAsset,
+} from '../../core/types';
 import { estimateTokens } from '../../core/tokens';
-import { ENGINE_RULES_CONTENT } from '../../core/engine-rules';
+import { buildEngineRules } from '../../core/engine-rules';
 import { VIRTUAL_IDS, buildStateSection } from '../../core/context-assembler';
 import { cn } from '../../lib/utils';
 
@@ -36,6 +42,15 @@ export interface PromptPreviewProps {
   disabledSections?: string[];
   /** 禁用状态变更回调 */
   onDisabledChange?: (disabled: string[]) => void;
+  /**
+   * V.3：声明式视觉 IR 协议版本。用于 ENGINE RULES 虚拟 section 的预览 —— v2 要插入
+   * 白名单 + few-shot，预览要和运行时一致。缺省 'v1-tool-call'。
+   */
+  protocolVersion?: ProtocolVersion;
+  /** V.3：角色白名单（插值到 v2 prompt 里） */
+  characters?: ReadonlyArray<CharacterAsset>;
+  /** V.3：背景白名单（插值到 v2 prompt 里） */
+  backgrounds?: ReadonlyArray<BackgroundAsset>;
 }
 
 interface PreviewSection {
@@ -85,6 +100,9 @@ function buildAllSections(
   segments: PromptSegment[],
   stateSchema: StateSchema,
   initialPrompt?: string,
+  protocolVersion: ProtocolVersion = 'v1-tool-call',
+  characters: ReadonlyArray<CharacterAsset> = [],
+  backgrounds: ReadonlyArray<BackgroundAsset> = [],
 ): PreviewSection[] {
   const vars: Record<string, unknown> = {};
   for (const v of stateSchema.variables) {
@@ -177,14 +195,20 @@ function buildAllSections(
   });
 
   // --- Virtual: ENGINE RULES ---
-  // 从 core/engine-rules 读真源，和运行时 context-assembler 共用同一份文本
+  // 从 core/engine-rules 读真源，和运行时 context-assembler 共用同一份文本。
+  // V.3：按 protocolVersion 分叉；v2 规则体含白名单插值 + few-shot，和运行时一致。
+  const engineRulesContent = buildEngineRules({
+    protocolVersion,
+    characters,
+    backgrounds,
+  });
   sections.push({
     id: VIRTUAL_IDS.RULES,
     label: 'ENGINE RULES (tail reminder)',
     source: '引擎自动生成 · 固定',
     role: 'engine',
-    content: ENGINE_RULES_CONTENT,
-    tokenCount: estimateTokens(ENGINE_RULES_CONTENT),
+    content: engineRulesContent,
+    tokenCount: estimateTokens(engineRulesContent),
     injected: true,
     virtual: true,
     stability: 'stable',
@@ -297,12 +321,22 @@ export function PromptPreviewPanel({
   onOrderChange,
   disabledSections = [],
   onDisabledChange,
+  protocolVersion = 'v1-tool-call',
+  characters,
+  backgrounds,
 }: PromptPreviewProps) {
   const disabledSet = useMemo(() => new Set(disabledSections), [disabledSections]);
 
   const allSections = useMemo(
     () => {
-      const sections = buildAllSections(segments, stateSchema, initialPrompt);
+      const sections = buildAllSections(
+        segments,
+        stateSchema,
+        initialPrompt,
+        protocolVersion,
+        characters,
+        backgrounds,
+      );
       // Mark disabled sections
       for (const sec of sections) {
         if (disabledSet.has(sec.id)) {
@@ -311,7 +345,7 @@ export function PromptPreviewPanel({
       }
       return sections;
     },
-    [segments, stateSchema, initialPrompt, disabledSet],
+    [segments, stateSchema, initialPrompt, disabledSet, protocolVersion, characters, backgrounds],
   );
 
   // Compute effective order

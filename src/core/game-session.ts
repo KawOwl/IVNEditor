@@ -44,15 +44,24 @@ import {
   type DegradeEvent as DegradeEventV2,
 } from './narrative-parser-v2';
 import { serializeMessagesForDebug } from './messages-builder';
-import type { Sentence, ParticipationFrame, SceneState, ScratchBlock } from './types';
+import type {
+  Sentence,
+  ParticipationFrame,
+  SceneState,
+  ScratchBlock,
+  ProtocolVersion,
+} from './types';
 
 /**
  * 视觉 IR 协议版本（RFC-声明式视觉IR_2026-04-24 §6.1）。缺省（undefined）
  * 视为 'v1-tool-call'：老 NarrativeParser + change_scene / change_sprite /
  * clear_stage 工具驱动视觉；新剧本设 'v2-declarative-visual' 用 parser-v2
  * 自己从嵌套 XML 子标签里推导视觉状态，视觉 tools 不启用。
+ *
+ * V.3（2026-04-24）：类型定义挪到 `./types.ts`（engine-rules / schemas 等
+ * 纯类型层需要引用）；此处 re-export 保持向后兼容。
  */
-export type ProtocolVersion = 'v1-tool-call' | 'v2-declarative-visual';
+export type { ProtocolVersion } from './types';
 
 // ============================================================================
 // Types
@@ -472,6 +481,13 @@ export interface RestoreConfig {
   protocolVersion?: ProtocolVersion;
   /** v2 parser 白名单。仅 protocolVersion='v2-declarative-visual' 时必填。 */
   parserManifest?: ParserManifest;
+  /**
+   * V.3：system prompt 里 `[白名单]` 段需要原始 id 列表（CharacterAsset[]）
+   * 供 `buildEngineRules()` 插入；等价于 ScriptManifest.characters。
+   */
+  characters?: ReadonlyArray<import('./types').CharacterAsset>;
+  /** V.3：同上，等价于 ScriptManifest.backgrounds。 */
+  backgrounds?: ReadonlyArray<import('./types').BackgroundAsset>;
 }
 
 export interface GameSessionConfig {
@@ -509,6 +525,15 @@ export interface GameSessionConfig {
   protocolVersion?: ProtocolVersion;
   /** v2 parser 的白名单表。仅在 protocolVersion='v2-declarative-visual' 时必填。 */
   parserManifest?: ParserManifest;
+  /**
+   * V.3：system prompt 的 `[白名单]` 段展开用 —— 剧本角色 + 立绘（情绪）列表。
+   * 等同于 `ScriptManifest.characters`；v2 下建议提供（空数组仍渲染 emptyHint），
+   * v1 下不读。parserManifest 是相同数据的 Set/Map 形态，prompt 侧要保序所以
+   * 沿用原数组。
+   */
+  characters?: ReadonlyArray<import('./types').CharacterAsset>;
+  /** V.3：`ScriptManifest.backgrounds`，同 `characters`。 */
+  backgrounds?: ReadonlyArray<import('./types').BackgroundAsset>;
 }
 
 // ============================================================================
@@ -599,6 +624,16 @@ export class GameSession {
    * v2 parser 白名单。只在 protocolVersion='v2-declarative-visual' 时使用。
    */
   private parserManifest?: ParserManifest;
+
+  /**
+   * V.3：system prompt 里 `[白名单]` 段展开用。
+   *   - v2 path：`buildEngineRules({ characters, backgrounds })` 插入 id + 情绪列表
+   *   - v1 path：不读；保留为空数组即可
+   * 保留原数组而非 parserManifest（Set/Map）的理由：prompt 输出顺序稳定需要
+   * 原序数组，Set 迭代顺序虽然在实现上也稳定，但语义更弱。
+   */
+  private characters: ReadonlyArray<import('./types').CharacterAsset> = [];
+  private backgrounds: ReadonlyArray<import('./types').BackgroundAsset> = [];
 
   /**
    * M3: applyScenePatch 完成后额外触发——发出 WS 事件 + 产出 scene_change Sentence。
@@ -710,6 +745,8 @@ export class GameSession {
       this.tracing = config.tracing;
       this.protocolVersion = config.protocolVersion ?? 'v1-tool-call';
       this.parserManifest = config.parserManifest;
+      this.characters = config.characters ?? [];
+      this.backgrounds = config.backgrounds ?? [];
       if (this.protocolVersion === 'v2-declarative-visual' && !this.parserManifest) {
         throw new Error(
           '[GameSession] protocolVersion="v2-declarative-visual" 要求同时提供 parserManifest',
@@ -772,6 +809,8 @@ export class GameSession {
       this.tracing = config.tracing;
       this.protocolVersion = config.protocolVersion ?? 'v1-tool-call';
       this.parserManifest = config.parserManifest;
+      this.characters = config.characters ?? [];
+      this.backgrounds = config.backgrounds ?? [];
       if (this.protocolVersion === 'v2-declarative-visual' && !this.parserManifest) {
         throw new Error(
           '[GameSession] restore: protocolVersion="v2-declarative-visual" 要求同时提供 parserManifest',
@@ -966,6 +1005,9 @@ export class GameSession {
             focus,
             assemblyOrder: this.assemblyOrder,
             disabledSections: this.disabledSections,
+            protocolVersion: this.protocolVersion,
+            characters: this.characters,
+            backgrounds: this.backgrounds,
           });
         };
 

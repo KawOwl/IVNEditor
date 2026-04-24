@@ -43,6 +43,7 @@ import type {
   CharacterAsset,
   BackgroundAsset,
   SceneState,
+  ProtocolVersion,
 } from '../../core/types';
 import type { StateVarInfo } from '../../core/editor/completion-sources';
 
@@ -190,6 +191,9 @@ export function EditorPage() {
   const [characters, setCharacters] = useState<CharacterAsset[]>([]);
   const [backgrounds, setBackgrounds] = useState<BackgroundAsset[]>([]);
   const [defaultScene, setDefaultScene] = useState<SceneState | undefined>(undefined);
+  // V.3（RFC 2026-04-24）：声明式视觉 IR 协议版本。缺省 v1，从 manifest 加载时回填；
+  // 目前无 UI toggle（等 v2 bake out），但预览面板按此显示对应的引擎规则。
+  const [protocolVersion, setProtocolVersion] = useState<ProtocolVersion>('v1-tool-call');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -347,6 +351,8 @@ export function EditorPage() {
     setCharacters(manifest.characters ?? []);
     setBackgrounds(manifest.backgrounds ?? []);
     setDefaultScene(manifest.defaultScene);
+    // V.3：回填 protocolVersion，让预览面板显示正确的引擎规则体
+    setProtocolVersion(manifest.protocolVersion ?? 'v1-tool-call');
     setShowScriptLibrary(false);
   }, []);
 
@@ -493,6 +499,8 @@ export function EditorPage() {
         characters: characters.length > 0 ? characters : undefined,
         backgrounds: backgrounds.length > 0 ? backgrounds : undefined,
         defaultScene,
+        // V.3：保留加载时的 protocolVersion；缺省 v1 不写入（和 M2 的空值策略一致）
+        protocolVersion: protocolVersion !== 'v1-tool-call' ? protocolVersion : undefined,
         chapters: [{
           id: 'ch1',
           label: '第一章',
@@ -526,7 +534,7 @@ export function EditorPage() {
     } finally {
       setSaving(false);
     }
-  }, [loadedScriptId, scriptLabel, scriptDescription, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, disabledAssemblySections, productionLlmConfigId, characters, backgrounds, defaultScene, refreshScriptList, refreshVersionList]);
+  }, [loadedScriptId, scriptLabel, scriptDescription, scriptTags, stateSchema, memoryConfig, enabledTools, initialPrompt, documents, promptAssemblyOrder, disabledAssemblySections, productionLlmConfigId, characters, backgrounds, defaultScene, protocolVersion, refreshScriptList, refreshVersionList]);
 
   // --- Delete a script ---
   // DELETE /api/scripts/:id（级联删 versions + playthroughs）
@@ -1353,6 +1361,9 @@ ${doc.content}
                 onOrderChange={setPromptAssemblyOrder}
                 disabledSections={disabledAssemblySections}
                 onDisabledChange={setDisabledAssemblySections}
+                protocolVersion={protocolVersion}
+                characters={characters}
+                backgrounds={backgrounds}
               />
             </div>
             <div className={cn('absolute inset-0 flex flex-col', rightTab !== 'play' && 'hidden')}>
