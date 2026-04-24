@@ -1,12 +1,44 @@
 # 项目进度
 
 ## 当前状态
-声明式视觉 IR Step V.3（System prompt v2 + few-shot + 白名单插值）完成并过绿。frontend tsc 0 error，frontend core tests 233/233 全绿（含 12 个新增 engine-rules 测试），server tests 141/141 全绿，bun start 启动干净。`buildEngineRules({protocolVersion, characters, backgrounds})` 工厂产出按版本分叉的引擎规则；v2 剧本 prompt 里直接嵌入 manifest 白名单 + 硬性"非白名单 NPC 转写到 `<narration>`"条款（RFC §12.1.1 Shape C 补丁）+ 8 单元 few-shot；v1 字节回归保 prompt cache 不破。存量剧本 protocolVersion 缺省 v1，零行为变化。下一步：本地连 ivn-test 验证后再决定 rollout；V.4（runtime 视觉 patch emission）继续推。
+声明式视觉 IR Step V.4 / V.5 / V.6 / V.7 全部完成并过绿。frontend tsc 0 error，frontend core + stores tests 248/248 全绿（新增 7 个 game-store-catchup V.4 测试），server tests 141/141 全绿。v2 声明式 IR 从 system prompt、parser、session 接线、前端消费、续写、tracing、到编辑器协议切换已端到端打通。新建剧本默认走 v2；老剧本载入保持 v1 不迁移。下一步：本地连 ivn-test 跑一轮 E2E 验证后再决定是否 rollout；不 push 远端。
 
 ## 当前任务
-**（空闲）V.3 done。本地连 ivn-test 跑一轮验证后再决定是否 rollout；不 push 远端。**
+**（空闲）V.4-V.7 done。本地连 ivn-test 跑一轮验证（v2 剧本完整一局 + v1 老剧本回归）后再决定是否 rollout；不 push 远端。**
 
 ## 最近完成
+
+**V.7 ScriptInfoPanel 协议版本选择器（2026-04-24）**
+- `ScriptInfoPanel`：基本信息段新增"叙事协议"dropdown，两选项 v2-declarative-visual（默认）/ v1-tool-call（老剧本）；选 v1 时显示黄色提示引导用 v2
+- props 签名扩 `protocolVersion` / `onProtocolVersionChange`；EditorPage 透传现有 state
+- `EditorPage.useState<ProtocolVersion>` 初值由 'v1-tool-call' 改为 'v2-declarative-visual'（新建 / 空编辑器默认）
+- `handleNewScript` 显式 `setProtocolVersion('v2-declarative-visual')` —— 新剧本一律 v2
+- 载入老剧本走 `manifest.protocolVersion ?? 'v1-tool-call'`（V.3 已铺），保存策略保留非 v1 才写入 manifest 不动 —— 老剧本零行为变化
+
+**V.6 Tracing 事件（2026-04-24，复核完成）**
+- 检查 game-session.ts drainBatch 已正确 emit：`scratches` batch 聚合成 `ir-scratch { count, totalChars }` 事件（非 degrade），每条 degrade 独立 emit `ir-degrade:${code}` 事件
+- 验证 server `tracing.ts` event() 方法把这些传进 Langfuse trace.event，事后 UI 可按名称筛选
+- RFC V.6 要求的"parser 暴露 degrade events, game-session 翻译成 tracing tag"完整闭环，V.2 落地时已顺带做掉，此步只做复核 + 文档
+
+**V.5 续写 follow-up（2026-04-24）**
+- `llm-client.ts` 在主 generate 完成、signal_input follow-up 之前插入一段**续写 follow-up 循环**：`finishReason === 'length'` 且非 abort 时最多续写 3 次（`MAX_CONTINUATION_ATTEMPTS`）
+- 每次续写：把累积 `fullText` 作为 assistant message 塞回历史 + 追加"[引擎提示] 你的输出被 token 上限截断，从你停下的位置直接续写，不要重复"的 user nudge；无 toolChoice，允许 LLM 自然续写叙事；text-delta **正常累加进 fullText + 转发给 onTextChunk**（parser 接着消费，让未闭合 tag 正常闭合）；reasoning-delta 同样转发；usage 逐轮合并
+- 续写失败只 warn/log，不冒异常；finishReason='length' 达上限时日志警告并下传给 signal_input follow-up 兜底
+- 原 signal_input follow-up 不变（不转发 text-delta、toolChoice 强制 signal_input_needed）；两套 follow-up 互补：先补叙事缺漏（V.5），再补终结工具（方案 A）
+- finishReason 类型保持 AI SDK `FinishReason`，直接赋值 `nextFinish`（不 String()）
+
+**V.4 前端消费 / 场景派生（2026-04-24）**
+- `src/stores/game-store.ts` `appendSentence` 重写：从 Sentence 派生 `currentScene` + `lastSceneTransition`
+  - `scene_change` → 用 `sentence.scene` + 可选 `sentence.transition`
+  - `narration` / `dialogue` / `signal_input` / `player_input` → 用 `sentence.sceneRef`
+  - 其它分支保留旧值
+  - v2 path（scenePatchEmitter=null）无 mid-session scene-change WS 事件，此处承担 store currentScene 的更新责任
+  - v1 path 下 WS scene-change 仍然跑 setCurrentScene，此处再写同值 → 幂等，老行为零变化
+- VNStageContainer / VNStage 此前已经直接读 `sentence.sceneRef` 做画面，不需改；catch-up / restore 路径自然简化（sentences with sceneRef 重放即把 currentScene 推到最新值）
+- **7 个新单测**（`game-store-catchup.test.ts`）：narration 驱动 currentScene、连续 narration sceneRef 变化跟随、dialogue 派生、scene_change+transition 驱动 lastSceneTransition、scene_change 无 transition 保留既有值、signal_input / player_input 派生、首次 append（vsi=null 分支）也派生
+- 验证：`bunx tsc --noEmit` 干净；`bun test src/core src/stores` 248/248；`cd server && bun test` 141/141
+
+## 之前的里程碑
 **V.3 System prompt v2 + 白名单插值（2026-04-24）**
 - `src/core/engine-rules.ts` 重写：拆 `RULES_PROLOGUE` / `NARRATIVE_FORMAT_V1` | `buildNarrativeFormatV2(chars,bgs)` / `RULES_EPILOGUE` 三段，导出 `buildEngineRules({protocolVersion, characters, backgrounds})` 工厂。v1/v2 共享 prologue + epilogue **字节级一致**（prompt cache 命中不破）。
 - v2 prompt 覆盖：顶层三容器（`<dialogue>` / `<narration>` / `<scratch>`）语义 + 属性、视觉子标签（`<background/>` / `<sprite/>` / `<stage/>`）、四条视觉继承规则、manifest 白名单动态插值（空数组 → "（剧本未定义任何 X）" 兜底）、RFC §12.1.1 硬性条款**"非白名单角色转写到 `<narration>`"**、禁用 change_scene/change_sprite/clear_stage 工具、输出预算救场、8 单元 few-shot 示例。

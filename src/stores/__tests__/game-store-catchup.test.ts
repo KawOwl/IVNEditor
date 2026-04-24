@@ -15,16 +15,16 @@ import type { Sentence, SceneState } from '../../core/types';
 
 const scene: SceneState = { background: null, sprites: [] };
 
-function narration(i: number, text = `s${i}`): Sentence {
-  return { kind: 'narration', text, sceneRef: scene, turnNumber: 0, index: i };
+function narration(i: number, text = `s${i}`, sceneRef: SceneState = scene): Sentence {
+  return { kind: 'narration', text, sceneRef, turnNumber: 0, index: i };
 }
 
-function sceneChange(i: number): Sentence {
-  return { kind: 'scene_change', scene, turnNumber: 0, index: i };
+function sceneChange(i: number, s: SceneState = scene, transition?: 'fade' | 'cut' | 'dissolve'): Sentence {
+  return { kind: 'scene_change', scene: s, transition, turnNumber: 0, index: i };
 }
 
-function signalInput(i: number, hint = 'pick one', choices = ['A', 'B']): Sentence {
-  return { kind: 'signal_input', hint, choices, sceneRef: scene, turnNumber: 0, index: i };
+function signalInput(i: number, hint = 'pick one', choices = ['A', 'B'], sceneRef: SceneState = scene): Sentence {
+  return { kind: 'signal_input', hint, choices, sceneRef, turnNumber: 0, index: i };
 }
 
 describe('game-store · 推进行为（自动前进已关）', () => {
@@ -107,5 +107,100 @@ describe('game-store · 推进行为（自动前进已关）', () => {
     // 玩家点推进：没有更多可读 → 停在 vsi=0（不滑到 length）
     advanceSentence();
     expect(useGameStore.getState().visibleSentenceIndex).toBe(0);
+  });
+});
+
+/**
+ * V.4（RFC §11 V.4 前端消费更新）：appendSentence 从 Sentence 派生 currentScene。
+ *
+ * v2 声明式 IR 下 scenePatchEmitter=null，不再 emit mid-session scene-change WS。
+ * 所以 store 的 currentScene 必须靠 Sentence 自己带的 sceneRef 推起来。
+ * 这套 test 覆盖：narration / dialogue / signal_input / player_input / scene_change
+ * 都能正确让 store.currentScene 对齐 Sentence。
+ */
+describe('game-store · currentScene 从 Sentence 派生（V.4）', () => {
+  beforeEach(() => {
+    useGameStore.getState().reset();
+  });
+
+  const classroom: SceneState = {
+    background: { backgroundId: 'classroom' },
+    sprites: [],
+  };
+  const hallway: SceneState = {
+    background: { backgroundId: 'hallway' },
+    sprites: [],
+  };
+
+  it('narration.sceneRef 驱动 currentScene（v2 无 scene-change WS 路径）', () => {
+    useGameStore.getState().appendSentence(narration(0, 's0', classroom));
+    expect(useGameStore.getState().currentScene).toEqual(classroom);
+  });
+
+  it('连续 narration sceneRef 变化 → currentScene 跟着变', () => {
+    const { appendSentence } = useGameStore.getState();
+    appendSentence(narration(0, 's0', classroom));
+    expect(useGameStore.getState().currentScene).toEqual(classroom);
+
+    appendSentence(narration(1, 's1', hallway));
+    expect(useGameStore.getState().currentScene).toEqual(hallway);
+  });
+
+  it('dialogue.sceneRef 也驱动 currentScene', () => {
+    const dialogueSentence: Sentence = {
+      kind: 'dialogue',
+      text: 'hi',
+      pf: { speaker: 'sakuya' },
+      sceneRef: hallway,
+      turnNumber: 0,
+      index: 0,
+    };
+    useGameStore.getState().appendSentence(dialogueSentence);
+    expect(useGameStore.getState().currentScene).toEqual(hallway);
+  });
+
+  it('scene_change.scene + transition 驱动 currentScene + lastSceneTransition（v1 path）', () => {
+    useGameStore.getState().appendSentence(sceneChange(0, hallway, 'cut'));
+    const s = useGameStore.getState();
+    expect(s.currentScene).toEqual(hallway);
+    expect(s.lastSceneTransition).toBe('cut');
+  });
+
+  it('scene_change 不带 transition → 保留既有 lastSceneTransition', () => {
+    const { appendSentence } = useGameStore.getState();
+    // 先用 scene_change 置 dissolve
+    appendSentence(sceneChange(0, classroom, 'dissolve'));
+    expect(useGameStore.getState().lastSceneTransition).toBe('dissolve');
+    // 再来一个无 transition 的 scene_change → lastSceneTransition 应保持 dissolve
+    appendSentence(sceneChange(1, hallway));
+    expect(useGameStore.getState().lastSceneTransition).toBe('dissolve');
+    expect(useGameStore.getState().currentScene).toEqual(hallway);
+  });
+
+  it('signal_input / player_input.sceneRef 也驱动 currentScene', () => {
+    const { appendSentence } = useGameStore.getState();
+    appendSentence(signalInput(0, 'pick', ['A', 'B'], classroom));
+    expect(useGameStore.getState().currentScene).toEqual(classroom);
+
+    const playerInput: Sentence = {
+      kind: 'player_input',
+      text: 'A',
+      selectedIndex: 0,
+      sceneRef: hallway,
+      turnNumber: 0,
+      index: 1,
+    };
+    appendSentence(playerInput);
+    expect(useGameStore.getState().currentScene).toEqual(hallway);
+  });
+
+  it('首次 append（vsi 初始化分支）也派生 currentScene', () => {
+    // reset 后 currentScene 应为空初值
+    expect(useGameStore.getState().currentScene).toEqual({ background: null, sprites: [] });
+    useGameStore.getState().appendSentence(narration(0, 's0', classroom));
+    // 第一次 append 走 vsi===null 的初始化分支，也要更新 scene
+    const s = useGameStore.getState();
+    expect(s.visibleSentenceIndex).toBe(0);
+    expect(s.currentScene).toEqual(classroom);
   });
 });

@@ -489,5 +489,45 @@
     "ref": "RFC-声明式视觉IR_2026-04-24.md#§11 Step V.3 + src/core/engine-rules.ts",
     "verify": "bunx tsc --noEmit 前端无 error；bun test src/core 233/233 全绿（新增 12 个 engine-rules 测试：v1 字节回归 + v1/v2 共享 prologue 前缀一致 + 空/非空/ghost character 白名单插值 + NPC 转写硬性规则 + 禁用 v1 工具规则 + scratch 解释 + 继承规则四条 + 白名单变化非 no-op）；cd server && bun test 141/141 全绿；cd server && bun start 启动干净 migration + Langfuse/DB 连接 + 监听 3001",
     "note": "实现决策：(1) ProtocolVersion 类型挪 types.ts 而非 engine-rules 独立定义，避免 engine-rules 导入 runtime game-session 模块的循环；(2) 白名单用 ReadonlyArray<{id, sprites}> 的结构化入参而非直接吃 ParserManifest（Set/Map），因为 prompt 需要保序（Set 迭代顺序弱）；(3) ENGINE_RULES_CONTENT 保留作 buildEngineRules('v1-tool-call') 的 frozen alias，AI 改写等 legacy 消费者不用迁；(4) v2 prompt 的共享 prologue 用前 500 字符做前缀比对（test），保证 cache-friendly；(5) EditorPage 新增 protocolVersion state 从 manifest 回填 + 保存时只在非 v1 时写入 manifest（保持老剧本干净）；(6) 不加 UI toggle 让编剧手切 v2 —— v2 自我成熟后再在 M2 UI 里加；目前 v2 剧本只能通过 MCP/手工创建 manifest 走进。Follow-up：protocolVersion 切 v2 的编辑器 UI 入口、v2 下禁止编辑老 change_scene 等工具段、prompt preview 上显示白名单源头指引"
+  },
+  {
+    "id": "V.4",
+    "title": "声明式视觉 IR：前端消费 / 从 Sentence 派生 currentScene",
+    "description": "RFC Step V.4 落地：game-store.appendSentence 重写为从 Sentence 派生 currentScene + lastSceneTransition —— scene_change 用 sentence.scene + sentence.transition；narration/dialogue/signal_input/player_input 用 sentence.sceneRef；其它分支保留旧值。v2 声明式 IR 下 scenePatchEmitter=null 不再发 mid-session scene-change WS，store currentScene 靠 sentence.sceneRef 自动对齐；v1 path 下 WS scene-change 仍然调 setCurrentScene，这里再写同值幂等不影响。VNStageContainer 此前已经直接读 sentence.sceneRef 做画面，不需改，catch-up/restore 路径自然简化：sentences with sceneRef 重放即把 currentScene 推到最新。",
+    "status": "done",
+    "type": "logic",
+    "ref": "RFC-声明式视觉IR_2026-04-24.md#§11 Step V.4 + src/stores/game-store.ts",
+    "verify": "bunx tsc --noEmit 前端干净；bun test src/core src/stores 248/248 全绿（新增 7 个 game-store-catchup 测试：narration 驱动 currentScene、连续 narration sceneRef 变化跟随、dialogue 派生、scene_change+transition 驱动 lastSceneTransition、scene_change 无 transition 保留既有值、signal_input/player_input 派生、首次 append 分支派生）；cd server && bun test 141/141 全绿",
+    "note": "v1 path 下 WS scene-change 和 Sentence 派生都会调用 setCurrentScene，是两条独立但一致的路径（WS 先、Sentence 后，都设同一个值）；未来如果移除 WS scene-change（全部剧本切到 v2），appendSentence 分支就是唯一入口。Follow-up（潜在）：新对象引用每次都触发 re-render，尚未做 shallow equal 短路；当前 VNStage 只在 sentence===null 时才读 store.currentScene，所以实际 re-render 压力很小，暂不优化。"
+  },
+  {
+    "id": "V.5",
+    "title": "声明式视觉 IR：续写机制扩展（finishReason='length' + truncated）",
+    "description": "RFC Step V.5 落地：llm-client.ts 主 generate 完成后、signal_input follow-up 之前插入一段续写 follow-up 循环（最多 MAX_CONTINUATION_ATTEMPTS=3 次）。触发条件：finishReason==='length' 且非 abort。每轮把累积 fullText 作为 assistant message 塞回历史 + 追加 '[引擎提示] 你的输出被 token 上限截断，从你停下的位置直接续写'，无 toolChoice 让 LLM 自然续写；text-delta 正常累加进 fullText + 转发 onTextChunk（parser 接着消费把未闭合 tag 正常闭合，Sentence.truncated=false）；reasoning-delta 同转发；usage 逐轮合并；finishReason 赋 nextFinish 类型保持 AI SDK FinishReason。续写失败只 warn/log 不冒异常；达上限时日志警告并下传给 signal_input follow-up 兜底。原 signal_input follow-up 完全不变（不转发 text-delta、toolChoice 强制 signal_input_needed）。两套 follow-up 互补：先补叙事缺漏（V.5），再补终结工具（方案 A）。",
+    "status": "done",
+    "type": "logic",
+    "ref": "RFC-声明式视觉IR_2026-04-24.md#§11 Step V.5 + src/core/llm-client.ts",
+    "verify": "bunx tsc --noEmit 前端干净；bun test src/core 233/233 全绿（V.5 纯流程改动不附单测，Vercel AI SDK streamText 层 mock 代价高于收益——实测靠本地 ivn-test + Langfuse 观察 finishReason=length 时续写 segment 数与 narrative 连贯性）；cd server && bun test 141/141 全绿",
+    "note": "不写 unit test 的权衡：(1) AI SDK streamText 要 mock 才能构造 finishReason='length' 的响应流，成本高收益低；(2) 真正要验证的是'续写后的文本能被 parser 正常消费 + Sentence.truncated=false'，这是多层协作的集成结果，单测复现困难；(3) V.5 代码 path 和现有 signal_input follow-up 结构一致（同一套 handler 复用 isFollowupRef），回归风险低。本地连 ivn-test 跑长回合 + Langfuse 查询 continuationAttempts>0 的 trace 是更实际的验证手段。Follow-up：如果线上发现续写出现重复段（LLM 没真'从停下处续写'而是重头），可以在 nudge 里加 tailContext（尾部 1500 字符回忆），和 signal_input follow-up 的 tailContext 同构复用。"
+  },
+  {
+    "id": "V.6",
+    "title": "声明式视觉 IR：Tracing 事件（ir-scratch / ir-degrade:*）",
+    "description": "RFC Step V.6 落地（V.2 时顺手完成，此步复核 + 归档）：parser-v2 每个 batch 输出 scratches + degrades 两类事件；game-session drainBatch 翻译成 traceHandle.event('ir-scratch', {count,totalChars}, {turn}) 和 traceHandle.event('ir-degrade:${code}', d.detail, {turn}) 独立事件。server tracing.ts 的 LangfuseTraceHandle.event() 方法把这些传进 langfuse trace.event，事后 UI 可按事件名筛选高频降级模式。ir-scratch 单独命名（非 degrade）因为按设计是 LLM 合法表达（转移元叙述）。ir-degrade:* code 列表：sprite-unknown-char/mood、sprite-invalid-position、sprite-missing-attr、stage-and-sprite-conflict、bg-unknown-scene、bg-missing-attr、unknown-toplevel-tag、container-truncated、initial-no-background。",
+    "status": "done",
+    "type": "e2e",
+    "ref": "RFC-声明式视觉IR_2026-04-24.md#§11 Step V.6 + src/core/game-session.ts drainBatch + server/src/tracing.ts event()",
+    "verify": "代码复核：game-session.ts 行 1172-1193 正确 emit 两类事件；tracing.ts 行 286-296 正确 forward 给 Langfuse；V.1 parser 73 单测验证 scratches/degrades 输出，V.2 session 接线 141/141 server 测试覆盖 tracing handle path。无独立新单测（已被 V.1 + V.2 测试覆盖）",
+    "note": "RFC V.6 文本说 'tracing tag'，实际落地是 Langfuse trace event（事件名可筛选等价于 tag 语义）。Langfuse UI 按事件名分面过滤即可做 degrade 分布统计。后续如果要加'每 1000 turn ir-degrade:* 总和超 X 就告警'（RFC §10.3 TBD），需要另加 metrics 聚合服务，当前不在范围。"
+  },
+  {
+    "id": "V.7",
+    "title": "声明式视觉 IR：ScriptInfoPanel 协议版本选择器",
+    "description": "RFC Step V.7 落地：ScriptInfoPanel 基本信息段新增'叙事协议'dropdown，两选项：'v2 声明式视觉 IR（推荐，新剧本默认）'和 'v1 XML-lite + 视觉工具调用（老剧本）'；选 v1 时显示琥珀色提示引导用 v2。ScriptInfoPanelProps 扩 protocolVersion + onProtocolVersionChange；EditorPage 透传现有 V.3 遗留的 protocolVersion state + setter。EditorPage.useState<ProtocolVersion> 初值由 'v1-tool-call' 改为 'v2-declarative-visual'（新建 / 空编辑器默认）。handleNewScript 显式 setProtocolVersion('v2-declarative-visual') —— 新剧本一律 v2。载入老剧本走 manifest.protocolVersion ?? 'v1-tool-call'（V.3 已铺），保存策略 protocolVersion !== 'v1-tool-call' ? protocolVersion : undefined 保留（老剧本 manifest 不写入该字段 → 零行为变化）。",
+    "status": "done",
+    "type": "ui",
+    "ref": "RFC-声明式视觉IR_2026-04-24.md#§11 Step V.7 + src/ui/editor/ScriptInfoPanel.tsx + src/ui/editor/EditorPage.tsx",
+    "verify": "bunx tsc --noEmit 前端干净；cd server && bun test 141/141 全绿；bun test src/core src/stores 248/248 全绿。UI 目检：新建剧本 ScriptInfoPanel dropdown 默认显示 v2；选 v1 后看到琥珀色提示；保存后重新载入 roundtrip 一致（v2 剧本 manifest 有 protocolVersion 字段、v1 剧本无该字段）",
+    "note": "老剧本兼容策略：新 state 默认 v2 仅影响'新建'；handleLoadScript 从 manifest.protocolVersion ?? 'v1-tool-call' 回填，老剧本依旧以 v1 呈现。保存策略不改：v1 剧本 manifest 保持无 protocolVersion 字段（兼容 M2 空值策略）。Follow-up：v2 下禁止编辑 change_scene/change_sprite/clear_stage 相关工具开关（当前 ScriptInfoPanel 工具列表无保护）；协议版本切换时 prompt preview 实时反映（V.3 的 buildAllSections 已接入 protocolVersion 参数，自动生效）。"
   }
 ]

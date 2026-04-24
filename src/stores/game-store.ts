@@ -190,6 +190,13 @@ export const useGameStore = create<GameState>((set) => ({
   //   决定：关掉自动追赶，新 Sentence 到达后 hasMore 指示（▼）会闪，玩家手动点击推进。
   //   保留字段 + 所有 re-arm 逻辑不变，以便未来开回来。
   //   见 .claude/plans/vn-catch-up.md
+  //
+  // 2026-04-24（RFC §11 V.4）：从 Sentence 派生 currentScene。
+  //   v2 声明式 IR 下，视觉状态随 Sentence.sceneRef 走，不再 emit mid-session scene-change WS。
+  //   所以 appendSentence 需要承担"更新 store.currentScene"的责任，让 catch-up / restore
+  //   路径下 store 的场景状态始终跟最新 Sentence 对齐。
+  //   v1 path 下 scene-change WS 仍然会独立 setCurrentScene 一次，此处再设同一个值 → 幂等，
+  //   所以 v1 行为不变。
   appendSentence: (sentence) =>
     set((state) => {
       const prev = state.parsedSentences;
@@ -201,17 +208,47 @@ export const useGameStore = create<GameState>((set) => ({
       //   signal_input  选项事件（live 下由 choices 面板承担交互，backlog 下仅回看）
       const isSkippable = (s: Sentence) => s.kind === 'scene_change' || s.kind === 'signal_input';
 
+      // V.4：从 Sentence 派生 currentScene / lastSceneTransition
+      //   - scene_change（v1 独有）：用 sentence.scene + sentence.transition
+      //   - narration / dialogue / signal_input / player_input：sentence.sceneRef 就是当前场景
+      //   - 其它分支（理论上不存在）：保留旧值
+      let nextScene = state.currentScene;
+      let nextTransition = state.lastSceneTransition;
+      if (sentence.kind === 'scene_change') {
+        nextScene = sentence.scene;
+        if (sentence.transition) nextTransition = sentence.transition;
+      } else if (
+        sentence.kind === 'narration' ||
+        sentence.kind === 'dialogue' ||
+        sentence.kind === 'signal_input' ||
+        sentence.kind === 'player_input'
+      ) {
+        nextScene = sentence.sceneRef;
+      }
+
       // 游标初始化：首次追加时从 null → 找第一个非跳过型的位置。
       // 这是不可避免的"第一次自动前进"—— 否则玩家永远看不到开头。
       if (vsi === null) {
         const firstReadable = next.findIndex((s) => !isSkippable(s));
         vsi = firstReadable >= 0 ? firstReadable : null;
-        return { parsedSentences: next, visibleSentenceIndex: vsi, catchUpPending: false };
+        return {
+          parsedSentences: next,
+          visibleSentenceIndex: vsi,
+          catchUpPending: false,
+          currentScene: nextScene,
+          lastSceneTransition: nextTransition,
+        };
       }
 
       // 关掉 catch-up：无论 pending 状态、玩家是否在末端，新 Sentence 到达不自动推进。
       // 仅追加 Sentence，游标不动。玩家通过点击 / 空格 / DialogBox 的 ▼ 提示手动推进。
-      return { parsedSentences: next, visibleSentenceIndex: vsi, catchUpPending: state.catchUpPending };
+      return {
+        parsedSentences: next,
+        visibleSentenceIndex: vsi,
+        catchUpPending: state.catchUpPending,
+        currentScene: nextScene,
+        lastSceneTransition: nextTransition,
+      };
     }),
 
   setCurrentScene: (scene, transition) =>

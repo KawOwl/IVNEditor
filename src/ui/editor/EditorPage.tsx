@@ -193,7 +193,10 @@ export function EditorPage() {
   const [defaultScene, setDefaultScene] = useState<SceneState | undefined>(undefined);
   // V.3（RFC 2026-04-24）：声明式视觉 IR 协议版本。缺省 v1，从 manifest 加载时回填；
   // 目前无 UI toggle（等 v2 bake out），但预览面板按此显示对应的引擎规则。
-  const [protocolVersion, setProtocolVersion] = useState<ProtocolVersion>('v1-tool-call');
+  // V.7：新建 / 空编辑器默认用 v2 声明式 IR。
+  // 载入老 script 时 handleLoadScript 会用 manifest.protocolVersion ?? 'v1-tool-call' 覆盖，
+  // 所以老剧本仍保持 v1（不触发自动迁移）。
+  const [protocolVersion, setProtocolVersion] = useState<ProtocolVersion>('v2-declarative-visual');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -702,6 +705,8 @@ export function EditorPage() {
     setPromptAssemblyOrder(undefined);
     setDisabledAssemblySections([]);
     setProductionLlmConfigId(null);
+    // V.7：新建剧本默认 v2 声明式 IR
+    setProtocolVersion('v2-declarative-visual');
     setShowScriptLibrary(false);
   }, []);
 
@@ -1408,6 +1413,7 @@ ${doc.content}
                 enabledTools={enabledTools}
                 initialPrompt={initialPrompt}
                 productionLlmConfigId={productionLlmConfigId}
+                protocolVersion={protocolVersion}
                 characters={characters}
                 backgrounds={backgrounds}
                 defaultScene={defaultScene}
@@ -1420,6 +1426,7 @@ ${doc.content}
                 onEnabledToolsChange={setEnabledTools}
                 onInitialPromptChange={setInitialPrompt}
                 onProductionLlmConfigIdChange={setProductionLlmConfigId}
+                onProtocolVersionChange={setProtocolVersion}
                 onCharactersChange={setCharacters}
                 onBackgroundsChange={setBackgrounds}
                 onDefaultSceneChange={setDefaultScene}

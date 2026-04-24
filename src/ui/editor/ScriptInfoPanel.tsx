@@ -15,6 +15,7 @@ import type {
   SceneState,
   SpriteState,
   SpriteAsset,
+  ProtocolVersion,
 } from '../../core/types';
 import { listTools } from '../../core/tool-catalog';
 import { useLLMConfigsStore } from '../../stores/llm-configs-store';
@@ -39,6 +40,13 @@ export interface ScriptInfoPanelProps {
   initialPrompt: string;
   /** v2.7：剧本 production 使用的 LLM 配置 id。null = 未设置，走 fallback 链 */
   productionLlmConfigId: string | null;
+  /**
+   * RFC §11 V.7：叙事协议版本。
+   *   - 'v1-tool-call'         老 XML-lite `<d>` + change_scene/change_sprite/clear_stage 工具
+   *   - 'v2-declarative-visual' 声明式嵌套 XML IR（`<dialogue>/<narration>/<scratch>` + `<background/>/<sprite/>/<stage/>`）
+   * 新建剧本默认 v2；载入老剧本保持 v1（不触发自动迁移）。
+   */
+  protocolVersion: ProtocolVersion;
   // M2：VN 视觉资产
   characters: CharacterAsset[];
   backgrounds: BackgroundAsset[];
@@ -53,6 +61,7 @@ export interface ScriptInfoPanelProps {
   onEnabledToolsChange: (tools: string[]) => void;
   onInitialPromptChange: (prompt: string) => void;
   onProductionLlmConfigIdChange: (id: string | null) => void;
+  onProtocolVersionChange: (version: ProtocolVersion) => void;
   onCharactersChange: (characters: CharacterAsset[]) => void;
   onBackgroundsChange: (backgrounds: BackgroundAsset[]) => void;
   onDefaultSceneChange: (scene: SceneState | undefined) => void;
@@ -79,6 +88,7 @@ export function ScriptInfoPanel({
   enabledTools,
   initialPrompt,
   productionLlmConfigId,
+  protocolVersion,
   characters,
   backgrounds,
   defaultScene,
@@ -91,6 +101,7 @@ export function ScriptInfoPanel({
   onEnabledToolsChange,
   onInitialPromptChange,
   onProductionLlmConfigIdChange,
+  onProtocolVersionChange,
   onCharactersChange,
   onBackgroundsChange,
   onDefaultSceneChange,
@@ -145,6 +156,28 @@ export function ScriptInfoPanel({
               ))}
             </select>
           </Field>
+          {/* RFC §11 V.7：叙事协议版本选择。新建剧本默认 v2；老剧本载入保持 v1 */}
+          <Field label="叙事协议">
+            <select
+              value={protocolVersion}
+              onChange={(e) =>
+                onProtocolVersionChange(e.target.value as ProtocolVersion)
+              }
+              className={inputClass}
+            >
+              <option value="v2-declarative-visual">
+                v2 声明式视觉 IR（推荐，新剧本默认）
+              </option>
+              <option value="v1-tool-call">
+                v1 XML-lite + 视觉工具调用（老剧本）
+              </option>
+            </select>
+          </Field>
+          {protocolVersion === 'v1-tool-call' && (
+            <div className="text-[11px] text-amber-500/80 pl-[5.5rem]">
+              ⓘ v1 走老的 {'<d>'} + change_scene/change_sprite/clear_stage 工具路径。新剧本建议用 v2。
+            </div>
+          )}
         </Section>
 
         {/* Tags */}

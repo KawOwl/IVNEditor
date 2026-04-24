@@ -559,6 +559,122 @@ export class LLMClient {
       // 某些 provider 不返回 usage，静默忽略
     }
 
+    // ─── 续写 follow-up（RFC §11 V.5，2026-04-24）────────────────────────
+    //
+    // 背景：主 generate finishReason='length' 表示 LLM 输出撞 max_tokens 上
+    // 限被截断。v1 XML-lite 时期 parser 会把未闭合的 `<d>` 降级成 truncated
+    // 标记，v2 声明式 IR 下 parser-v2 同样 finalize() 时用 `container-truncated`
+    // degrade 事件收尾。两种情况玩家都看到"话说到一半被切断"。
+    //
+    // 策略：finishReason='length' 时在正式进入 signal_input 补刀之前，先发一
+    // 次**续写 follow-up**——把已输出的 fullText 作为 assistant message 塞进
+    // 历史，追加一条 "[引擎提示] 你的输出被 token 上限截断。从你停下的位置
+    // 直接续写" 的 user message，让 provider 接着把剩余叙事写完。
+    //
+    // 关键差别（和下面的 signal_input follow-up 不同）：
+    //   - **转发 text-delta**：continuation 的文本也经 onTextChunk 流给 parser，
+    //     parser 接上之前未闭合的 tag 就自然闭合，Sentence.truncated=false。
+    //   - **无 toolChoice**：不强制工具，让 LLM 自由续写叙事。
+    //   - **累加进 fullText / usage**：续写产生的文本也算 main generate 的输出，
+    //     持久化时会保留完整段落。
+    //
+    // Retry 上限：最多 MAX_CONTINUATION_ATTEMPTS 次。连续 length 截断说明单轮
+    // 叙事确实超预算，再续也是烧 token。上限后保持 finishReason='length'，
+    // 让下面的 signal_input follow-up 做最后兜底（至少玩家端看到选项）。
+    const MAX_CONTINUATION_ATTEMPTS = 3;
+    let continuationAttempts = 0;
+    // 保留主 generate 的原始 messages + 系统消息。每次续写都基于它 + 最新 fullText 构造。
+    while (
+      finishReason === 'length' &&
+      !(abortSignal?.aborted ?? false) &&
+      continuationAttempts < MAX_CONTINUATION_ATTEMPTS
+    ) {
+      continuationAttempts += 1;
+      isFollowupRef.current = true;
+      try {
+        const continuationNudge: ModelMessage = {
+          role: 'user',
+          content:
+            '[引擎提示] 你的上一条输出被 token 上限截断。从你停下的位置**直接续写**，' +
+            '不要重复已经输出过的内容，不要加任何前缀说明或致歉。' +
+            '如果当前段落已完整收尾，直接调用 signal_input_needed 结束本轮。',
+        };
+        const continuationHistory: ModelMessage[] = [
+          ...messages,
+          // 把当前 fullText 作为 assistant 的 partial output 塞回历史。
+          { role: 'assistant', content: fullText },
+          continuationNudge,
+        ];
+        const continuationStream = streamText({
+          model: this.getModel(),
+          system: systemPrompt,
+          messages: continuationHistory,
+          tools: aiTools,
+          stopWhen: [
+            stepCountIs(maxSteps),
+            hasToolCall('signal_input_needed'),
+            hasToolCall('end_scenario'),
+          ],
+          maxOutputTokens,
+          abortSignal,
+          ...(providerOptions ? { providerOptions } : {}),
+          experimental_onStepStart: handleStepStart,
+          experimental_onToolCallStart: handleToolCallStart,
+          experimental_onToolCallFinish: handleToolCallFinish,
+          onStepFinish: handleStepFinish,
+        });
+
+        // 续写流：text-delta 正常累加 + 转发，让 parser 接着消费，
+        // reasoning-delta 同样转发（continuation 产出的 reasoning 也是有效上下文）。
+        for await (const part of continuationStream.fullStream) {
+          if (part.type === 'text-delta') {
+            fullText += part.text;
+            onTextChunk?.(part.text);
+          } else if (part.type === 'reasoning-delta') {
+            fullReasoning += part.text;
+            onReasoningChunk?.(part.text);
+          }
+        }
+
+        const continuationFinal = await continuationStream;
+        const nextFinish = await continuationFinal.finishReason;
+
+        // 合并 usage
+        try {
+          const cu = await continuationFinal.usage;
+          if (cu) {
+            usage = {
+              inputTokens: (usage?.inputTokens ?? 0) + (cu.inputTokens ?? 0),
+              outputTokens: (usage?.outputTokens ?? 0) + (cu.outputTokens ?? 0),
+              totalTokens: (usage?.totalTokens ?? 0) + (cu.totalTokens ?? 0),
+            };
+          }
+        } catch {
+          // 某些 provider 不返回 usage，静默忽略
+        }
+
+        finishReason = nextFinish;
+        // 下次循环再判：若仍是 'length'，再续一次；否则跳出。
+      } catch (err) {
+        console.error(
+          `[llm-client] continuation attempt ${continuationAttempts} threw:`,
+          err,
+        );
+        // 续写失败不冒异常：保持上一次的 finishReason，让外层兜底。
+        break;
+      } finally {
+        isFollowupRef.current = false;
+      }
+    }
+
+    if (finishReason === 'length' && continuationAttempts > 0) {
+      console.warn(
+        `[llm-client] continuation reached MAX_CONTINUATION_ATTEMPTS` +
+          ` (${MAX_CONTINUATION_ATTEMPTS}) without escaping finishReason='length'.` +
+          ` Proceeding to signal_input follow-up; parser will mark tail as truncated.`,
+      );
+    }
+
     // ─── post-step 补刀（方案 A，2026-04-24） ───────────────────────────────
     //
     // 背景：主 generate 结束时如果 LLM 没有调用 signal_input_needed /
