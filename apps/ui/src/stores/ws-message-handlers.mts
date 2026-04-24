@@ -13,6 +13,12 @@ export interface WSMessage {
 type GetGameStore = () => GameState;
 type SessionStatus = GameState['status'];
 type SpritePosition = NonNullable<SceneState['sprites'][number]['position']>;
+type SessionMessageHandler = (msg: WSMessage, context: SessionMessageContext) => void;
+
+interface SessionMessageContext {
+  store: GetGameStore;
+  baseUrl: string;
+}
 
 interface EntryRow {
   role: string;
@@ -42,79 +48,28 @@ const SESSION_STATUSES = new Set<SessionStatus>([
 
 const SPRITE_POSITIONS = new Set<SpritePosition>(['left', 'center', 'right']);
 
+const SESSION_MESSAGE_HANDLERS: Record<string, SessionMessageHandler> = {
+  reset: handleResetMessage,
+  status: handleStatusMessage,
+  error: handleErrorMessage,
+  'begin-streaming': handleBeginStreamingMessage,
+  'text-chunk': handleTextChunkMessage,
+  'reasoning-chunk': handleReasoningChunkMessage,
+  restored: handleRestoredMessage,
+  'tool-call': handleToolCallMessage,
+  'input-hint': handleInputHintMessage,
+  'input-type': handleInputTypeMessage,
+  'update-debug': handleUpdateDebugMessage,
+  sentence: handleSentenceMessage,
+  'scene-change': handleSceneChangeMessage,
+};
+
 export function handleSessionMessage(
   msg: WSMessage,
   store: GetGameStore,
   baseUrl: string,
 ): void {
-  switch (msg.type) {
-    case 'reset':
-      resetServerNarrativeState(store);
-      break;
-
-    case 'status':
-      applyStatus(msg.status, store);
-      break;
-
-    case 'error':
-      store().setError(readNullableString(msg.error));
-      break;
-
-    case 'begin-streaming':
-      useRawStreamingStore.getState().beginNew();
-      break;
-
-    case 'text-chunk':
-      useRawStreamingStore.getState().append(readString(msg.text) ?? '');
-      break;
-
-    case 'reasoning-chunk':
-      useRawStreamingStore.getState().appendReasoning(readString(msg.text) ?? '');
-      break;
-
-    case 'finalize':
-    case 'entry':
-    case 'pending-tool-call':
-    case 'tool-result':
-    case 'pending-tool-result':
-    case 'stage-pending-debug':
-      break;
-
-    case 'restored':
-      restoreSessionSnapshot(msg, store, baseUrl);
-      break;
-
-    case 'tool-call':
-      store().addToolCall({
-        name: readString(msg.name) ?? 'unknown',
-        args: readRecord(msg.args) ?? {},
-        result: undefined,
-      });
-      break;
-
-    case 'input-hint':
-      store().setInputHint(readNullableString(msg.hint));
-      break;
-
-    case 'input-type':
-      applyInputType(msg, store);
-      break;
-
-    case 'update-debug':
-      store().updateDebug(msg as Parameters<GameState['updateDebug']>[0]);
-      break;
-
-    case 'sentence':
-      store().appendSentence(msg.sentence as Sentence);
-      break;
-
-    case 'scene-change':
-      store().setCurrentScene(
-        readSceneState(msg.scene) ?? DEFAULT_SCENE,
-        readTransition(msg.transition),
-      );
-      break;
-  }
+  SESSION_MESSAGE_HANDLERS[msg.type]?.(msg, { store, baseUrl });
 }
 
 function resetServerNarrativeState(store: GetGameStore): void {
@@ -123,6 +78,61 @@ function resetServerNarrativeState(store: GetGameStore): void {
   state.setError(null);
   state.setInputHint(null);
   state.setInputType('freetext', null);
+}
+
+function handleResetMessage(_msg: WSMessage, { store }: SessionMessageContext): void {
+  resetServerNarrativeState(store);
+}
+
+function handleStatusMessage(msg: WSMessage, { store }: SessionMessageContext): void {
+  applyStatus(msg.status, store);
+}
+
+function handleErrorMessage(msg: WSMessage, { store }: SessionMessageContext): void {
+  store().setError(readNullableString(msg.error));
+}
+
+function handleBeginStreamingMessage(): void {
+  useRawStreamingStore.getState().beginNew();
+}
+
+function handleTextChunkMessage(msg: WSMessage): void {
+  useRawStreamingStore.getState().append(readString(msg.text) ?? '');
+}
+
+function handleReasoningChunkMessage(msg: WSMessage): void {
+  useRawStreamingStore.getState().appendReasoning(readString(msg.text) ?? '');
+}
+
+function handleRestoredMessage(
+  msg: WSMessage,
+  { store, baseUrl }: SessionMessageContext,
+): void {
+  restoreSessionSnapshot(msg, store, baseUrl);
+}
+
+function handleToolCallMessage(msg: WSMessage, { store }: SessionMessageContext): void {
+  appendToolCall(msg, store);
+}
+
+function handleInputHintMessage(msg: WSMessage, { store }: SessionMessageContext): void {
+  store().setInputHint(readNullableString(msg.hint));
+}
+
+function handleInputTypeMessage(msg: WSMessage, { store }: SessionMessageContext): void {
+  applyInputType(msg, store);
+}
+
+function handleUpdateDebugMessage(msg: WSMessage, { store }: SessionMessageContext): void {
+  store().updateDebug(msg as Parameters<GameState['updateDebug']>[0]);
+}
+
+function handleSentenceMessage(msg: WSMessage, { store }: SessionMessageContext): void {
+  store().appendSentence(msg.sentence as Sentence);
+}
+
+function handleSceneChangeMessage(msg: WSMessage, { store }: SessionMessageContext): void {
+  applySceneChange(msg, store);
 }
 
 function restoreSessionSnapshot(
@@ -190,6 +200,21 @@ function applyInputType(msg: WSMessage, store: GetGameStore): void {
 function applyStatus(value: unknown, store: GetGameStore): void {
   const status = readStatus(value);
   if (status) store().setStatus(status);
+}
+
+function appendToolCall(msg: WSMessage, store: GetGameStore): void {
+  store().addToolCall({
+    name: readString(msg.name) ?? 'unknown',
+    args: readRecord(msg.args) ?? {},
+    result: undefined,
+  });
+}
+
+function applySceneChange(msg: WSMessage, store: GetGameStore): void {
+  store().setCurrentScene(
+    readSceneState(msg.scene) ?? DEFAULT_SCENE,
+    readTransition(msg.transition),
+  );
 }
 
 function replayEntries(
