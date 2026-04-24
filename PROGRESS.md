@@ -1,7 +1,25 @@
 # 项目进度
 
 ## 当前状态
-v29 打包三个 bug 修复，tsc + 141/141 server tests 已绿，等 rollout。
+声明式视觉 IR Step V.1 parser 重写完成并过绿。73 v2 单测 + v1 34 单测全绿，tsc 0 error。下一步 V.2：把 v2 parser 接线到 game-session，产出 ScratchBlock 进 tracing + 下一轮 messages（in-context 强化）。
+
+## 当前任务
+**（空闲）等待用户指派下一步。候选：V.2 game-session wiring；或其他 feature_list 中 pending 条目。**
+
+## 最近完成
+**V.1 parser 重写（2026-04-24）**
+- RFC 收尾：§2 加原则 #6 #7、§3.1 加 `<scratch>`、§7 加 scratch 出口 + few-shot、§10.1 加 ir-scratch、§11 V.1 加 FP 约束
+- 新目录 `src/core/narrative-parser-v2/` 5 个文件：tag-schema（声明式 schema 表）→ state（纯数据 + 栈助手）→ inheritance（纯函数视觉推导）→ reducer（`(state, event) → { state, outputs }`）→ index（htmlparser2 组合层 + `buildParserManifest` helper）
+- Sentence 扩展可选 bgChanged/spritesChanged/truncated；新类型 ScratchBlock（text/turnNumber/index）
+- 73 单测：inheritance 12 + reducer 30 + parser 31（含 chunk size 1/2/3/5/7/13/50/1000 参数化测试 chunk 边界重组）
+- v1 parser 34 测试保留不动，并存设计零改 game-session
+- 实现期修 bug：finalize 必须先 dispatch `finalize` event、再 htmlParser.end()。反序会让 htmlparser2 合成 closetag 先 pop 栈，丢失 truncated 标记。
+
+---
+
+## 已完成的里程碑
+
+### v29 三 bug 合修 rollout（2026-04-24）
 
 - **Bug A**（读档后前端 history 乱）：`recordPendingSignal` 在写 signal_input 之前
   先把 `currentNarrativeBuffer` flush 到 memory + DB。narrative_entries 的
@@ -19,23 +37,7 @@ v29 打包三个 bug 修复，tsc + 141/141 server tests 已绿，等 rollout。
 - **Bonus**：`tracing.recordStep` 加 `isFollowup` metadata + Langfuse generation
   name 加 `-followup` 后缀，事后按这个维度筛 trace 直接可用。
 
-代码改动文件：
-- `src/core/llm-client.ts`（+ onStepStart 回调）
-- `src/core/game-session.ts`（wire onStepStart、currentTurn 字段、recordPendingSignal pre-flush narrative）
-- `server/src/services/playthrough-service.ts`（+ countEntries 方法）
-- `server/src/routes/playthroughs.ts`（+ GET /:id/entries 端点）
-- `src/stores/ws-client-emitter.ts`（restored handler 加 fetchMore 循环）
-- `server/src/tracing.ts`（+ isFollowup metadata & name 后缀）
-
-## 当前任务
-**v29 rollout**
-- 类型：bug fix 打包 + 部署
-- 来源：用户指令 "一次性把三个一起修，Bug C用：B. 客户端分页方案。统一打 v29 rollout。"
-- 目标：commit → push → build v29 image → kubectl set image → 验证
-- 进展：代码改完 ✓；tsc（前端 + 后端） ✓；server tests 141/141 ✓；server 启动 smoke ✓；
-  待：commit、`ops/k3s-pressuretest/build-and-push.sh v29`、`kubectl set image`
-
-## 已完成的里程碑
+代码改动文件：llm-client.ts（+onStepStart）、game-session.ts（wire + currentTurn + pre-flush）、playthrough-service.ts（+countEntries）、playthroughs.ts route（+GET entries 分页）、ws-client-emitter.ts（+fetchMore loop）、tracing.ts（+isFollowup 字段）。
 
 ### M4：资产上传 pipeline（2026-04-21）
 - **后端** (commit feat(m4a))
@@ -144,6 +146,9 @@ v29 打包三个 bug 修复，tsc + 141/141 server tests 已绿，等 rollout。
 | 2026-04-21 | M1 choices 与对话并存时允许 advance | 玩家可能还没读完就触发了 signal_input_needed，应该能继续点看完再选 | click-to-advance 不因 isWaitingChoice 阻塞；advance 到末尾自然 no-op |
 | 2026-04-21 | M2 不处理文件上传 | M4 专门做 OSS pipeline；M2 只存 id + label，assetUrl 留空 | SceneBackground / SpriteLayer 对空 URL 已有占位渲染，M4 填 URL 后无需改 UI |
 | 2026-04-24 | signal_input_needed 空停改为 llm-client post-step 补刀，不动 prompt 也不挪到 game-session | 主 generate 漏叫是 provider 级问题（prompt 已足够明确），解决要走协议级 toolChoice；放在 llm-client 让主 / 补刀共享 callbacks + closure，调用方无感 | StepInfo 加 isFollowup 字段；game-session onStep 回调的 currentStepBatchId 更新门控 !step.isFollowup；narrative + signal_input 共享 batchId 反而比多步主生成时更整洁 |
+| 2026-04-24 | 声明式视觉 IR 采用嵌套 XML 子标签（`<dialogue>`/`<narration>` + 子 `<background/>`/`<sprite/>`/`<stage/>`），替代 change_scene/change_sprite/clear_stage 工具；manifest 加 protocolVersion="v2"，v1/v2 并存 | N=30 实测方案 B（紧凑 DSL）四项通过率只有 63%，Shape C 30%；方案 C（嵌套 XML 全名）87% / Shape C 70%，且 mc-as-sprite / `?` 占位符 / DSL 语法错全部归零。XML 贴近 LLM 训练分布 + Anthropic 官方推荐 + TEI/articy prior art 同构 | RFC-声明式视觉IR_2026-04-24.md；新 Sentence 字段 bg/sprites/bgChanged/spritesChanged；视觉状态继承为默认，显式为例外；parser 换 htmlparser2 + FP reducer（§11 Step V.1~V.7） |
+| 2026-04-24 | 新增 `<scratch>` 顶层容器 + §2 设计原则 #6（为"非目标输出"提供合法分类出口，而非 prompt 禁令） | Langfuse trace 显示 LLM 会在叙事里泄漏"让我先读取 state..."等元叙述，污染 `<narration>`；prohibition 经验上服从率低；Anthropic 官方推荐结构化 `<thinking>` 模式（`<scratch>` 避开 DeepSeek-R1 `<think>` 冲突） | `<scratch>` 不产出 Sentence、不渲染、保留给下一轮 messages；tracing 单独事件 `ir-scratch`（非 degrade，用于量化元叙述转移率） |
+| 2026-04-24 | Parser v2 全面采用函数式 / 组合式 / 声明式（§2 原则 #7） | 原 parser.ts 350 行手搓状态机难以扩展新 tag（需同步改 enum + switch + 字段）；声明式 schema + 纯 reducer 让加一个 tag 只需追加一行 schema 条目 | parser 层禁 class、禁顶层可变 let；state/reducer/inheritance/tag-schema 模块化；mutation 仅限 htmlparser2 回调边界 |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |

@@ -411,6 +411,11 @@ export interface ParticipationFrame {
  *
  * truncated 标记：streaming 结束时 parser 末尾降级闭合产生的 dialogue，
  * 说明 LLM 输出被 maxOutputTokens 截断。Langfuse 会记录这种事件。
+ *
+ * v2（声明式视觉 IR，RFC 2026-04-24）起新增可选字段 bgChanged / spritesChanged：
+ *   resolvedScene（= sceneRef）相对前一 Sentence 是否变了背景 / 立绘栈。
+ *   v1 parser 不填；v2 parser 根据继承规则计算。UI / tracing 用这两个 bool
+ *   避免重复比较对象。字段缺省 = 未知 / 沿用旧行为。
  */
 export type Sentence =
   | {
@@ -419,6 +424,9 @@ export type Sentence =
       sceneRef: SceneState;
       turnNumber: number;
       index: number;                   // 在 playthrough 内的全局序号
+      bgChanged?: boolean;
+      spritesChanged?: boolean;
+      truncated?: boolean;             // v2：未闭合被强制 close
     }
   | {
       kind: 'dialogue';
@@ -428,6 +436,8 @@ export type Sentence =
       turnNumber: number;
       index: number;
       truncated?: boolean;             // parser 末尾降级闭合的标记
+      bgChanged?: boolean;
+      spritesChanged?: boolean;
     }
   | {
       kind: 'scene_change';
@@ -493,4 +503,27 @@ export interface BackgroundAsset {
   id: string;                          // "classroom_evening"
   assetUrl?: string;                   // M3 可空
   label?: string;
+}
+
+// ============================================================================
+// Scratch Block — LLM 元叙述 / 内部思考出口（RFC v2 原则 #6 / §3.1）
+// ============================================================================
+
+/**
+ * `<scratch>` 顶层容器的一次产出。不渲染给玩家、不产生 Sentence，
+ * 但保留在下一轮 messages-builder 的 assistant 历史里（in-context 强化）。
+ *
+ * 用途：承接 LLM 的计划 / 思考 / 元叙述（"让我先 read_state..."），
+ * 让 parser 有法可依，不污染 <narration>。
+ *
+ * tracing：每次 close tag 产出一个 ScratchBlock，Langfuse 事件名 `ir-scratch`
+ * （非 degrade，按正常事件统计）。
+ */
+export interface ScratchBlock {
+  /** `<scratch>` 内部累计的纯文本（已 trim 首尾空白） */
+  text: string;
+  /** 本次 turn 编号，供 tracing 关联当前 generate() 回合 */
+  turnNumber: number;
+  /** 在 playthrough 内的全局序号（与 Sentence.index 共享同一计数器） */
+  index: number;
 }

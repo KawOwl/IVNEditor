@@ -459,5 +459,15 @@
     "ref": "src/core/llm-client.ts + src/core/game-session.ts + server/src/routes/playthroughs.ts + server/src/services/playthrough-service.ts + src/stores/ws-client-emitter.ts + server/src/tracing.ts",
     "verify": "bun tsc --noEmit（前端 + 后端）无新 error；cd server && bun test 141/141 全绿；cd server && bun start 正常启动 + Langfuse/DB 连接 + 监听 3001；v29 staging rollout 后跑 E2E：开新游玩 ≥ 55 条 entry → 断开重连 → 完整历史回放（不再 50 截断）+ history 顺序正确（没有选项跳到对应旁白之前）+ Langfuse trace 的 llm-step 在 narrative 出现前就有正确的 batchId 标记",
     "note": "三个 bug 由 save-load 后的 history display 问题（用户反馈"少了一段"+"历史是乱的"）定位收敛到根因：A 是 DB 写入时序、B 是 step 生命周期钩子、C 是 WS restore 的 hardcoded limit。修法选择：A 直接 flush（只追加成本一次 memory.appendTurn）；B 暴露新回调而不是改 onStep 语义避免 breaking change；C 用客户端分页而非服务端一次塞满（限服务端内存 + 长 session 可增量 UI 显示）"
+  },
+  {
+    "id": "V.1",
+    "title": "声明式视觉 IR：parser 重写（htmlparser2 + FP reducer + <scratch>）",
+    "description": "RFC-声明式视觉IR_2026-04-24.md 的 Step V.1 落地。把 350 行手搓状态机 narrative-parser.ts 换成基于 htmlparser2 的纯函数 reducer。目录结构 src/core/narrative-parser-v2/{tag-schema,state,reducer,inheritance,index}.ts，依 RFC §2 原则 #7（函数式/组合式/声明式）：parser 层禁 class、禁顶层可变 let、mutation 只在 htmlparser2 callback 边界出现。新增 Sentence 可选字段 bg/sprites/bgChanged/spritesChanged（v1 不填），新类型 ScratchBlock 承接 <scratch> 内容（不产 Sentence、不渲染、保留给下一轮 messages）。与 v1 parser 并存，不接线到 game-session（V.2 做）。50+ 单测覆盖 silent-tolerance + 视觉继承 + <scratch> 提取 + 未闭合截断。",
+    "status": "done",
+    "type": "logic",
+    "ref": "RFC-声明式视觉IR_2026-04-24.md#§11 Step V.1",
+    "verify": "bun tsc --noEmit 通过；bun test 新 parser 单测全绿（50+ 用例含 silent-tolerance 每种 degrade、<scratch> 提取、bg/sprite 继承、unknown-id 保留、stream 未闭合截断）；v1 parser 27 测试全部保留无改动",
+    "note": "V.1 完成。实测 73 测试（inheritance 12 + reducer 30 + parser 31，含 chunk 边界 1/2/3/5/7/13/50/1000 各 size 参数化）。v1 parser 34 tests 保留绿。实现期发现的关键 bug：createParser.finalize() 内部需要先 dispatch 'finalize' event 再 htmlParser.end()（反序会让 htmlparser2 合成 closetag 先 pop 栈，丢失 truncated:true 标记）。prod dep 新增 htmlparser2@12.0.0。RFC §13 开放问题 A/B/C/D 全部按推荐采纳。V.2 再做 game-session wiring。"
   }
 ]
