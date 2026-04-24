@@ -18,59 +18,12 @@ import { HomePage } from '#internal/ui/home/HomePage';
 import { PlayPage } from '#internal/ui/play/PlayPage';
 import { EditorPage } from '#internal/ui/editor/EditorPage';
 import { LoginModal } from '#internal/ui/auth/LoginModal';
+import {
+  publicInfoToManifest,
+  type PublicScriptInfo,
+} from '#internal/ui/play/public-script-info';
 import { getBackendUrl } from '@/lib/backend-url';
 import type { ScriptManifest } from '@ivn/core/types';
-
-/** 后端返回的公开剧本信息（脱敏，不含 prompt segments） */
-interface PublicScriptInfo {
-  id: string;
-  label: string;
-  description?: string;
-  coverImage?: string;
-  author?: string;
-  tags?: string[];
-  chapterCount: number;
-  firstChapterId: string | null;
-  openingMessages?: string[];
-  productionLlmConfigId?: string | null;
-  /** M3 起：VN 资产（Step 1.2 补上透传路径，让前端 SpriteLayer 能查 displayName） */
-  characters?: import('@ivn/core/types').CharacterAsset[];
-  backgrounds?: import('@ivn/core/types').BackgroundAsset[];
-  defaultScene?: import('@ivn/core/types').SceneState;
-}
-
-/**
- * 从公开信息构造一个 "pseudo manifest"，供 PlayPage/PlayPanel 使用。
- * 内部字段（segments/stateSchema/memoryConfig）在 remote 模式下根本用不到，stub 即可。
- */
-function publicInfoToManifest(info: PublicScriptInfo): ScriptManifest {
-  return {
-    id: info.id,
-    label: info.label,
-    coverImage: info.coverImage,
-    description: info.description,
-    author: info.author,
-    tags: info.tags,
-    openingMessages: info.openingMessages,
-    chapters: [{
-      id: info.firstChapterId ?? 'ch1',
-      label: info.label,
-      segments: [],
-      flowGraph: { id: 'stub', label: 'stub', nodes: [], edges: [] },
-    }],
-    stateSchema: { variables: [] },
-    memoryConfig: {
-      contextBudget: 0,
-      compressionThreshold: 0,
-      recencyWindow: 0,
-    },
-    enabledTools: [],
-    // M3 VN 资产（M1 SpriteLayer / SceneBackground 查 displayName/assetUrl 用）
-    characters: info.characters,
-    backgrounds: info.backgrounds,
-    defaultScene: info.defaultScene,
-  };
-}
 
 export function App() {
   const page = useAppStore((s) => s.page);
