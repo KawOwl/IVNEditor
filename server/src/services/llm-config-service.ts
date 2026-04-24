@@ -23,6 +23,10 @@ export interface LlmConfigRow {
   apiKey: string;
   model: string;
   maxOutputTokens: number;
+  /** DeepSeek V4 thinking 模式开关；null = 不覆盖模型默认值 */
+  thinkingEnabled: boolean | null;
+  /** reasoning 强度 'high' | 'max' | null；null = 不传 */
+  reasoningEffort: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -34,6 +38,8 @@ export interface CreateLlmConfigInput {
   apiKey: string;
   model: string;
   maxOutputTokens?: number;
+  thinkingEnabled?: boolean | null;
+  reasoningEffort?: string | null;
 }
 
 export interface UpdateLlmConfigInput {
@@ -43,6 +49,8 @@ export interface UpdateLlmConfigInput {
   apiKey?: string;
   model?: string;
   maxOutputTokens?: number;
+  thinkingEnabled?: boolean | null;
+  reasoningEffort?: string | null;
 }
 
 export type DeleteResult =
@@ -93,6 +101,8 @@ export class LlmConfigService {
       apiKey: input.apiKey,
       model: input.model,
       maxOutputTokens: input.maxOutputTokens ?? 8192,
+      thinkingEnabled: input.thinkingEnabled ?? null,
+      reasoningEffort: input.reasoningEffort ?? null,
     });
     const row = await this.getById(id);
     if (!row) throw new Error(`[LlmConfigService.create] failed to fetch row after insert: ${id}`);
@@ -107,6 +117,9 @@ export class LlmConfigService {
     if (input.apiKey !== undefined) patch.apiKey = input.apiKey;
     if (input.model !== undefined) patch.model = input.model;
     if (input.maxOutputTokens !== undefined) patch.maxOutputTokens = input.maxOutputTokens;
+    // thinkingEnabled / reasoningEffort 显式支持 null（清除覆盖，走模型默认）
+    if (input.thinkingEnabled !== undefined) patch.thinkingEnabled = input.thinkingEnabled;
+    if (input.reasoningEffort !== undefined) patch.reasoningEffort = input.reasoningEffort;
 
     const result = await db
       .update(schema.llmConfigs)

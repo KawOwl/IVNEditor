@@ -30,6 +30,20 @@ export interface LLMConfig {
   model: string;          // e.g. "gpt-4o", "claude-sonnet-4-20250514"
   name?: string;          // provider display name
   maxOutputTokens?: number;  // 默认 max output tokens（DB llm_configs 表配置）
+  /**
+   * DeepSeek V4 thinking 模式开关。仅对 openai-compatible provider 生效。
+   *   null / undefined → 不传 thinking 字段，走模型默认（V4 系列默认 enabled）
+   *   true             → 传 thinking:{type:'enabled'}
+   *   false            → 传 thinking:{type:'disabled'}（回避 reasoning_content 回传要求的 escape hatch）
+   */
+  thinkingEnabled?: boolean | null;
+  /**
+   * reasoning 强度，仅 thinking 模式生效。
+   *   null / undefined → 不传，走模型默认
+   *   'high' / 'max'   → 传 reasoning_effort
+   * 走 providerOptions.openaiCompatible.reasoningEffort。
+   */
+  reasoningEffort?: 'high' | 'max' | null;
 }
 
 /**
@@ -222,14 +236,26 @@ export class LLMClient {
     }
 
     // OpenAI compatible（DeepSeek / GPT 等）
-    // 注：模型是否产生原生 reasoning 由模型本身决定（如 deepseek-reasoner 走
-    // AI SDK reasoning-delta 流事件；deepseek-chat 不产生 reasoning）。引擎
-    // 统一通过 onReasoningChunk 回调处理，不再做 enable_thinking 之类的
-    // 请求参数注入。
+    //
+    // DeepSeek V4 thinking 模式控制（2026-04-24 加回 —— 曾在 migration 0006
+    // 删掉过，但 V4 系列之后 thinking 参数真实可控、且与 tool_calls 配合时
+    // 要求 reasoning_content 回传，必须让管理员能关）：
+    //   - `thinkingEnabled` 通过 transformRequestBody 注入到 body.thinking
+    //   - `reasoningEffort` 通过 providerOptions.openaiCompatible.reasoningEffort（见 generate()）
+    //
+    // AI SDK 原生没给 thinking 字段（非 OpenAI 标准），只能 transformRequestBody 塞。
+    const thinkingEnabled = this.config.thinkingEnabled;
     const provider = createOpenAICompatible({
       name: this.config.name ?? 'provider',
       baseURL: this.config.baseURL,
       apiKey: this.config.apiKey,
+      transformRequestBody:
+        thinkingEnabled !== undefined && thinkingEnabled !== null
+          ? (body) => ({
+              ...body,
+              thinking: { type: thinkingEnabled ? 'enabled' : 'disabled' },
+            })
+          : undefined,
     });
     return provider.chatModel(this.config.model);
   }
@@ -277,6 +303,17 @@ export class LLMClient {
     // 之前这里做 `.map({role, content: m.content})` 把 assistant content 强制
     // 转 string，路径上任何 ToolCallPart[] 都会被丢掉。现在上游 messages-builder
     // 按 batchId 正确投影 tool-call / tool-result，透传给 streamText 即可。
+    // reasoning_effort 走 providerOptions —— AI SDK openai-compatible
+    // 原生 schema 认识 reasoningEffort（camelCase），会序列化为 reasoning_effort。
+    // 仅当 config 里显式设了值才传；null/undefined 时省略字段让模型走默认。
+    const reasoningEffort = this.config.reasoningEffort;
+    const providerOptions =
+      this.config.provider === 'openai-compatible' &&
+      reasoningEffort !== undefined &&
+      reasoningEffort !== null
+        ? { openaiCompatible: { reasoningEffort } }
+        : undefined;
+
     const result = streamText({
       model: this.getModel(),
       system: systemPrompt,
@@ -293,6 +330,7 @@ export class LLMClient {
       ],
       maxOutputTokens,
       abortSignal,
+      ...(providerOptions ? { providerOptions } : {}),
       // Focus Injection D：per-step system prompt 覆盖。每个 step 开始前，
       // 如果上层想根据当前 state 换一份 system，在这里返回新字符串。
       // 返回 undefined → AI SDK 用外层的 `system` 参数。

@@ -93,6 +93,8 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
         model: llmConfigRow.model,
         name: llmConfigRow.name,
         maxOutputTokens: llmConfigRow.maxOutputTokens,
+        thinkingEnabled: llmConfigRow.thinkingEnabled,
+        reasoningEffort: llmConfigRow.reasoningEffort as 'high' | 'max' | null,
       };
 
       // 5. getOrCreate wrapper（按 playthroughId 索引）

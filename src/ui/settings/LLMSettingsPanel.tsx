@@ -34,6 +34,8 @@ const DEFAULT_NEW_CONFIG: LLMConfigPayload = {
   apiKey: '',
   model: 'deepseek-chat',
   maxOutputTokens: 8192,
+  thinkingEnabled: null,
+  reasoningEffort: null,
 };
 
 // ============================================================================
@@ -120,6 +122,8 @@ function entryToPayload(entry: LLMConfigEntry): LLMConfigPayload {
     apiKey: entry.apiKey,
     model: entry.model,
     maxOutputTokens: entry.maxOutputTokens,
+    thinkingEnabled: entry.thinkingEnabled,
+    reasoningEffort: entry.reasoningEffort,
   };
 }
 
@@ -334,6 +338,49 @@ function ConfigEditDialog({
               }
               className={fieldClass}
             />
+          </Field>
+
+          {/* DeepSeek V4 / reasoner 类模型专属。非 thinking 模型设了也不生效。 */}
+          <Field label="思考模式（仅 reasoner 模型生效）">
+            <select
+              value={
+                payload.thinkingEnabled === null || payload.thinkingEnabled === undefined
+                  ? 'default'
+                  : payload.thinkingEnabled
+                    ? 'enabled'
+                    : 'disabled'
+              }
+              onChange={(e) => {
+                const v = e.target.value;
+                setPayload({
+                  ...payload,
+                  thinkingEnabled: v === 'default' ? null : v === 'enabled',
+                });
+              }}
+              className={fieldClass}
+            >
+              <option value="default">跟随模型默认（不传字段）</option>
+              <option value="enabled">强制开启 thinking</option>
+              <option value="disabled">强制关闭 thinking（绕开 reasoning_content 回传要求）</option>
+            </select>
+          </Field>
+
+          <Field label="Reasoning Effort（仅 thinking 模式生效）">
+            <select
+              value={payload.reasoningEffort ?? 'default'}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPayload({
+                  ...payload,
+                  reasoningEffort: v === 'default' ? null : v,
+                });
+              }}
+              className={fieldClass}
+            >
+              <option value="default">跟随模型默认</option>
+              <option value="high">high（思考深度适中）</option>
+              <option value="max">max（思考深度最大 / Agent 默认）</option>
+            </select>
           </Field>
         </div>
 

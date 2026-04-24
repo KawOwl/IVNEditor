@@ -29,6 +29,10 @@ export interface LLMConfigEntry {
   apiKey: string;
   model: string;
   maxOutputTokens: number;
+  /** DeepSeek V4 thinking 开关；null 表示不覆盖模型默认 */
+  thinkingEnabled: boolean | null;
+  /** reasoning 强度 'high' | 'max' | null（null = 不传） */
+  reasoningEffort: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -154,5 +158,7 @@ export function entryToLLMConfig(entry: LLMConfigEntry): LLMConfig {
     model: entry.model,
     name: entry.name,
     maxOutputTokens: entry.maxOutputTokens,
+    thinkingEnabled: entry.thinkingEnabled,
+    reasoningEffort: entry.reasoningEffort as 'high' | 'max' | null,
   };
 }

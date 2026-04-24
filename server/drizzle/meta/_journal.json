@@ -85,6 +85,13 @@
       "when": 1777756400000,
       "tag": "0011_messages_model",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1777842800000,
+      "tag": "0012_llm_thinking_control",
+      "breakpoints": true
     }
   ]
 }

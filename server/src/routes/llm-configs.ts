@@ -36,6 +36,8 @@ export const llmConfigRoutes = new Elysia({ prefix: '/api/llm-configs' })
       apiKey?: string;
       model?: string;
       maxOutputTokens?: number;
+      thinkingEnabled?: boolean | null;
+      reasoningEffort?: string | null;
     };
 
     if (!input.name || !input.provider || !input.baseUrl || !input.apiKey || !input.model) {
@@ -52,6 +54,8 @@ export const llmConfigRoutes = new Elysia({ prefix: '/api/llm-configs' })
       apiKey: input.apiKey,
       model: input.model,
       maxOutputTokens: input.maxOutputTokens,
+      thinkingEnabled: input.thinkingEnabled,
+      reasoningEffort: input.reasoningEffort,
     });
     return { config: row };
   })
@@ -71,6 +75,14 @@ export const llmConfigRoutes = new Elysia({ prefix: '/api/llm-configs' })
       apiKey: input.apiKey as string | undefined,
       model: input.model as string | undefined,
       maxOutputTokens: input.maxOutputTokens as number | undefined,
+      // thinkingEnabled / reasoningEffort 允许显式 null（清除覆盖）；用 `in`
+      // 区分 undefined（字段缺省）和 null（显式清空）
+      ...(('thinkingEnabled' in input)
+        ? { thinkingEnabled: input.thinkingEnabled as boolean | null }
+        : {}),
+      ...(('reasoningEffort' in input)
+        ? { reasoningEffort: input.reasoningEffort as string | null }
+        : {}),
     };
 
     const ok = await llmConfigService.update(params.id, patch);

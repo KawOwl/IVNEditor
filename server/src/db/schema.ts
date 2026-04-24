@@ -126,6 +126,21 @@ export const llmConfigs = pgTable('llm_configs', {
   model: text('model').notNull(),
   /** 本配置默认 max output tokens（AI 改写、generate 都用） */
   maxOutputTokens: integer('max_output_tokens').notNull().default(8192),
+  /**
+   * DeepSeek V4 thinking 模式开关。
+   *   null  → 不传 thinking 字段，让模型走 provider 默认（V4 系列默认 enabled）
+   *   true  → 显式传 thinking:{type:'enabled'}
+   *   false → 显式传 thinking:{type:'disabled'}（escape hatch：绕开
+   *           "reasoning_content must be passed back" 的回放要求）
+   * 对非 DeepSeek 模型字段设了也不生效（provider 层会忽略）。
+   */
+  thinkingEnabled: boolean('thinking_enabled'),
+  /**
+   * reasoning 强度，仅 thinking 模式生效。
+   *   null / 'high' / 'max'。低于 'high' 的值 DeepSeek 端会静默 map 到 'high'。
+   * 作为 providerOptions.openaiCompatible.reasoningEffort 传下去。
+   */
+  reasoningEffort: text('reasoning_effort'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
