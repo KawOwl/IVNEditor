@@ -409,5 +409,25 @@
     "type": "e2e",
     "ref": ".claude/plans/m4-asset-pipeline.md",
     "verify": "preview E2E：启 MinIO → 编辑器上传 1 立绘 + 1 背景 → 保存发布 → 玩家流看到真图；关 MinIO 刷新 → 占位兜底；manifest.characters[].sprites[].assetUrl / backgrounds[].assetUrl round-trip 完整；tsc clean；server tests 全绿"
+  },
+  {
+    "id": "MCP.1",
+    "title": "MCP Server 路由 + 剧本读写 tools",
+    "description": "在现有 Elysia 后端挂 /api/mcp 路由，手写 JSON-RPC 2.0 over Streamable HTTP（不引 @modelcontextprotocol/sdk），作为编剧的 Claude Desktop（MCP client）的连接目标。暴露 read tools（list_scripts / list_script_versions / get_script_overview / get_segment / get_full_manifest）+ write tools（update_segment_content / replace_script_manifest / publish_script_version）。所有 write 都建 draft，不自动 publish。复用 requireAdmin + user_sessions.id Bearer token 鉴权，不引入独立 token 体系。",
+    "status": "done",
+    "type": "e2e",
+    "ref": "server/src/routes/mcp.ts",
+    "verify": "bun test 136 全绿（含 10 个 mcp-route.test.ts 协议层冒烟：auth 403 / initialize / tools/list / notifications 202 / 非法 jsonrpc 400 / tools/call 正常 + isError 路径 / update_segment_content 写 draft / publish_script_version 生效）；bun build mcp.ts 成功；Claude Desktop 通过 mcp-remote 接入 /api/mcp 能 list + edit 剧本",
+    "note": "协议版本 2025-06-18；stateless server 不下发 Mcp-Session-Id；写操作统一用 scriptVersionService.create(status:'draft')，复用现有版本 hash 去重；tool 业务错误走 result.isError=true，协议错误走 JSON-RPC error code"
+  },
+  {
+    "id": "MCP.2",
+    "title": "MCP 图片上传 tools（立绘 + 背景）",
+    "description": "扩充 MCP 工具集，支持编剧在 Claude Desktop 里让 AI 直接上传角色立绘和场景背景图。4 个新 tool：list_script_assets（查已传）、upload_script_asset（低阶：只上传字节不改 manifest）、add_background_to_script（高阶：上传 + 挂 manifest.backgrounds[] + 建 draft）、add_character_sprite（高阶：上传 + 挂 manifest.characters[].sprites[] + 建 draft；character 不存在时一并创建）。图片通过 imageBase64 字段（裸 base64 或 data:URL 前缀皆可）传输，10 MB 上限 + MIME 白名单。底层复用 assetService + getAssetStorage，storage_key 格式和 HTTP POST /api/scripts/:id/assets 完全一致。",
+    "status": "done",
+    "type": "e2e",
+    "ref": "server/src/routes/mcp.ts",
+    "verify": "bun test 19 个 mcp-route 全绿，含 9 个 asset 专项测试：新 tool 在 tools/list 里、纯上传不动 manifest、10MB 上限、MIME 白名单、新增/覆盖 background、创建 character + 加 sprite、append 第二张 sprite、覆盖同名 sprite、list_script_assets、data URL 前缀；__setAssetStorageForTesting 注入内存 bucket mock 避免真 S3 依赖",
+    "note": "上传在前、manifest 改动在后；失败留孤儿 script_assets 行可事后 GC。OSS metadata 带 source=mcp 便于在控制台区分来源。未做：imageUrl 远程抓取 / delete_script_asset tool / script owner 细粒度校验（目前只 requireAdmin）"
   }
 ]

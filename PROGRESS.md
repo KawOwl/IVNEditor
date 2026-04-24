@@ -1,15 +1,15 @@
 # 项目进度
 
 ## 当前状态
-M1 + M2 + M4 全部完成（代码层）。M4 2 个 commit 已落地：
-- `feat(m4a)` 后端资产 pipeline（S3 抽象 + migration 0008 + routes + MinIO 本地 dev）
-- `feat(m4b)` 前端上传 UI + 缩略图 + M1 渲染真图 + 加载失败兜底
+MCP.1 + MCP.2 完成，待 commit + 部署 staging。
 
-**待用户端操作**：启动 Docker Desktop → `cd ops/minio && docker compose up -d`
-起 MinIO，然后就可以 preview 上试真图上传 + 渲染。
+新加的 MCP server 挂在 `/api/mcp`（手写 JSON-RPC 2.0 over Streamable HTTP），
+给编剧的 Claude Desktop 通过 `mcp-remote` 接入，让 AI 可以直接读写剧本 +
+上传立绘 / 背景图。12 个 tool 全覆盖 read / edit-segment / edit-manifest /
+upload-image / publish。bun test 136/136 全绿。
 
 ## 当前任务
-（M4 代码完成，等本地 MinIO 环境可用后做 E2E 验证；也看用户下一步指哪）
+（MCP 代码完成，准备 commit + build v26 image + rollout 到 ivn-k3s-staging）
 
 ## 已完成的里程碑
 

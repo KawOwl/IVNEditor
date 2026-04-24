@@ -21,6 +21,7 @@ import { llmConfigRoutes } from './routes/llm-configs';
 import { authRoutes } from './routes/auth';
 import { playthroughRoutes } from './routes/playthroughs';
 import { assetRoutes } from './routes/assets';
+import { mcpRoutes } from './routes/mcp';
 
 export function buildApp() {
   return new Elysia()
@@ -33,6 +34,7 @@ export function buildApp() {
     .use(authRoutes)
     .use(playthroughRoutes)
     .use(assetRoutes)
+    .use(mcpRoutes)
     .get('/health', () => ({ ok: true, timestamp: Date.now() }));
 }
 
