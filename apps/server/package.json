@@ -1,0 +1,43 @@
+{
+  "name": "@ivn/server",
+  "version": "0.1.0",
+  "description": "Interactive Novel Engine — Backend Server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "typecheck": "tsgo --noEmit",
+    "typecheck:tsc": "tsc --noEmit",
+    "db:generate": "bun drizzle-kit generate",
+    "db:migrate": "bun drizzle-kit migrate",
+    "db:push": "bun drizzle-kit push",
+    "db:studio": "bun drizzle-kit studio",
+    "db:check": "bun drizzle-kit check",
+    "db:bootstrap": "bun run scripts/bootstrap-drizzle-migrations.ts",
+    "seed:admin": "bun run scripts/seed-admin.ts",
+    "test": "bun test",
+    "test:watch": "bun test --watch"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1033.0",
+    "@aws-sdk/lib-storage": "^3.1033.0",
+    "@elysiajs/cors": "^1.2.0",
+    "@ivn/core": "workspace:*",
+    "@ivn/specification": "workspace:*",
+    "@sinclair/typebox": "^0.34.49",
+    "bcryptjs": "^3.0.3",
+    "drizzle-orm": "^0.45.2",
+    "elysia": "^1.2.25",
+    "langfuse": "^3.38.20",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.18",
+    "@types/bcryptjs": "^3.0.0",
+    "@types/pg": "^8.20.0",
+    "@typescript/native-preview": "7.0.0-dev.20260421.2",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^6.0.2"
+  }
+}

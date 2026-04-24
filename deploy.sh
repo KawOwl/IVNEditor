@@ -30,7 +30,8 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # 项目路径：脚本所在目录
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SERVER_DIR="$PROJECT_DIR/server"
+SERVER_DIR="$PROJECT_DIR/apps/server"
+UI_DIR="$PROJECT_DIR/apps/ui"
 
 info "项目路径: $PROJECT_DIR"
 
@@ -99,7 +100,8 @@ info "pnpm 路径: $PNPM_PATH"
 
 # 检查关键文件
 [ ! -f "$PROJECT_DIR/package.json" ] && error "项目目录缺少 package.json"
-[ ! -f "$SERVER_DIR/package.json" ] && error "server/ 目录缺少 package.json"
+[ ! -f "$SERVER_DIR/package.json" ] && error "apps/server/ 目录缺少 package.json"
+[ ! -f "$UI_DIR/package.json" ] && error "apps/ui/ 目录缺少 package.json"
 
 # ============================================================================
 # 端口配置
@@ -117,17 +119,14 @@ run_as_user() {
   su - "$RUN_USER" -c "export PATH='$EXEC_PATH:\$PATH' && $1"
 }
 
-info "安装前端依赖..."
+info "安装 workspace 依赖..."
 run_as_user "cd '$PROJECT_DIR' && '$PNPM_PATH' install"
 
 info "构建前端..."
 run_as_user "cd '$PROJECT_DIR' && '$PNPM_PATH' build"
 
-info "安装后端依赖..."
-run_as_user "cd '$SERVER_DIR' && '$BUN_PATH' install"
-
-[ ! -d "$PROJECT_DIR/dist" ] && error "构建失败，dist/ 目录不存在"
-info "前端构建成功: $PROJECT_DIR/dist"
+[ ! -d "$UI_DIR/dist" ] && error "构建失败，apps/ui/dist/ 目录不存在"
+info "前端构建成功: $UI_DIR/dist"
 
 # ============================================================================
 # 创建 .env（如果不存在）
@@ -136,10 +135,10 @@ if [ ! -f "$SERVER_DIR/.env" ]; then
   if [ -f "$SERVER_DIR/.env.example" ]; then
     cp "$SERVER_DIR/.env.example" "$SERVER_DIR/.env"
     chown "$RUN_USER":"$RUN_USER" "$SERVER_DIR/.env"
-    warn "已从 .env.example 创建 server/.env，请编辑填入 LLM_API_KEY 等配置"
+    warn "已从 .env.example 创建 apps/server/.env，请编辑填入 LLM_API_KEY 等配置"
     warn "  nano $SERVER_DIR/.env"
   else
-    warn "server/.env 不存在且无 .env.example，服务可能缺少 LLM 配置"
+    warn "apps/server/.env 不存在且无 .env.example，服务可能缺少 LLM 配置"
   fi
 fi
 
@@ -216,7 +215,7 @@ if systemctl is-active --quiet "$SERVICE_NAME"; then
   echo "  停止服务:  systemctl stop $SERVICE_NAME"
   echo ""
   echo "更新部署："
-  echo "  cd $PROJECT_DIR && git pull && pnpm build && sudo systemctl restart $SERVICE_NAME"
+  echo "  cd $PROJECT_DIR && git pull && pnpm install && pnpm build && sudo systemctl restart $SERVICE_NAME"
   echo ""
 else
   error "服务启动失败，请检查日志: journalctl -u $SERVICE_NAME -n 50"
