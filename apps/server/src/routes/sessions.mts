@@ -16,17 +16,209 @@
 
 import { Elysia } from 'elysia';
 import { SessionManager } from '#internal/session-manager';
-import { playthroughService } from '#internal/services/playthrough-service';
+import { playthroughService, type PlaythroughDetail } from '#internal/services/playthrough-service';
 import { scriptVersionService } from '#internal/services/script-version-service';
-import { llmConfigService } from '#internal/services/llm-config-service';
+import { llmConfigService, type LlmConfigRow } from '#internal/services/llm-config-service';
 import { resolvePlayerSession } from '#internal/auth-identity';
 import type { LLMConfig } from '@ivn/core/llm-client';
+import type { ScriptManifest } from '@ivn/core/types';
 
 const sessionManager = new SessionManager();
 
+type SessionSocket = { send(data: string): void };
+type ClosableSessionSocket = SessionSocket & { close(): void };
+
+interface WsQuery {
+  sessionId?: string;
+  playthroughId?: string;
+}
+
+interface SessionOpenRequest {
+  authSession: string;
+  playthroughId: string;
+}
+
+interface SessionOpenContext {
+  playthroughId: string;
+  userId: string;
+  detail: PlaythroughDetail;
+  scriptVersionId: string;
+  manifest: ScriptManifest;
+  llmConfig: LLMConfig;
+}
+
+type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+const RESTORED_CLIENT_FIELDS = [
+  'status',
+  'turn',
+  'stateVars',
+  'inputHint',
+  'inputType',
+  'choices',
+  'entries',
+  'totalEntries',
+  'hasMore',
+  'currentScene',
+] as const satisfies ReadonlyArray<keyof PlaythroughDetail>;
+
+const RESTORE_WRAPPER_FIELDS = [
+  'memorySnapshot',
+  'status',
+  'inputHint',
+  'inputType',
+  'choices',
+] as const satisfies ReadonlyArray<keyof PlaythroughDetail>;
+
 /** 从 Elysia WS 对象里读取 query 参数（handler 间 ws 引用可能变化，每次都重新读） */
-function getWsQuery(ws: unknown): { sessionId?: string; playthroughId?: string } {
-  return ((ws as any)?.data?.query ?? {}) as { sessionId?: string; playthroughId?: string };
+function getWsQuery(ws: unknown): WsQuery {
+  return ((ws as { data?: { query?: WsQuery } })?.data?.query ?? {}) as WsQuery;
+}
+
+function pickFields<T extends object, const K extends readonly (keyof T)[]>(
+  source: T,
+  keys: K,
+): Pick<T, K[number]> {
+  return Object.fromEntries(keys.map((key) => [key, source[key]])) as Pick<T, K[number]>;
+}
+
+function sendJson(ws: SessionSocket, payload: unknown): void {
+  ws.send(JSON.stringify(payload));
+}
+
+function closeWithError(ws: ClosableSessionSocket, error: string): void {
+  sendJson(ws, { type: 'error', error });
+  ws.close();
+}
+
+function readSessionOpenRequest(ws: unknown): ValidationResult<SessionOpenRequest> {
+  const { sessionId: authSession, playthroughId } = getWsQuery(ws);
+  if (!authSession || !playthroughId) {
+    return { ok: false, error: 'Missing sessionId or playthroughId' };
+  }
+
+  return { ok: true, value: { authSession, playthroughId } };
+}
+
+function toLlmConfig(row: LlmConfigRow): LLMConfig {
+  return {
+    provider: row.provider,
+    baseURL: row.baseUrl,
+    apiKey: row.apiKey,
+    model: row.model,
+    name: row.name,
+    maxOutputTokens: row.maxOutputTokens,
+    thinkingEnabled: row.thinkingEnabled,
+    reasoningEffort: row.reasoningEffort as 'high' | 'max' | null,
+  };
+}
+
+async function loadSessionOpenContext(
+  request: SessionOpenRequest,
+): Promise<ValidationResult<SessionOpenContext>> {
+  const identity = await resolvePlayerSession(request.authSession);
+  if (!identity) {
+    return { ok: false, error: 'Invalid or expired session' };
+  }
+
+  const detail = await playthroughService.getById(request.playthroughId, identity.userId, 50);
+  if (!detail) {
+    return { ok: false, error: 'Playthrough not found' };
+  }
+
+  const version = await scriptVersionService.getById(detail.scriptVersionId);
+  if (!version) {
+    return { ok: false, error: 'Script version not found' };
+  }
+
+  const llmConfigRow = await llmConfigService.getById(detail.llmConfigId);
+  if (!llmConfigRow) {
+    return { ok: false, error: 'LLM config not found for this playthrough' };
+  }
+
+  return {
+    ok: true,
+    value: {
+      playthroughId: request.playthroughId,
+      userId: identity.userId,
+      detail,
+      scriptVersionId: version.id,
+      manifest: version.manifest,
+      llmConfig: toLlmConfig(llmConfigRow),
+    },
+  };
+}
+
+function attachSessionWrapper(ws: SessionSocket, context: SessionOpenContext) {
+  const wrapper = sessionManager.getOrCreate(
+    context.playthroughId,
+    context.manifest,
+    context.scriptVersionId,
+    context.userId,
+    context.detail.kind,
+    context.llmConfig,
+  );
+  wrapper.attachWebSocket(ws);
+  return wrapper;
+}
+
+function isNewPlaythrough(detail: PlaythroughDetail): boolean {
+  const { turn, totalEntries } = detail;
+  return turn === 0 && totalEntries === 0;
+}
+
+function sendConnected(ws: SessionSocket, playthroughId: string): void {
+  sendJson(ws, {
+    type: 'connected',
+    playthroughId,
+  });
+}
+
+function restoreExistingPlaythrough(
+  ws: SessionSocket,
+  wrapper: ReturnType<typeof sessionManager.getOrCreate>,
+  playthroughId: string,
+  detail: PlaythroughDetail,
+): void {
+  sendJson(ws, {
+    type: 'restored',
+    playthroughId,
+    ...pickFields(detail, RESTORED_CLIENT_FIELDS),
+  });
+
+  wrapper.restore({
+    stateVars: detail.stateVars ?? {},
+    turn: detail.turn,
+    ...pickFields(detail, RESTORE_WRAPPER_FIELDS),
+    currentScene: detail.currentScene ?? null,
+  });
+}
+
+function connectSessionWebSocket(ws: SessionSocket, context: SessionOpenContext): void {
+  const wrapper = attachSessionWrapper(ws, context);
+  sendConnected(ws, context.playthroughId);
+
+  if (!isNewPlaythrough(context.detail)) {
+    restoreExistingPlaythrough(ws, wrapper, context.playthroughId, context.detail);
+  }
+}
+
+async function openSessionWebSocket(ws: ClosableSessionSocket): Promise<void> {
+  const request = readSessionOpenRequest(ws);
+  if (!request.ok) {
+    closeWithError(ws, request.error);
+    return;
+  }
+
+  console.log(`[WS] open: pt=${request.value.playthroughId.substring(0, 8)}`);
+
+  const context = await loadSessionOpenContext(request.value);
+  if (!context.ok) {
+    closeWithError(ws, context.error);
+    return;
+  }
+
+  connectSessionWebSocket(ws, context.value);
 }
 
 export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
@@ -45,114 +237,7 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
   // ============================================================================
   .ws('/ws', {
     async open(ws) {
-      const { sessionId: authSession, playthroughId } = getWsQuery(ws);
-
-      if (!authSession || !playthroughId) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Missing sessionId or playthroughId' }));
-        ws.close();
-        return;
-      }
-
-      console.log(`[WS] open: pt=${playthroughId.substring(0, 8)}`);
-
-      // 1. 校验 auth
-      const identity = await resolvePlayerSession(authSession);
-      if (!identity) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Invalid or expired session' }));
-        ws.close();
-        return;
-      }
-
-      // 2. 查 playthrough + ownership 校验（service 层 WHERE 强制）
-      const detail = await playthroughService.getById(playthroughId, identity.userId, 50);
-      if (!detail) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Playthrough not found' }));
-        ws.close();
-        return;
-      }
-
-      // 3. 从 script_versions 表拿 manifest 快照
-      const version = await scriptVersionService.getById(detail.scriptVersionId);
-      if (!version) {
-        ws.send(JSON.stringify({ type: 'error', error: 'Script version not found' }));
-        ws.close();
-        return;
-      }
-
-      // 4. 按 playthrough 固化的 llmConfigId 拉 LLM 配置（v2.7）
-      const llmConfigRow = await llmConfigService.getById(detail.llmConfigId);
-      if (!llmConfigRow) {
-        ws.send(JSON.stringify({ type: 'error', error: 'LLM config not found for this playthrough' }));
-        ws.close();
-        return;
-      }
-      const llmConfig: LLMConfig = {
-        provider: llmConfigRow.provider,
-        baseURL: llmConfigRow.baseUrl,
-        apiKey: llmConfigRow.apiKey,
-        model: llmConfigRow.model,
-        name: llmConfigRow.name,
-        maxOutputTokens: llmConfigRow.maxOutputTokens,
-        thinkingEnabled: llmConfigRow.thinkingEnabled,
-        reasoningEffort: llmConfigRow.reasoningEffort as 'high' | 'max' | null,
-      };
-
-      // 5. getOrCreate wrapper（按 playthroughId 索引）
-      // 把 playthrough 的 kind 透传给 wrapper，让 Langfuse trace 能据此区分
-      // production / playtest（编辑器试玩）
-      const wrapper = sessionManager.getOrCreate(
-        playthroughId,
-        version.manifest,
-        version.id,
-        identity.userId,
-        detail.kind,
-        llmConfig,
-      );
-      wrapper.attachWebSocket(ws);
-
-      // 5. 推送 connected
-      ws.send(JSON.stringify({
-        type: 'connected',
-        playthroughId,
-      }));
-
-      // 6. 决定 start 还是 restore
-      const isNewPlaythrough = detail.turn === 0 && detail.totalEntries === 0;
-      if (!isNewPlaythrough) {
-        // 推送快照给客户端（恢复 UI）
-        ws.send(JSON.stringify({
-          type: 'restored',
-          playthroughId,
-          status: detail.status,
-          turn: detail.turn,
-          stateVars: detail.stateVars,
-          inputHint: detail.inputHint,
-          inputType: detail.inputType,
-          choices: detail.choices,
-          entries: detail.entries,
-          totalEntries: detail.totalEntries,
-          hasMore: detail.hasMore,
-          // M3：VN 当前场景快照。client ws-client-emitter 'restored' handler
-          // 用它给每条合成的 Sentence 设 sceneRef，并 setCurrentScene 驱动
-          // VN stage 渲染背景/立绘。不传 → client fallback 到空场景（bug）。
-          currentScene: detail.currentScene,
-        }));
-
-        // 恢复 GameSession 的内存状态
-        wrapper.restore({
-          stateVars: detail.stateVars ?? {},
-          turn: detail.turn,
-          // memorySnapshot 是 opaque JSON，直接透传给 GameSession → Memory.restore
-          memorySnapshot: detail.memorySnapshot,
-          status: detail.status,
-          inputHint: detail.inputHint,
-          inputType: detail.inputType,
-          choices: detail.choices,
-          // M3: VN 场景快照（老 playthrough 无此字段，传 null 走 defaultScene fallback）
-          currentScene: detail.currentScene ?? null,
-        });
-      }
-      // 新游戏：等客户端主动发 'start'
+      await openSessionWebSocket(ws);
     },
 
     message(ws, message) {
