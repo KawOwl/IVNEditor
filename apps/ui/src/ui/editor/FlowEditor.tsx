@@ -23,7 +23,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { FlowGraph, FlowNode as GameFlowNode } from '@ivn/core/types';
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 
 // ============================================================================
 // Custom Node Component

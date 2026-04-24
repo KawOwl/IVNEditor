@@ -17,10 +17,10 @@ import type {
   SpriteAsset,
 } from '@ivn/core/types';
 import { listTools } from '@ivn/core/tool-catalog';
-import { useLLMConfigsStore } from '../../stores/llm-configs-store';
+import { useLLMConfigsStore } from '@/stores/llm-configs-store';
 import { useAssetUpload } from './use-asset-upload';
 import { getBackendUrl } from '@/lib/backend-url';
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 
 /** snake_case id 校验：小写字母开头，可包含小写字母/数字/下划线 */
 const ID_PATTERN = /^[a-z][a-z0-9_]*$/;

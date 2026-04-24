@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { useAuthStore } from '../../stores/auth-store';
+import { useAuthStore } from '@/stores/auth-store';
 
 export function LoginModal({ onClose }: { onClose: () => void }) {
   const login = useAuthStore((s) => s.login);

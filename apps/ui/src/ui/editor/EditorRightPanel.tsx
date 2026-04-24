@@ -3,7 +3,7 @@ import { PromptPreviewPanel } from './PromptPreviewPanel';
 import { ScriptInfoPanel } from './ScriptInfoPanel';
 import { PlayPanel } from '../play/PlayPanel';
 import { LLMSettingsPanel } from '../settings/LLMSettingsPanel';
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 import type {
   BackgroundAsset,
   CharacterAsset,
@@ -13,7 +13,7 @@ import type {
   ScriptManifest,
   StateSchema,
 } from '@ivn/core/types';
-import type { LLMConfigEntry } from '../../stores/llm-configs-store';
+import type { LLMConfigEntry } from '@/stores/llm-configs-store';
 
 export type RightTab = 'prompt' | 'play' | 'debug' | 'settings' | 'info';
 

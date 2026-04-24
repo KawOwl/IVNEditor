@@ -8,7 +8,7 @@
  * 6.3 范围内只做只读展示 + 发布按钮，不做 diff 视图、不做 rollback。
  */
 
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 
 export interface VersionSummary {
   id: string;

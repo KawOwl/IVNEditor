@@ -11,7 +11,7 @@
 
 import { useCallback, useState } from 'react';
 import { getBackendUrl } from '@/lib/backend-url';
-import { useAuthStore } from '../../stores/auth-store';
+import { useAuthStore } from '@/stores/auth-store';
 
 export interface UseAssetUploadResult {
   upload: (file: File) => Promise<string>;

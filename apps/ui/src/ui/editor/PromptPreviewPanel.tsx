@@ -17,7 +17,7 @@ import type { PromptSegment, StateSchema } from '@ivn/core/types';
 import { estimateTokens } from '@ivn/core/tokens';
 import { ENGINE_RULES_CONTENT } from '@ivn/core/engine-rules';
 import { VIRTUAL_IDS, buildStateSection } from '@ivn/core/context-assembler';
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 
 // ============================================================================
 // Types

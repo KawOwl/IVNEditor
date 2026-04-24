@@ -12,17 +12,17 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { InputPanel } from '../InputPanel';
 import { VNStageContainer } from './vn/VNStageContainer';
-import { useGameStore } from '../../stores/game-store';
+import { useGameStore } from '@/stores/game-store';
 import {
   createRemoteSession,
   reconnectRemoteSession,
   getStoredPlaythroughId,
   clearStoredPlaythroughId,
   type RemoteSession,
-} from '../../stores/ws-client-emitter';
+} from '@/stores/ws-client-emitter';
 import type { ScriptManifest } from '@ivn/core/types';
 import { getBackendUrl } from '@/lib/backend-url';
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 
 // ============================================================================
 // Types

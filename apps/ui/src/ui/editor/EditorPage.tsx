@@ -12,11 +12,11 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
-import { useAppStore } from '../../stores/app-store';
+import { useAppStore } from '@/stores/app-store';
 import type { VersionSummary } from './VersionHistoryList';
 import { exportScript, parseImportedScript } from '@ivn/core/script-archive';
-import { useAuthStore } from '../../stores/auth-store';
-import { useLLMConfigsStore } from '../../stores/llm-configs-store';
+import { useAuthStore } from '@/stores/auth-store';
+import { useLLMConfigsStore } from '@/stores/llm-configs-store';
 import { LocalBackupGate } from './LocalBackupGate';
 import { buildEditorManifest, buildEditorScriptRecord } from './editor-manifest';
 import {

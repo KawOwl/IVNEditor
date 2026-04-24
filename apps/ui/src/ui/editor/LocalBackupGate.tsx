@@ -19,7 +19,7 @@ import {
   downloadLocalBackup,
   deleteLocalDatabase,
   type LocalScriptSummary,
-} from '../../storage/local-backup-gate';
+} from '@/storage/local-backup-gate';
 
 type GateState = 'checking' | 'needs-backup' | 'backed-up' | 'clean' | 'error';
 

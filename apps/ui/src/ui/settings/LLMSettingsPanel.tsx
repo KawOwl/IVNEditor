@@ -14,9 +14,9 @@ import {
   useLLMConfigsStore,
   type LLMConfigEntry,
   type LLMConfigPayload,
-} from '../../stores/llm-configs-store';
+} from '@/stores/llm-configs-store';
 import { getTypewriterSpeed, setTypewriterSpeed } from '../play/typewriter-speed';
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 
 // ============================================================================
 // Constants

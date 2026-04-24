@@ -6,10 +6,10 @@
  */
 
 import { useState, useCallback } from 'react';
-import { useArchitectStore } from '../../stores/architect-store';
+import { useArchitectStore } from '@/stores/architect-store';
 import type { ArchitectResult } from '@ivn/core/architect/types';
 import type { ScriptManifest } from '@ivn/core/types';
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 
 // ============================================================================
 // Types

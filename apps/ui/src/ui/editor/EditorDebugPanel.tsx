@@ -12,10 +12,10 @@
  */
 
 import { useState } from 'react';
-import { useGameStore } from '../../stores/game-store';
-import { useRawStreamingStore } from '../../stores/raw-streaming-store';
-import { cn } from '../../lib/utils';
-import type { Sentence } from '../../stores/game-store';
+import { useGameStore } from '@/stores/game-store';
+import { useRawStreamingStore } from '@/stores/raw-streaming-store';
+import { cn } from '@/lib/utils';
+import type { Sentence } from '@/stores/game-store';
 import { toSentenceDebugModel } from './sentence-debug-presenter';
 
 type DebugSection = 'prompt' | 'messages' | 'tokens' | 'state' | 'tools' | 'memory' | 'sentences' | 'raw';

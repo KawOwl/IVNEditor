@@ -13,7 +13,7 @@
  */
 
 import { useRef, useState } from 'react';
-import { useGameStore } from '../../../stores/game-store';
+import { useGameStore } from '@/stores/game-store';
 import type { Sentence, CharacterAsset } from '@ivn/core/types';
 
 export interface BacklogProps {

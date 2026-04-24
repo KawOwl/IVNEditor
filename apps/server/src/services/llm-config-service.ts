@@ -58,6 +58,17 @@ export type DeleteResult =
   | { ok: false; error: 'not-found' }
   | { ok: false; error: 'referenced-by-playthrough'; count: number };
 
+const UPDATE_FIELDS = [
+  'name',
+  'provider',
+  'baseUrl',
+  'apiKey',
+  'model',
+  'maxOutputTokens',
+  'thinkingEnabled',
+  'reasoningEffort',
+] satisfies ReadonlyArray<keyof UpdateLlmConfigInput>;
+
 // ============================================================================
 // Service
 // ============================================================================
@@ -110,20 +121,9 @@ export class LlmConfigService {
   }
 
   async update(id: string, input: UpdateLlmConfigInput): Promise<boolean> {
-    const patch: Record<string, unknown> = { updatedAt: sql`NOW()` };
-    if (input.name !== undefined) patch.name = input.name;
-    if (input.provider !== undefined) patch.provider = input.provider;
-    if (input.baseUrl !== undefined) patch.baseUrl = input.baseUrl;
-    if (input.apiKey !== undefined) patch.apiKey = input.apiKey;
-    if (input.model !== undefined) patch.model = input.model;
-    if (input.maxOutputTokens !== undefined) patch.maxOutputTokens = input.maxOutputTokens;
-    // thinkingEnabled / reasoningEffort 显式支持 null（清除覆盖，走模型默认）
-    if (input.thinkingEnabled !== undefined) patch.thinkingEnabled = input.thinkingEnabled;
-    if (input.reasoningEffort !== undefined) patch.reasoningEffort = input.reasoningEffort;
-
     const result = await db
       .update(schema.llmConfigs)
-      .set(patch)
+      .set(buildUpdatePatch(input))
       .where(eq(schema.llmConfigs.id, id))
       .returning({ id: schema.llmConfigs.id });
     return result.length > 0;
@@ -155,3 +155,16 @@ export class LlmConfigService {
 }
 
 export const llmConfigService = new LlmConfigService();
+
+function buildUpdatePatch(input: UpdateLlmConfigInput): Record<string, unknown> {
+  const patch: Record<string, unknown> = { updatedAt: sql`NOW()` };
+
+  for (const field of UPDATE_FIELDS) {
+    const value = input[field];
+    if (value !== undefined) {
+      patch[field] = value;
+    }
+  }
+
+  return patch;
+}

@@ -6,7 +6,7 @@
  */
 
 import type { ScriptCatalogEntry } from '@ivn/core/types';
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 
 export interface ScriptCardProps {
   entry: ScriptCatalogEntry;

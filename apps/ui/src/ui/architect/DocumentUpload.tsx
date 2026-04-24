@@ -9,10 +9,10 @@
  */
 
 import { useCallback, useRef } from 'react';
-import { useArchitectStore } from '../../stores/architect-store';
+import { useArchitectStore } from '@/stores/architect-store';
 import type { DocumentRole, UploadedDocument } from '@ivn/core/architect/types';
 import { estimateTokens } from '@ivn/core/tokens';
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 
 // ============================================================================
 // Role Labels

@@ -18,7 +18,7 @@
  */
 
 import { useCallback, useEffect } from 'react';
-import { useGameStore } from '../../../stores/game-store';
+import { useGameStore } from '@/stores/game-store';
 import { VNStage } from './VNStage';
 import { Backlog } from './Backlog';
 import { useDialogTypewriter } from './useDialogTypewriter';

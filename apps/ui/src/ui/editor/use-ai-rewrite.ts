@@ -1,6 +1,6 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
 import { LLMClient } from '@ivn/core/llm-client';
-import { entryToLLMConfig, useLLMConfigsStore } from '../../stores/llm-configs-store';
+import { entryToLLMConfig, useLLMConfigsStore } from '@/stores/llm-configs-store';
 import type { EditorDocument } from './editor-documents';
 
 export interface RewriteProgress {

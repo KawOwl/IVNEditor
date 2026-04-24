@@ -1,5 +1,5 @@
 import { estimateTokens } from '@ivn/core/tokens';
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 import type { EditorDocument } from './editor-documents';
 
 export function DocMetaBar({

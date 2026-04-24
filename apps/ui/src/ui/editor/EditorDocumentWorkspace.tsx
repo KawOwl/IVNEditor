@@ -2,7 +2,7 @@ import { CodeEditor } from './CodeEditor';
 import { DiffEditor } from './DiffEditor';
 import { DocMetaBar } from './DocMetaBar';
 import { VersionHistoryList, type VersionSummary } from './VersionHistoryList';
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 import type { EditorDocument, EditorDocumentMetaField } from './editor-documents';
 import type { RewriteProgress } from './use-ai-rewrite';
 import type { StateVarInfo } from '@/lib/editor/completion-sources';

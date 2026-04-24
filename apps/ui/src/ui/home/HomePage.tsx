@@ -7,8 +7,8 @@
  */
 
 import { useCallback } from 'react';
-import { useAppStore } from '../../stores/app-store';
-import { useAuthStore } from '../../stores/auth-store';
+import { useAppStore } from '@/stores/app-store';
+import { useAuthStore } from '@/stores/auth-store';
 import { ScriptCard } from './ScriptCard';
 import { getBackendUrl } from '@/lib/backend-url';
 

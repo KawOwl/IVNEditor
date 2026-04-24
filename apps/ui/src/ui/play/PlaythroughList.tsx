@@ -7,8 +7,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { getBackendUrl } from '@/lib/backend-url';
-import { fetchWithAuth } from '../../stores/player-session-store';
-import { cn } from '../../lib/utils';
+import { fetchWithAuth } from '@/stores/player-session-store';
+import { cn } from '@/lib/utils';
 
 // ============================================================================
 // Types

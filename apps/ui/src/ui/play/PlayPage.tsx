@@ -7,13 +7,13 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useAppStore } from '../../stores/app-store';
-import { useGameStore } from '../../stores/game-store';
+import { useAppStore } from '@/stores/app-store';
+import { useGameStore } from '@/stores/game-store';
 import { PlayPanel } from './PlayPanel';
 import { PlaythroughList } from './PlaythroughList';
 import { getTypewriterSpeed, setTypewriterSpeed } from './typewriter-speed';
 import type { ScriptManifest } from '@ivn/core/types';
-import { cn } from '../../lib/utils';
+import { cn } from '@/lib/utils';
 
 export interface PlayPageProps {
   manifest: ScriptManifest;
