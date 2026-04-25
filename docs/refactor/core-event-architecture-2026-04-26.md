@@ -72,6 +72,11 @@ used.
   core. The server now persists CoreEvent envelopes per playthrough and uses
   them on session open to derive the restore/continue point before falling back
   to historical narrative-entry recovery.
+- Server-side CoreEvent log storage allocates `sequence` inside the database
+  transaction with a per-playthrough advisory lock. This protects restore/reload
+  from stale `initialSequence` races when an old WebSocket sink still has
+  pending appends. See
+  `docs/refactor/core-event-log-sequence-ordering-2026-04-26.md`.
 - Historical `v1-tool-call` playthroughs have a readonly readback boundary that
   reconstructs Sentence streams from old narrative/tool entries without running
   the engine or using SessionEmitter projection.
