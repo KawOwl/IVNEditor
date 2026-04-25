@@ -20,6 +20,7 @@ import { playthroughService, type PlaythroughDetail } from '#internal/services/p
 import { scriptVersionService } from '#internal/services/script-version-service';
 import { llmConfigService, type LlmConfigRow } from '#internal/services/llm-config-service';
 import { resolvePlayerSession } from '#internal/auth-identity';
+import { resolveRestorableInputState } from '#internal/session-restore-input-state';
 import type { LLMConfig } from '@ivn/core/llm-client';
 import type { ScriptManifest } from '@ivn/core/types';
 
@@ -121,10 +122,11 @@ async function loadSessionOpenContext(
     return { ok: false, error: 'Invalid or expired session' };
   }
 
-  const detail = await playthroughService.getById(request.playthroughId, identity.userId, 50);
-  if (!detail) {
+  const rawDetail = await playthroughService.getById(request.playthroughId, identity.userId, 50);
+  if (!rawDetail) {
     return { ok: false, error: 'Playthrough not found' };
   }
+  const detail = await normalizeRestorableDetail(rawDetail);
 
   const version = await scriptVersionService.getById(detail.scriptVersionId);
   if (!version) {
@@ -147,6 +149,33 @@ async function loadSessionOpenContext(
       llmConfig: toLlmConfig(llmConfigRow),
     },
   };
+}
+
+async function normalizeRestorableDetail(detail: PlaythroughDetail): Promise<PlaythroughDetail> {
+  const needsInputRecovery =
+    detail.status === 'waiting-input' &&
+    !(detail.inputType === 'choice' && detail.choices && detail.choices.length > 0);
+
+  const recentEntries = needsInputRecovery && detail.hasMore
+    ? await playthroughService.loadLatestEntries(detail.id, 100)
+    : detail.entries;
+
+  const inputState = resolveRestorableInputState(detail, recentEntries);
+  if (
+    inputState.inputHint === detail.inputHint &&
+    inputState.inputType === detail.inputType &&
+    sameChoices(inputState.choices, detail.choices)
+  ) {
+    return detail;
+  }
+
+  return { ...detail, ...inputState };
+}
+
+function sameChoices(a: readonly string[] | null, b: readonly string[] | null): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((choice, index) => choice === b[index]);
 }
 
 function attachSessionWrapper(ws: SessionSocket, context: SessionOpenContext) {

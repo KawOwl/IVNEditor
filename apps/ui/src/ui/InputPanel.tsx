@@ -10,6 +10,7 @@
 import { useState, useCallback, type KeyboardEvent } from 'react';
 import { useGameStore } from '#internal/stores/game-store';
 import { cn } from '#internal/lib/utils';
+import { isAtReadableEnd } from '#internal/ui/input-panel-visibility';
 
 const DEFAULT_HINT = '你想做什么？';
 
@@ -37,17 +38,9 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
   const isDisabled = status !== 'waiting-input';
   const hasChoices = inputType === 'choice' && choices && choices.length > 0;
 
-  // 是否已读到最末有效 Sentence（跳过 scene_change + signal_input —— 跳过型 Sentence
-  // 不占 click，和 game-store.advanceSentence 保持一致的 skippable 定义）
-  const lastDisplayableIdx = (() => {
-    for (let i = parsedSentences.length - 1; i >= 0; i--) {
-      const kind = parsedSentences[i]?.kind;
-      if (kind !== 'scene_change' && kind !== 'signal_input') return i;
-    }
-    return -1;
-  })();
-  const isAtEnd =
-    visibleSentenceIndex !== null && visibleSentenceIndex >= lastDisplayableIdx;
+  // 是否已读到最末有效 Sentence（跳过 scene_change + signal_input）。
+  // 读档兜底：如果历史回放没解析出可读句子，也允许 waiting-input 选项显示。
+  const isAtEnd = isAtReadableEnd(parsedSentences, visibleSentenceIndex);
   const hasText = text.trim().length > 0;
 
   const handleSubmit = useCallback(() => {
