@@ -24,6 +24,13 @@ jobs:
     name: rollout to staging
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # environment 字段必须保留：它是 environment-scoped secret
+    # （KUBECONFIG_STAGING_CI 当前在 staging environment 下）的注入条件。
+    # 即使 GitHub Free private repo 不生效 protection rules，environment
+    # scope 本身仍工作。
+    environment:
+      name: staging
+      url: http://39.108.85.114:30001/
     steps:
       - name: 安装 kubectl
         uses: azure/setup-kubectl@v4
