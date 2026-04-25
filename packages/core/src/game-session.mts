@@ -4,8 +4,8 @@
  * 串联所有核心模块：
  *   StateStore, MemoryManager, ContextAssembler, ToolExecutor, LLMClient
  *
- * 通过 SessionEmitter 接口向视图层推送事件，不直接依赖 Zustand。
- * 这使得 GameSession 可以在前端或后端运行。
+ * 通过 SessionEmitter 输出运行时事件，不直接依赖 WebSocket、Zustand 或 DOM。
+ * 这使得 GameSession 可以被浏览器、后端服务或离线评测任务消费。
  *
  * 核心循环：Generate + Receive
  *   1. Generate: 组装 context → 调用 LLM（agentic tool loop）→ 追加记忆 → 按需压缩
@@ -68,6 +68,24 @@ type StepStartInfo = {
 };
 
 type TraceStepRecord = Parameters<GenerateTraceHandle['recordStep']>[0];
+type SceneTransition = 'fade' | 'cut' | 'dissolve';
+
+type GeneratedSentenceDraft =
+  | { kind: 'narration'; text: string }
+  | { kind: 'dialogue'; text: string; pf: ParticipationFrame; truncated?: boolean }
+  | { kind: 'scene_change'; scene: SceneState; transition?: SceneTransition };
+
+type NarrativeBatch = {
+  readonly sentences: ReadonlyArray<Sentence>;
+  readonly scratches: ReadonlyArray<ScratchBlock>;
+  readonly degrades: ReadonlyArray<DegradeEventV2>;
+};
+
+interface NarrativeRuntime {
+  feedTextChunk(chunk: string): void;
+  finalizeParser(): void;
+  flushPendingNarration(): void;
+}
 
 const TRACE_STEP_FIELDS = [
   'stepNumber',
@@ -99,6 +117,8 @@ export {
 } from '#internal/game-session/narration';
 export { computeReceivePayload } from '#internal/game-session/input-payload';
 export { applyScenePatchToState } from '#internal/game-session/scene-state';
+export { createRecordingSessionEmitter } from '#internal/game-session/recording-emitter';
+export type { RecordedSessionOutput, RecordingSessionEmitter } from '#internal/game-session/recording-emitter';
 export type {
   GameSessionConfig,
   GenerateTraceHandle,
@@ -197,7 +217,7 @@ export class GameSession {
   private backgrounds: ReadonlyArray<BackgroundAsset> = [];
 
   /**
-   * M3: applyScenePatch 完成后额外触发——发出 WS 事件 + 产出 scene_change Sentence。
+   * M3: applyScenePatch 完成后额外触发——发出场景事件 + 产出 scene_change Sentence。
    * 只在 generate() 执行期间非 null。由 generate() 内部初始化。
    */
   private scenePatchEmitter:
@@ -219,7 +239,7 @@ export class GameSession {
    *
    * 生命周期：
    *   - signal_input_needed.execute 调 recordPendingSignal 回调时设置
-   *   - generate() 因 stopWhen hit 而返回后，coreLoop 的 Receive 阶段读它决定 UI 模式
+   *   - generate() 因 stopWhen hit 而返回后，coreLoop 的 Receive 阶段读它决定输入模式
    *   - 玩家输入提交、写完 player_input entry 后清回 null
    *
    * null 表示"当前回合没有 signal（LLM 自然停止 / maxSteps / restore 后新一轮）"，
@@ -288,7 +308,7 @@ export class GameSession {
       this.currentScene = config.defaultScene ?? { background: null, sprites: [] };
       this.emitter.emitSceneChange(this.currentScene);
 
-      // Sync initial state to UI
+      // Sync initial debug/output state
       await this.syncDebugState();
 
       // Start core loop
@@ -330,7 +350,7 @@ export class GameSession {
         { background: null, sprites: [] };
       this.emitter.emitSceneChange(this.currentScene);
 
-      // 同步 UI
+      // 同步调试输出
       await this.syncDebugState();
 
       // 可观测性：恢复标记，方便 Langfuse UI 中识别"断点"
@@ -342,7 +362,7 @@ export class GameSession {
       this.active = true;
 
       // 如果这个 playthrough 已经结束了，直接进入 finished 状态不再启动循环。
-      // 前端会看到只读的叙事历史。
+      // 消费端会看到只读的叙事历史。
       if (config.status === 'finished') {
         this.active = false;
         this.emitter.setStatus('finished');
@@ -351,7 +371,7 @@ export class GameSession {
 
       // 根据恢复时的状态决定进入点
       if (config.status === 'waiting-input') {
-        // 恢复 UI 状态（choices/hint）
+        // 恢复输入请求状态（choices/hint）
         if (config.inputHint) this.emitter.setInputHint(config.inputHint);
         if (config.inputType === 'choice' && config.choices?.length) {
           this.emitter.setInputType('choice', config.choices);
@@ -475,47 +495,14 @@ export class GameSession {
   private async coreLoop(): Promise<void> {
     while (this.active) {
       // --- Generate Phase ---
-      this.emitter.setStatus('generating');
-      const turn = this.stateStore.getTurn() + 1;
-      this.stateStore.setTurn(turn);
-      // Bug A 修复：把 turn 挂到实例，recordPendingSignal 里 memory.appendTurn 要用
-      this.currentTurn = turn;
-
-      // ① 持久化：generate 开始
-      await this.persistence?.onGenerateStart(turn).catch((e) =>
-        console.error('[Persistence] onGenerateStart failed:', e));
-
-      // migration 0011：新 generate 开始，清空 batchId 防上一轮残留串台
-      this.currentStepBatchId = null;
+      const turn = await this.beginGenerateTurn();
 
       // 🔭 可观测性：为这一轮 generate 开启 trace（在 try 外层定义，catch 也能访问）
       const traceHandle: GenerateTraceHandle | undefined = this.tracing?.startGenerateTrace(turn);
       const toolCallStack = new Map<string, ToolCallTraceHandle[]>();
 
       try {
-        // Create tools with turn-bounded recordPendingSignal handler
-        const allTools = createTools({
-          stateStore: this.stateStore,
-          memory: this.memory,
-          segments: this.segments,
-          recordPendingSignal: async (options) => {
-            await this.recordPendingSignal(options);
-          },
-          onSetMood: (_mood) => {
-            // TODO: connect to UI mood system
-          },
-          onScenarioEnd: (reason) => {
-            // 只记下 flag；实际的"退出循环 + 持久化"在本轮 generate 返回后做。
-            // 这样 LLM 在 end_scenario 之后还能继续输出一小段收尾文字再 stop。
-            this.scenarioEnded = true;
-            this.scenarioEndReason = reason;
-          },
-          onSceneChange: (patch) => {
-            // M3 Part D 会在这里把 patch 应用到 this.currentScene 并
-            // 通过 emitter 推给前端。现在只记录调用，保证 tsc 通过。
-            this.applyScenePatch(patch);
-          },
-        });
+        const allTools = this.createTurnTools();
         const enabledToolSet = getEnabledTools(allTools, this.enabledTools);
 
         // Assemble context —— 抽成闭包，让 prepareStep hook 里也能按当前 state 重调。
@@ -603,136 +590,8 @@ export class GameSession {
           messages: debugMessages,
         });
 
-        // Parser 分叉：v1 走 XML-lite + 视觉工具；v2 走声明式视觉 IR。
-        let turnSentenceIndex = 0;
-        const emitSentenceFrom = (
-          partial:
-            | { kind: 'narration'; text: string }
-            | { kind: 'dialogue'; text: string; pf: ParticipationFrame; truncated?: boolean }
-            | { kind: 'scene_change'; scene: SceneState; transition?: 'fade' | 'cut' | 'dissolve' },
-        ) => {
-          const base = { turnNumber: turn, index: turnSentenceIndex++ };
-          let sentence: Sentence;
-          if (partial.kind === 'narration') {
-            sentence = { kind: 'narration', text: partial.text, sceneRef: { ...this.currentScene }, ...base };
-          } else if (partial.kind === 'dialogue') {
-            sentence = {
-              kind: 'dialogue',
-              text: partial.text,
-              pf: partial.pf,
-              sceneRef: { ...this.currentScene },
-              ...base,
-              ...(partial.truncated !== undefined ? { truncated: partial.truncated } : {}),
-            };
-          } else {
-            sentence = {
-              kind: 'scene_change',
-              scene: partial.scene,
-              ...(partial.transition !== undefined ? { transition: partial.transition } : {}),
-              ...base,
-            };
-          }
-          this.emitter.appendSentence(sentence);
-        };
-
-        let feedTextChunk: (chunk: string) => void;
-        let finalizeParser: () => void;
-        let flushPendingNarration: () => void;
-
-        if (this.protocolVersion === 'v2-declarative-visual') {
-          const parserV2: NarrativeParserV2 = createParserV2({
-            manifest: this.parserManifest!,
-            turnNumber: turn,
-            startIndex: 0,
-            initialScene: { ...this.currentScene },
-          });
-
-          const drainBatch = (batch: {
-            readonly sentences: ReadonlyArray<Sentence>;
-            readonly scratches: ReadonlyArray<ScratchBlock>;
-            readonly degrades: ReadonlyArray<DegradeEventV2>;
-          }) => {
-            for (const sentence of batch.sentences) {
-              if (sentence.kind !== 'scene_change') {
-                this.currentScene = { ...sentence.sceneRef };
-              }
-              this.emitter.appendSentence(sentence);
-              turnSentenceIndex = Math.max(turnSentenceIndex, sentence.index + 1);
-              if (sentence.kind === 'dialogue' && sentence.truncated) {
-                traceHandle?.event(
-                  'narrative-truncation',
-                  { speaker: sentence.pf.speaker, partialLength: sentence.text.length },
-                  { turn, kind: 'dialogue' },
-                );
-              }
-              if (sentence.kind === 'narration' && sentence.truncated) {
-                traceHandle?.event(
-                  'narrative-truncation',
-                  { partialLength: sentence.text.length },
-                  { turn, kind: 'narration' },
-                );
-              }
-            }
-            if (batch.scratches.length > 0) {
-              traceHandle?.event(
-                'ir-scratch',
-                {
-                  count: batch.scratches.length,
-                  totalChars: batch.scratches.reduce((n, scratch) => n + scratch.text.length, 0),
-                },
-                { turn },
-              );
-            }
-            for (const degrade of batch.degrades) {
-              traceHandle?.event(
-                `ir-degrade:${degrade.code}`,
-                degrade.detail ? { detail: degrade.detail } : {},
-                { turn },
-              );
-            }
-          };
-
-          feedTextChunk = (chunk) => drainBatch(parserV2.feed(chunk));
-          finalizeParser = () => drainBatch(parserV2.finalize());
-          flushPendingNarration = () => {};
-          this.scenePatchEmitter = null;
-        } else {
-          const narrationAcc = createNarrationAccumulator((para) =>
-            emitSentenceFrom({ kind: 'narration', text: para }),
-          );
-          flushPendingNarration = () => narrationAcc.flush();
-
-          const narrativeParser = new NarrativeParser({
-            onNarrationChunk: (text) => narrationAcc.push(text),
-            onDialogueStart: () => {
-              flushPendingNarration();
-            },
-            onDialogueEnd: (pf, fullText, truncated) => {
-              emitSentenceFrom({ kind: 'dialogue', text: fullText, pf, truncated });
-              if (truncated) {
-                traceHandle?.event(
-                  'narrative-truncation',
-                  { speaker: pf.speaker, partialLength: fullText.length },
-                  { turn, kind: 'dialogue' },
-                );
-              }
-            },
-          });
-
-          feedTextChunk = (chunk) => narrativeParser.push(chunk);
-          finalizeParser = () => narrativeParser.finalize();
-          this.scenePatchEmitter = (transition) => {
-            flushPendingNarration();
-            this.emitter.emitSceneChange(this.currentScene, transition);
-            emitSentenceFrom({ kind: 'scene_change', scene: { ...this.currentScene }, transition });
-            traceHandle?.event(
-              'scene-change',
-              { scene: this.currentScene, transition },
-              { turn },
-            );
-          };
-        }
-        this.pendingNarrationFlusher = flushPendingNarration;
+        const narrativeRuntime = this.createNarrativeRuntime(turn, traceHandle);
+        this.pendingNarrationFlusher = narrativeRuntime.flushPendingNarration;
 
         // Call LLM (agentic tool loop — stopWhen 在 signal_input_needed / end_scenario 触发时拦截)
         //
@@ -784,7 +643,7 @@ export class GameSession {
             this.currentNarrativeBuffer += chunk;
             this.emitter.appendToStreamingEntry(chunk);
             // M3: 同步喂给 Narrative Parser 产出结构化 Sentence[]
-            feedTextChunk(chunk);
+            narrativeRuntime.feedTextChunk(chunk);
           },
           onReasoningChunk: (chunk) => {
             this.currentReasoningBuffer += chunk;
@@ -829,10 +688,10 @@ export class GameSession {
         this.abortController = null;
 
         // M3: parser 末尾降级（v1 未闭合 <d>，v2 未闭合顶层容器）
-        finalizeParser();
+        narrativeRuntime.finalizeParser();
         // finalize 会把 parser 里剩余的 narrationBuffer emit 成 onNarrationChunk，
-        // 最后再 flush 一次 session 层累积器，保证整 generate 的 narration 全到前端
-        flushPendingNarration();
+        // 最后再 flush 一次 session 层累积器，保证整 generate 的 narration 全输出
+        narrativeRuntime.flushPendingNarration();
         this.scenePatchEmitter = null;
         this.pendingNarrationFlusher = null;
 
@@ -937,76 +796,11 @@ export class GameSession {
       // --- Receive Phase ---
       // 方案 B（turn-bounded）下所有 generate() 返回后都走这里等输入：
       //   - pendingSignal 非空：LLM 调 signal_input_needed → stopWhen 拦截 → 用 signal
-      //     的 hint/choices 做 UI（choice 或 freetext，看 choices 长度）
-      //   - pendingSignal 空：LLM 自然停止 / maxSteps 触发 → 用 freetext UI 兜底
+      //     的 hint/choices 做输入请求（choice 或 freetext，看 choices 长度）
+      //   - pendingSignal 空：LLM 自然停止 / maxSteps 触发 → 用 freetext 兜底
       // 玩家输入后 clear pendingSignal，next iteration 开新 generate()。
       if (this.active) {
-        // Snapshot pendingSignal 副本：recordPendingSignal 已经完事，
-        // 我们在 coreLoop 内消费。下一轮 generate 开始前清零。
-        const signal = this.pendingSignal;
-        const waitingHint = signal?.hint ?? null;
-        const waitingChoices = signal?.choices && signal.choices.length > 0 ? signal.choices : null;
-        const waitingInputType = waitingChoices ? 'choice' : 'freetext';
-
-        // UI 状态：hint + input-type（以及可选 choices）
-        this.emitter.setInputHint(waitingHint);
-        this.emitter.setInputType(waitingInputType, waitingChoices);
-        this.emitter.setStatus('waiting-input');
-
-        // ③ 持久化：onWaitingInput 快照（signal / freetext 统一调一次）
-        //    2026-04-24：stateVars 也在这一刻持久化 —— 本轮 LLM update_state
-        //    改动的 state（比如 chapter 切换）必须立即入库，否则断线重连时
-        //    DB state 滞后一个回合（history 在 ch2、state_vars 仍 ch1）
-        const memSnapWait = await this.memory.snapshot();
-        await this.persistence?.onWaitingInput({
-          hint: waitingHint,
-          inputType: waitingInputType,
-          choices: waitingChoices,
-          memorySnapshot: memSnapWait,
-          currentScene: this.currentScene,
-          stateVars: this.stateStore.getAll(),
-        }).catch((e) => console.error('[Persistence] onWaitingInput failed:', e));
-
-        const inputText = await this.waitForInput();
-
-        if (!this.active) break; // stopped while waiting
-
-        // Clear error banner on new input
-        this.emitter.setError(null);
-
-        if (inputText) {
-          // 方案 B：pendingSignal 的 choices 拿来算 selectedIndex（命中 → choice）
-          const payload = signal
-            ? computeReceivePayload(inputText, signal.choices)
-            : ({ inputType: 'freetext' as const });
-
-          this.emitter.appendEntry({ role: 'receive', content: inputText });
-          this.emitPlayerInputSentence(inputText, payload.selectedIndex);
-
-          await this.memory.appendTurn({
-            turn,
-            role: 'receive',
-            content: inputText,
-            tokenCount: estimateTokens(inputText),
-          });
-
-          // ④ 持久化：receive 完成
-          const memSnapRx = await this.memory.snapshot();
-          await this.persistence?.onReceiveComplete({
-            entry: { role: 'receive', content: inputText },
-            stateVars: this.stateStore.getAll(),
-            turn,
-            memorySnapshot: memSnapRx,
-            payload,
-            // migration 0011：玩家一次提交独立 batchId（未来多模态一次提交多 entry 共享）
-            batchId: crypto.randomUUID(),
-          }).catch((e) => console.error('[Persistence] onReceiveComplete failed:', e));
-        }
-
-        // 清状态：下一 iteration 从全新 generate 开始
-        this.pendingSignal = null;
-        this.emitter.setInputHint(null);
-        this.emitter.setInputType('freetext');
+        await this.runReceivePhase(turn);
       }
     }
   }
@@ -1014,6 +808,280 @@ export class GameSession {
   // ============================================================================
   // Helpers
   // ============================================================================
+
+  private async beginGenerateTurn(): Promise<number> {
+    this.emitter.setStatus('generating');
+    const turn = this.stateStore.getTurn() + 1;
+    this.stateStore.setTurn(turn);
+    // Bug A 修复：把 turn 挂到实例，recordPendingSignal 里 memory.appendTurn 要用
+    this.currentTurn = turn;
+
+    // ① 持久化：generate 开始
+    await this.persistence?.onGenerateStart(turn).catch((e) =>
+      console.error('[Persistence] onGenerateStart failed:', e));
+
+    // migration 0011：新 generate 开始，清空 batchId 防上一轮残留串台
+    this.currentStepBatchId = null;
+    return turn;
+  }
+
+  private createTurnTools(): ReturnType<typeof createTools> {
+    return createTools({
+      stateStore: this.stateStore,
+      memory: this.memory,
+      segments: this.segments,
+      recordPendingSignal: async (options) => {
+        await this.recordPendingSignal(options);
+      },
+      onSetMood: () => {
+        // TODO: connect to mood-capable output consumers.
+      },
+      onScenarioEnd: (reason) => {
+        // 只记下 flag；实际的"退出循环 + 持久化"在本轮 generate 返回后做。
+        // 这样 LLM 在 end_scenario 之后还能继续输出一小段收尾文字再 stop。
+        this.scenarioEnded = true;
+        this.scenarioEndReason = reason;
+      },
+      onSceneChange: (patch) => {
+        this.applyScenePatch(patch);
+      },
+    });
+  }
+
+  private createNarrativeRuntime(
+    turn: number,
+    traceHandle: GenerateTraceHandle | undefined,
+  ): NarrativeRuntime {
+    return this.protocolVersion === 'v2-declarative-visual'
+      ? this.createDeclarativeNarrativeRuntime(turn, traceHandle)
+      : this.createToolDrivenNarrativeRuntime(turn, traceHandle);
+  }
+
+  private createDeclarativeNarrativeRuntime(
+    turn: number,
+    traceHandle: GenerateTraceHandle | undefined,
+  ): NarrativeRuntime {
+    const parserV2: NarrativeParserV2 = createParserV2({
+      manifest: this.parserManifest!,
+      turnNumber: turn,
+      startIndex: 0,
+      initialScene: { ...this.currentScene },
+    });
+
+    const drainBatch = (batch: NarrativeBatch) => {
+      for (const sentence of batch.sentences) {
+        if (sentence.kind !== 'scene_change') {
+          this.currentScene = { ...sentence.sceneRef };
+        }
+        this.emitter.appendSentence(sentence);
+        if (sentence.kind === 'dialogue' && sentence.truncated) {
+          this.traceNarrativeTruncation(traceHandle, turn, {
+            kind: 'dialogue',
+            speaker: sentence.pf.speaker,
+            partialLength: sentence.text.length,
+          });
+        }
+        if (sentence.kind === 'narration' && sentence.truncated) {
+          this.traceNarrativeTruncation(traceHandle, turn, {
+            kind: 'narration',
+            partialLength: sentence.text.length,
+          });
+        }
+      }
+
+      if (batch.scratches.length > 0) {
+        traceHandle?.event(
+          'ir-scratch',
+          {
+            count: batch.scratches.length,
+            totalChars: batch.scratches.reduce((n, scratch) => n + scratch.text.length, 0),
+          },
+          { turn },
+        );
+      }
+
+      for (const degrade of batch.degrades) {
+        traceHandle?.event(
+          `ir-degrade:${degrade.code}`,
+          degrade.detail ? { detail: degrade.detail } : {},
+          { turn },
+        );
+      }
+    };
+
+    this.scenePatchEmitter = null;
+    return {
+      feedTextChunk: (chunk) => drainBatch(parserV2.feed(chunk)),
+      finalizeParser: () => drainBatch(parserV2.finalize()),
+      flushPendingNarration: () => {},
+    };
+  }
+
+  private createToolDrivenNarrativeRuntime(
+    turn: number,
+    traceHandle: GenerateTraceHandle | undefined,
+  ): NarrativeRuntime {
+    let turnSentenceIndex = 0;
+    const emitSentence = (draft: GeneratedSentenceDraft) => {
+      this.emitter.appendSentence(
+        this.createGeneratedSentence(draft, turn, turnSentenceIndex),
+      );
+      turnSentenceIndex += 1;
+    };
+
+    const narrationAcc = createNarrationAccumulator((para) =>
+      emitSentence({ kind: 'narration', text: para }),
+    );
+    const flushPendingNarration = () => narrationAcc.flush();
+
+    const narrativeParser = new NarrativeParser({
+      onNarrationChunk: (text) => narrationAcc.push(text),
+      onDialogueStart: () => {
+        flushPendingNarration();
+      },
+      onDialogueEnd: (pf, fullText, truncated) => {
+        emitSentence({ kind: 'dialogue', text: fullText, pf, truncated });
+        if (truncated) {
+          this.traceNarrativeTruncation(traceHandle, turn, {
+            kind: 'dialogue',
+            speaker: pf.speaker,
+            partialLength: fullText.length,
+          });
+        }
+      },
+    });
+
+    this.scenePatchEmitter = (transition) => {
+      flushPendingNarration();
+      this.emitter.emitSceneChange(this.currentScene, transition);
+      emitSentence({ kind: 'scene_change', scene: { ...this.currentScene }, transition });
+      traceHandle?.event(
+        'scene-change',
+        { scene: this.currentScene, transition },
+        { turn },
+      );
+    };
+
+    return {
+      feedTextChunk: (chunk) => narrativeParser.push(chunk),
+      finalizeParser: () => narrativeParser.finalize(),
+      flushPendingNarration,
+    };
+  }
+
+  private createGeneratedSentence(
+    draft: GeneratedSentenceDraft,
+    turnNumber: number,
+    index: number,
+  ): Sentence {
+    const base = { turnNumber, index };
+
+    if (draft.kind === 'narration') {
+      return { kind: 'narration', text: draft.text, sceneRef: { ...this.currentScene }, ...base };
+    }
+
+    if (draft.kind === 'dialogue') {
+      return {
+        kind: 'dialogue',
+        text: draft.text,
+        pf: draft.pf,
+        sceneRef: { ...this.currentScene },
+        ...base,
+        ...(draft.truncated !== undefined ? { truncated: draft.truncated } : {}),
+      };
+    }
+
+    return {
+      kind: 'scene_change',
+      scene: draft.scene,
+      ...(draft.transition !== undefined ? { transition: draft.transition } : {}),
+      ...base,
+    };
+  }
+
+  private traceNarrativeTruncation(
+    traceHandle: GenerateTraceHandle | undefined,
+    turn: number,
+    event:
+      | { kind: 'dialogue'; speaker: string; partialLength: number }
+      | { kind: 'narration'; partialLength: number },
+  ): void {
+    traceHandle?.event(
+      'narrative-truncation',
+      event.kind === 'dialogue'
+        ? { speaker: event.speaker, partialLength: event.partialLength }
+        : { partialLength: event.partialLength },
+      { turn, kind: event.kind },
+    );
+  }
+
+  private async runReceivePhase(turn: number): Promise<void> {
+    // Snapshot pendingSignal 副本：recordPendingSignal 已经完事，
+    // 我们在 coreLoop 内消费。下一轮 generate 开始前清零。
+    const signal = this.pendingSignal;
+    const waitingHint = signal?.hint ?? null;
+    const waitingChoices = signal?.choices && signal.choices.length > 0 ? signal.choices : null;
+    const waitingInputType = waitingChoices ? 'choice' : 'freetext';
+
+    // 输入请求状态：hint + input-type（以及可选 choices）
+    this.emitter.setInputHint(waitingHint);
+    this.emitter.setInputType(waitingInputType, waitingChoices);
+    this.emitter.setStatus('waiting-input');
+
+    // ③ 持久化：onWaitingInput 快照（signal / freetext 统一调一次）
+    //    2026-04-24：stateVars 也在这一刻持久化 —— 本轮 LLM update_state
+    //    改动的 state（比如 chapter 切换）必须立即入库，否则断线重连时
+    //    DB state 滞后一个回合（history 在 ch2、state_vars 仍 ch1）
+    const memSnapWait = await this.memory.snapshot();
+    await this.persistence?.onWaitingInput({
+      hint: waitingHint,
+      inputType: waitingInputType,
+      choices: waitingChoices,
+      memorySnapshot: memSnapWait,
+      currentScene: this.currentScene,
+      stateVars: this.stateStore.getAll(),
+    }).catch((e) => console.error('[Persistence] onWaitingInput failed:', e));
+
+    const inputText = await this.waitForInput();
+    if (!this.active) return;
+
+    // Clear error banner on new input
+    this.emitter.setError(null);
+
+    if (inputText) {
+      // 方案 B：pendingSignal 的 choices 拿来算 selectedIndex（命中 → choice）
+      const payload = signal
+        ? computeReceivePayload(inputText, signal.choices)
+        : ({ inputType: 'freetext' as const });
+
+      this.emitter.appendEntry({ role: 'receive', content: inputText });
+      this.emitPlayerInputSentence(inputText, payload.selectedIndex);
+
+      await this.memory.appendTurn({
+        turn,
+        role: 'receive',
+        content: inputText,
+        tokenCount: estimateTokens(inputText),
+      });
+
+      // ④ 持久化：receive 完成
+      const memSnapRx = await this.memory.snapshot();
+      await this.persistence?.onReceiveComplete({
+        entry: { role: 'receive', content: inputText },
+        stateVars: this.stateStore.getAll(),
+        turn,
+        memorySnapshot: memSnapRx,
+        payload,
+        // migration 0011：玩家一次提交独立 batchId（未来多模态一次提交多 entry 共享）
+        batchId: crypto.randomUUID(),
+      }).catch((e) => console.error('[Persistence] onReceiveComplete failed:', e));
+    }
+
+    // 清状态：下一 iteration 从全新 generate 开始
+    this.pendingSignal = null;
+    this.emitter.setInputHint(null);
+    this.emitter.setInputType('freetext');
+  }
 
   private handleStepStart(info: StepStartInfo): void {
     // Bug B 修复（2026-04-24）：在 step 开始时就缓存 batchId，让本 step 内
@@ -1066,16 +1134,16 @@ export class GameSession {
   }
 
   /**
-   * 把玩家输入 emit 成一条 `player_input` Sentence，让 VN UI（对话框 / backlog）
-   * 能显示"玩家的回复气泡"。
+   * 把玩家输入 emit 成一条 `player_input` Sentence，让 VN / ivn-xml 消费端
+   * 能投影出"玩家的回复气泡"。
    *
    * 在 signal 挂起路径和外循环 Receive 路径下都要调，保持叙事流里玩家和 GM
    * 一问一答的顺序。restore 路径也会为 `role='receive'` entries 合成同样的 Sentence
    * （在 ws-client-emitter 的 'restored' 分支里做）。
    *
    * index 用 Date.now()：player_input 不在 generate 内部的 turnSentenceIndex
-   * 序列里，只需要全局单调即可（前端按 parsedSentences 数组顺序渲染，index 字段
-   * 只是 React key 和诊断标识）。
+   * 序列里，只需要全局单调即可（消费端按 appendSentence 顺序推进，index 字段
+   * 主要是诊断标识）。
    */
   private emitPlayerInputSentence(text: string, selectedIndex?: number): void {
     this.emitter.appendSentence({
@@ -1092,11 +1160,10 @@ export class GameSession {
    * 把 signal_input_needed 事件 emit 成一条 `signal_input` Sentence（migration
    * 0010 / Step 4），让 backlog 回看时能看到"GM 问了什么、给了哪些选项"。
    *
-   * 对话框里不占 click（game-store 的 advanceSentence 自动跳过）；live 交互
-   * 由 game-store.choices 面板承担。
+   * 交互视图里不占 click；live 交互由当前 consumer 的 input request 承担。
    *
    * 和 `onSignalInputRecorded` DB 写入配对，两者同时调用：
-   *   - appendSentence → WS 'sentence' 事件 → game-store.parsedSentences
+   *   - appendSentence → 输出端口的 sentence 事件
    *   - onSignalInputRecorded → narrative_entries 表（供下次 restore 重放）
    */
   private emitSignalInputSentence(hint: string, choices: string[]): void {
@@ -1120,8 +1187,8 @@ export class GameSession {
    *   3. 外层 coreLoop 看到 this.pendingSignal 非空，进入 Receive 阶段等玩家输入
    *
    * 本方法内部做的事：
-   *   - flush pendingNarrationFlusher → VN UI 先看到叙事 Sentence 再看到选项
-   *   - emit signal_input Sentence 到 VN UI
+   *   - flush pendingNarrationFlusher → 消费端先收到叙事 Sentence 再收到选项
+   *   - emit signal_input Sentence 到输出端口
    *   - 写 signal_input entry 进 narrative_entries（供 restore / backlog）
    *   - 设 this.pendingSignal 供 coreLoop 读
    *
@@ -1129,7 +1196,7 @@ export class GameSession {
    *   - **不** flush currentNarrativeBuffer 到 DB。挂起模式 v1 时代会做，
    *     方案 B 下冗余（见下方 ★ 2 注释 + messages-builder.test.ts A1-A3
    *     canonical tests 证明 batchId 分组机制足够）
-   *   - 不设 UI 状态为 waiting-input（generate 还在 generating，stopWhen 拦截后 coreLoop 切 UI）
+   *   - 不设 waiting-input（generate 还在 generating，stopWhen 拦截后 coreLoop 统一切换）
    *   - 不调 onWaitingInput（由 coreLoop 在 generate 返回后统一调）
    *   - 不 return Promise（execute 的 async 立即 resolve → tool_result success:true 可用）
    */
@@ -1137,7 +1204,7 @@ export class GameSession {
     const hint = options.hint ?? '';
     const choices = options.choices ?? [];
 
-    // ★ 1. flush 累积的 narration 段落 Sentence 到 VN UI（WS 'sentence' 事件），
+    // ★ 1. flush 累积的 narration 段落 Sentence 到输出端口，
     //    让玩家先看到叙事再看到选项。
     this.pendingNarrationFlusher?.();
 
@@ -1145,14 +1212,14 @@ export class GameSession {
     //    memory + DB，**之后**再写 signal_input entry。
     //
     //    为什么必须现在刷：narrative_entries 的 orderIdx 是 DB INSERT 时分配
-    //    的自增序号，restore 时前端按 orderIdx ASC 回放。如果 signal_input
+    //    的自增序号，restore 时消费端按 orderIdx ASC 回放。如果 signal_input
     //    先 insert（orderIdx=N），narrative 留到 generate 结束才 insert
     //    （orderIdx=N+1），restore 回放顺序就变成"选项 → 旁白"，和直播顺序
     //    （旁白 → 选项）完全颠倒，玩家读档后看到的历史一塌糊涂（Bug A 现象）。
     //
     //    之前的注释说"messages-builder 按 batchId 分组 orderIdx 颠倒不影响" ——
     //    那是对 LLM 看到的 assistant message 上下文的修复，messages-builder
-    //    确实能按 batchId 合并。但 **history restore 给前端** 走的是
+    //    确实能按 batchId 合并。但 **history restore 给消费端** 走的是
     //    loadEntries → Sentence 序列（ws-client-emitter case 'restored'），
     //    这条路径没有 messages-builder，它按 orderIdx 逐条 replay，所以这里
     //    的顺序颠倒就是玩家可见的问题。
@@ -1246,7 +1313,7 @@ export class GameSession {
    * M3: 应用 change_scene / change_sprite / clear_stage 工具产生的 scene patch。
    * 步骤：
    *   1. 更新 this.currentScene
-   *   2. 通过 scenePatchEmitter（由 generate() 装载）emit WS 事件 + Sentence
+   *   2. 通过 scenePatchEmitter（由 generate() 装载）emit 场景事件 + Sentence
    *   3. onGenerateComplete 时把 currentScene 持久化到 DB
    */
   private applyScenePatch(patch: ScenePatch): void {

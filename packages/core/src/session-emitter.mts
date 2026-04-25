@@ -1,11 +1,13 @@
 /**
- * SessionEmitter — 引擎运行时与视图层的解耦接口
+ * SessionEmitter — GameSession 的输出端口
  *
- * GameSession 通过此接口向外部推送事件，不直接依赖 Zustand 或任何 UI 框架。
+ * GameSession 通过此接口向外部推送事件。它只描述 core loop 的可观察输出，
+ * 不直接依赖 WebSocket、Zustand、DOM 或任何具体视图。
  *
- * 实现方式：
- *   - LocalSessionEmitter: 直接写 Zustand store（当前，前端单体）
- *   - 未来：WebSocket/SSE 实现（引擎在后端运行，事件推送到前端）
+ * 典型消费者：
+ *   - WebSocketSessionEmitter: 后端运行时把事件序列化给前端
+ *   - RecordingSessionEmitter: 测试 / 评测任务直接收集事件快照
+ *   - 未来 ivn-xml consumer: 后端或批量评测场景把 Sentence/Scene 投影成专用视图协议
  */
 
 import type {
@@ -88,11 +90,11 @@ export interface SessionEmitter {
   // --- VN Scene & Narrative (M3) ---
   /**
    * 一个已产出的 Sentence 追加到 playthrough 的 sentences 序列。
-   * 前端 VN UI 消费这个作为推进单元。
+   * VN / ivn-xml / 评测 consumer 消费这个作为推进单元。
    */
   appendSentence(sentence: Sentence): void;
   /**
-   * 场景变化（background / sprites）。前端 VN UI 更新 currentScene。
+   * 场景变化（background / sprites）。consumer 用它更新 currentScene。
    * 注：调用顺序和 appendSentence('scene_change') 一致——在发出 Sentence 前先 emit。
    */
   emitSceneChange(scene: SceneState, transition?: 'fade' | 'cut' | 'dissolve'): void;
