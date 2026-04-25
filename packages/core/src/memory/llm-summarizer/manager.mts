@@ -59,7 +59,7 @@ export class LLMSummarizerMemory implements Memory {
 
   constructor(
     private readonly config: MemoryConfig,
-    llmClient: LLMClient,
+    llmClient: Pick<LLMClient, 'generate'>,
     private readonly reader?: NarrativeHistoryReader,
   ) {
     this.compressFn = makeLLMCompressFn(llmClient);

@@ -174,7 +174,7 @@ export interface CreateMemoryOptions {
   scope: MemoryScope;
   config: MemoryConfig;
   /** LLMSummarizer 需要；legacy / mem0 忽略 */
-  llmClient?: LLMClient;
+  llmClient?: Pick<LLMClient, 'generate'>;
   /** Mem0 adapter 需要；由宿主运行时读取并验证 env 后注入，core 不读 process.env。 */
   mem0ApiKey?: string;
   /**
