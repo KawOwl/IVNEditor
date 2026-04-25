@@ -152,6 +152,14 @@ export type NarrativeCoreEvent =
         readonly finishReason?: string;
       };
       readonly sceneAfter: SceneState;
+    }
+  | {
+      readonly type: 'scene-changed';
+      readonly turnId: TurnId;
+      readonly batchId: BatchId | null;
+      readonly scene: SceneState;
+      readonly transition?: 'fade' | 'cut' | 'dissolve';
+      readonly sentence: Extract<Sentence, { kind: 'scene_change' }>;
     };
 
 export type InputCoreEvent =

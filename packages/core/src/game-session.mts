@@ -73,6 +73,10 @@ export type { RecordedSessionOutput, RecordingSessionEmitter } from '#internal/g
 export * from '#internal/game-session/core-events';
 export { validateCoreEventSequence } from '#internal/game-session/core-event-protocol';
 export { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
+export {
+  createSessionEmitterProjection,
+  projectCoreEventToSessionEmitter,
+} from '#internal/game-session/session-emitter-projection';
 export type {
   GameSessionConfig,
   GenerateTraceHandle,

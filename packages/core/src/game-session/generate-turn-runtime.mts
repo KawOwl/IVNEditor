@@ -682,10 +682,21 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   ): NarrativeRuntime {
     let turnSentenceIndex = 0;
     const emitSentence = (draft: GeneratedSentenceDraft) => {
-      this.deps.emitter.appendSentence(
-        this.createGeneratedSentence(draft, turnSentenceIndex),
-      );
+      const sentence = this.createGeneratedSentence(draft, turnSentenceIndex);
+      this.deps.emitter.appendSentence(sentence);
+      if (sentence.kind !== 'scene_change') {
+        this.publish({
+          type: 'narrative-batch-emitted',
+          turnId: this.turnId,
+          batchId: toBatchId(this.currentStepBatchId),
+          sentences: [copyRuntimeSentence(sentence)],
+          scratches: [],
+          degrades: [],
+          sceneAfter: copyScene(this.currentScene),
+        });
+      }
       turnSentenceIndex += 1;
+      return sentence;
     };
 
     const narrationAcc = createNarrationAccumulator((para) =>
@@ -713,7 +724,17 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     this.scenePatchEmitter = (transition) => {
       flushPendingNarration();
       this.deps.emitter.emitSceneChange(this.currentScene, transition);
-      emitSentence({ kind: 'scene_change', scene: copyScene(this.currentScene), transition });
+      const sentence = emitSentence({ kind: 'scene_change', scene: copyScene(this.currentScene), transition });
+      if (sentence.kind === 'scene_change') {
+        this.publish({
+          type: 'scene-changed',
+          turnId: this.turnId,
+          batchId: toBatchId(this.currentStepBatchId),
+          scene: copyScene(this.currentScene),
+          ...(transition !== undefined ? { transition } : {}),
+          sentence,
+        });
+      }
       traceHandle?.event(
         'scene-change',
         { scene: this.currentScene, transition },

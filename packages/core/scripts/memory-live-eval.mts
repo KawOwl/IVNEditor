@@ -32,6 +32,7 @@ async function main(): Promise<void> {
   await Bun.write(outputPath, `${JSON.stringify(report, null, 2)}\n`);
 
   const protocolFailures = report.runs.filter((run) => !run.coreEventProtocol.ok);
+  const projectionFailures = report.runs.filter((run) => !run.sessionEmitterProjection.ok);
   const inputRequestCounts = report.runs.map((run) => run.recording.inputRequests.length);
 
   console.log(`live memory eval wrote ${outputPath}`);
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
   console.log(`variants=${report.runs.map((run) => run.variantId).join(', ')}`);
   console.log(`turns=${report.runs.map((run) => `${run.variantId}:${run.turnsRun}`).join(', ')}`);
   console.log(`inputRequests=${inputRequestCounts.join(', ')}`);
+  console.log(`sessionEmitterProjection=${projectionFailures.length === 0 ? 'ok' : 'failed'}`);
   console.log(`llm thinkingEnabled=${String(llmConfig.thinkingEnabled)}`);
   console.log(`llm reasoningEffort=${String(llmConfig.reasoningEffort)}`);
 
@@ -46,6 +48,14 @@ async function main(): Promise<void> {
     console.error('CoreEvent protocol failures:');
     for (const run of protocolFailures) {
       console.error(`${run.variantId}: ${JSON.stringify(run.coreEventProtocol.violations)}`);
+    }
+    Bun.exit(1);
+  }
+
+  if (projectionFailures.length > 0) {
+    console.error('SessionEmitter projection failures:');
+    for (const run of projectionFailures) {
+      console.error(`${run.variantId}: ${run.sessionEmitterProjection.mismatches.join(', ')}`);
     }
     Bun.exit(1);
   }

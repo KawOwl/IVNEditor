@@ -28,6 +28,7 @@ import {
   createRecordingSessionEmitter,
   type RecordedSessionOutput,
 } from '#internal/game-session/recording-emitter';
+import { createSessionEmitterProjection } from '#internal/game-session/session-emitter-projection';
 import type { SessionPersistence } from '#internal/game-session/types';
 import { LLMClient, type GenerateOptions, type GenerateResult, type LLMConfig, type StepInfo } from '#internal/llm-client';
 import { createMemory } from '#internal/memory/factory';
@@ -50,6 +51,7 @@ import type {
   ProtocolVersion,
   SceneState,
   StateSchema,
+  ToolCallEntry,
 } from '#internal/types';
 
 type GenerateCompleteRecord = Parameters<SessionPersistence['onGenerateComplete']>[0];
@@ -145,6 +147,12 @@ export interface ScriptedLLMCall {
   readonly outputText: string;
 }
 
+export interface SessionEmitterProjectionReport {
+  readonly ok: boolean;
+  readonly mismatches: readonly string[];
+  readonly recording: RecordedSessionOutput;
+}
+
 export interface MemoryEvaluationRun {
   readonly variantId: string;
   readonly memoryKind: string;
@@ -159,6 +167,7 @@ export interface MemoryEvaluationRun {
   readonly coreEvents: ReadonlyArray<CoreEvent>;
   readonly coreEventEnvelopes: ReadonlyArray<CoreEventEnvelope>;
   readonly coreEventProtocol: CoreEventProtocolReport;
+  readonly sessionEmitterProjection: SessionEmitterProjectionReport;
 }
 
 export interface MemoryEvaluationComparison {
@@ -321,6 +330,7 @@ export async function runMemoryEvaluationCase(options: {
 
   const memorySnapshot = await memory.snapshot();
   const coreEvents = coreRecorder.getEvents();
+  const recordingSnapshot = recording.getSnapshot();
   return {
     variantId: variant.id,
     memoryKind: memory.kind,
@@ -329,12 +339,13 @@ export async function runMemoryEvaluationCase(options: {
     stateVars: stateStore.getAll(),
     currentScene,
     memorySnapshot,
-    recording: recording.getSnapshot(),
+    recording: recordingSnapshot,
     persistence: journal.getSnapshot(),
     llmCalls: llmClient.getCalls(),
     coreEvents,
     coreEventEnvelopes: coreRecorder.getEnvelopes(),
     coreEventProtocol: validateCoreEventSequence(coreEvents),
+    sessionEmitterProjection: validateSessionEmitterProjection(recordingSnapshot, coreEvents),
   };
 }
 
@@ -483,6 +494,7 @@ export async function runLiveMemoryEvaluationCase(options: {
 
   const memorySnapshot = await memory.snapshot();
   const coreEvents = coreRecorder.getEvents();
+  const recordingSnapshot = recording.getSnapshot();
   return {
     variantId: variant.id,
     memoryKind: memory.kind,
@@ -491,12 +503,13 @@ export async function runLiveMemoryEvaluationCase(options: {
     stateVars: stateStore.getAll(),
     currentScene,
     memorySnapshot,
-    recording: recording.getSnapshot(),
+    recording: recordingSnapshot,
     persistence: journal.getSnapshot(),
     llmCalls: llmClient.getCalls(),
     coreEvents,
     coreEventEnvelopes: coreRecorder.getEnvelopes(),
     coreEventProtocol: validateCoreEventSequence(coreEvents),
+    sessionEmitterProjection: validateSessionEmitterProjection(recordingSnapshot, coreEvents),
   };
 }
 
@@ -506,6 +519,53 @@ export function createNoThinkingLLMConfig(config: LLMConfig): LLMConfig {
     thinkingEnabled: false,
     reasoningEffort: null,
   };
+}
+
+function validateSessionEmitterProjection(
+  expected: RecordedSessionOutput,
+  coreEvents: ReadonlyArray<CoreEvent>,
+): SessionEmitterProjectionReport {
+  const projectedRecorder = createRecordingSessionEmitter();
+  const projection = createSessionEmitterProjection(projectedRecorder.emitter);
+  for (const event of coreEvents) {
+    projection.publish(event);
+  }
+
+  const projected = projectedRecorder.getSnapshot();
+  return {
+    ok: normalizedSessionOutputKey(expected) === normalizedSessionOutputKey(projected),
+    mismatches: findSessionOutputMismatches(expected, projected),
+    recording: projected,
+  };
+}
+
+function findSessionOutputMismatches(
+  expected: RecordedSessionOutput,
+  actual: RecordedSessionOutput,
+): string[] {
+  const expectedNormalized = normalizeSessionOutput(expected);
+  const actualNormalized = normalizeSessionOutput(actual);
+  return Object.keys(expectedNormalized)
+    .filter((key) => {
+      const field = key as keyof ReturnType<typeof normalizeSessionOutput>;
+      return JSON.stringify(expectedNormalized[field]) !== JSON.stringify(actualNormalized[field]);
+    });
+}
+
+function normalizedSessionOutputKey(output: RecordedSessionOutput): string {
+  return JSON.stringify(normalizeSessionOutput(output));
+}
+
+function normalizeSessionOutput(output: RecordedSessionOutput): RecordedSessionOutput {
+  return {
+    ...output,
+    toolCalls: output.toolCalls.map(stripToolTimestamp),
+    pendingToolCalls: output.pendingToolCalls.map(stripToolTimestamp),
+  };
+}
+
+function stripToolTimestamp(entry: ToolCallEntry): ToolCallEntry {
+  return { ...entry, timestamp: 0 };
 }
 
 function createVariantMemory(options: {

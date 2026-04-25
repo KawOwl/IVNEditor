@@ -145,6 +145,7 @@ export function reduceCoreEventProtocol(
     case 'tool-call-started':
     case 'tool-call-finished':
     case 'narrative-batch-emitted':
+    case 'scene-changed':
     case 'signal-input-recorded':
       requireTurn();
       if (state.phase !== 'generating') {
