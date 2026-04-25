@@ -212,6 +212,7 @@ function buildNarrativeFormatV2(
     `- **to**（可选）：受话者 id / 逗号分隔 id 列表 / \`"*"\` 广播\n` +
     `- **hear**（可选）：speaker 知道在场的旁听者 id\n` +
     `- **eavesdroppers**（可选）：speaker 不知道在场的偷听者 id\n` +
+    `- **正文只装该角色说出的话（直接引语）**。任何旁白 / 动作 / 表情 / 第三人称描写**必须**拆出去走 \`<narration>\`，哪怕只是一句"他笑了笑"夹在两句台词中间——拆成 \`<dialogue>...</dialogue><narration>...</narration><dialogue>...</dialogue>\` 三个独立单元。详见下方"反面示范"。\n` +
     `\n` +
     `**<narration>** —— 叙事单元\n` +
     `\`\`\`\n` +
@@ -274,6 +275,10 @@ function buildNarrativeFormatV2(
     `\n` +
     `**禁止把白名单已有角色伪装成 ad-hoc**（例如把 \`sakuya\` 写成 \`__npc__咲夜\`）—— 白名单内角色必须用对应 id。\n` +
     `\n` +
+    `**禁止用代词 / 泛称当 \`__npc__\` 后缀**。\`__npc__\` 后缀必须是具体的称呼（职业 / 头衔 / 形容，例如 \`__npc__保安\` / \`__npc__老板\` / \`__npc__红衣男人\`）。下列后缀**不合法**：\`你\` / \`我\` / \`他\` / \`她\` / \`它\` / \`他们\` / \`她们\` / \`咱\` / \`自己\` / \`主角\`。\n` +
+    `- 玩家本人的结构化 id 是 \`player\`（reserved），**不要**写成 \`__npc__你\` / \`__npc__主角\`。"对玩家说" 写 \`to="player"\`，"玩家说话" 由引擎走 \`player_input\` 注入，你不要替玩家产生 \`<dialogue>\`。\n` +
+    `- 第二人称 "你" 是叙事文本里指代玩家的**代词**，可以自由出现在 \`<narration>\` / \`<dialogue>\` 的**正文**里（例：\`<narration>你推开门。</narration>\`），但**绝不能**作为 \`speaker\` / \`to\` / \`hear\` / \`eavesdroppers\` 等结构化属性的 id。\n` +
+    `\n` +
     `如果一段话不是任何具体角色说的（环境音、群众嘈杂、广播等），仍然用 \`<narration>\`，不要凑一个 ad-hoc speaker：\n` +
     `\n` +
     `\`\`\`\n` +
@@ -317,6 +322,52 @@ function buildNarrativeFormatV2(
     `<narration>\n` +
     `  <background scene="cafe_interior" />\n` +
     `  咖啡店里飘着淡淡的豆香。\n` +
+    `</narration>\n` +
+    `\`\`\`\n` +
+    `\n` +
+    `❌ **错误**：把动作描写 / 旁白塞进 \`<dialogue>\` 正文（即使是同一角色的连续叙事，也不能把"说话 → 做动作 → 又说话"一锅炖）：\n` +
+    `\n` +
+    `\`\`\`\n` +
+    `<dialogue speaker="__npc__中年男人" to="player">\n` +
+    `  "俄罗斯？"他用大拇指指了指你，"那个方向来的？"\n` +
+    `</dialogue>\n` +
+    `\`\`\`\n` +
+    `\n` +
+    `✅ **正确**：拆成三个单元——台词进 \`<dialogue>\`，"他用大拇指指了指你"是第三人称动作描写，必须走 \`<narration>\`：\n` +
+    `\n` +
+    `\`\`\`\n` +
+    `<dialogue speaker="__npc__中年男人" to="player">\n` +
+    `  "俄罗斯？"\n` +
+    `</dialogue>\n` +
+    `\n` +
+    `<narration>\n` +
+    `  他用大拇指指了指你。\n` +
+    `</narration>\n` +
+    `\n` +
+    `<dialogue speaker="__npc__中年男人" to="player">\n` +
+    `  "那个方向来的？"\n` +
+    `</dialogue>\n` +
+    `\`\`\`\n` +
+    `\n` +
+    `判断方法：把 \`<dialogue>\` 正文当作角色嘴里念出来的台词。如果一段文字"用这个角色的声音念出来"会很别扭（"他用大拇指指了指你" 这种第三人称描写就是别扭的），那它就不属于这段 \`<dialogue>\`，必须拆到 \`<narration>\`。\n` +
+    `\n` +
+    `❌ **错误**：把第二人称代词 "你" 当作 ad-hoc 角色名（结果 UI 会渲染出名叫"你"的 NPC 气泡）：\n` +
+    `\n` +
+    `\`\`\`\n` +
+    `<dialogue speaker="__npc__保安" to="__npc__你">\n` +
+    `  "请出示证件。"\n` +
+    `</dialogue>\n` +
+    `\`\`\`\n` +
+    `\n` +
+    `✅ **正确**：玩家的结构化 id 是 \`player\`，"你" 只能出现在正文里：\n` +
+    `\n` +
+    `\`\`\`\n` +
+    `<dialogue speaker="__npc__保安" to="player">\n` +
+    `  "请出示证件。"\n` +
+    `</dialogue>\n` +
+    `\n` +
+    `<narration>\n` +
+    `  你愣了一下，下意识摸向口袋。\n` +
     `</narration>\n` +
     `\`\`\`\n` +
     `\n` +

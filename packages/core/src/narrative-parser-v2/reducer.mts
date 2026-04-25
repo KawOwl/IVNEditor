@@ -27,6 +27,7 @@ import {
   isVisualChildTag,
   isValidPosition,
   isAdhocSpeaker,
+  isPronounSpeaker,
   type VisualChildTagSpec,
 } from '#internal/narrative-parser-v2/tag-schema';
 import {
@@ -608,10 +609,17 @@ function buildSentences(
     pf = unit.pf ?? { speaker: unit.rawSpeaker ?? '' };
     if (pf.speaker) {
       if (isAdhocSpeaker(pf.speaker)) {
-        // ad-hoc 角色（`__npc__保安` 等）：合法的"白名单外但有意为之"。
-        // emit 中性事件供 trace 量化使用，不算降级——dialogue 正常 emit，
-        // pf.speaker 保留完整 raw 字符串，UI 渲染时 strip 前缀。
-        extraDegrades.push({ code: 'dialogue-adhoc-speaker', detail: pf.speaker });
+        if (isPronounSpeaker(pf.speaker)) {
+          // ad-hoc 后缀是中文代词（`__npc__你` 等）—— LLM 把第二人称代词
+          // 当成 ad-hoc 显示名。prompt 已显式禁止；这里 emit pronoun degrade
+          // 让 trace 可量化，UI 仍按 ad-hoc 渲染（不阻断生成）。
+          extraDegrades.push({ code: 'dialogue-pronoun-as-speaker', detail: pf.speaker });
+        } else {
+          // ad-hoc 角色（`__npc__保安` 等）：合法的"白名单外但有意为之"。
+          // emit 中性事件供 trace 量化使用，不算降级——dialogue 正常 emit，
+          // pf.speaker 保留完整 raw 字符串，UI 渲染时 strip 前缀。
+          extraDegrades.push({ code: 'dialogue-adhoc-speaker', detail: pf.speaker });
+        }
       } else if (!manifest.characters.has(pf.speaker)) {
         // 真·杜撰 speaker（白名单外、又没声明 ad-hoc 前缀）：保留 dialogue
         // 但 emit degrade，方便 prompt 调优时追踪 LLM 漂移。

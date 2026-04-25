@@ -108,6 +108,41 @@ describe('buildEngineRules', () => {
     expect(text).toContain('<narration>');
   });
 
+  it('v2 必须明确 <dialogue> 正文只装直接引语，旁白动作走 <narration>', () => {
+    const text = buildEngineRules({
+      protocolVersion: 'v2-declarative-visual',
+      characters: [{ id: 'sakuya', sprites: [{ id: 'smiling' }] }],
+      backgrounds: [{ id: 'classroom' }],
+    });
+    // 容器解释段必须有"直接引语"边界规则（一句话快查）
+    expect(text).toContain('直接引语');
+    // 必须给具体的"混着写 → 拆开" 反例 / 正例（LLM 抄格式靠这个）
+    expect(text).toContain('俄罗斯');
+    expect(text).toContain('大拇指');
+    // 反例：动作和台词混在一个 dialogue 里
+    expect(text).toMatch(/<dialogue[^>]*>\s*"俄罗斯？"他用大拇指/);
+    // 正例：必须出现"他用大拇指指了指你"独立 narration 容器
+    expect(text).toMatch(/<narration>\s*他用大拇指/);
+  });
+
+  it('v2 必须禁止把代词 / 泛称当 __npc__ 后缀（speaker / to / hear / eav）', () => {
+    const text = buildEngineRules({
+      protocolVersion: 'v2-declarative-visual',
+      characters: [{ id: 'sakuya', sprites: [{ id: 'smiling' }] }],
+      backgrounds: [{ id: 'classroom' }],
+    });
+    // 必须明确禁令 + 列出具体代词，跟 reducer 的 PRONOUN_DISPLAY_NAMES 对齐
+    expect(text).toMatch(/禁止.*代词|代词.*不合法|代词.*泛称/);
+    for (const pronoun of ['你', '我', '他', '她', '它', '他们', '她们', '咱', '自己', '主角']) {
+      expect(text).toContain(pronoun);
+    }
+    // 反例 + 正例都得在，LLM 抄格式靠这个
+    expect(text).toMatch(/__npc__你/);
+    expect(text).toMatch(/to="player"/);
+    // 必须解释清楚"你"的合法位置：正文里可以，结构化属性里不行
+    expect(text).toMatch(/正文|narration.*你|你.*narration/);
+  });
+
   it('v2 必须禁止调用旧视觉工具（change_scene / change_sprite / clear_stage）', () => {
     const text = buildEngineRules({
       protocolVersion: 'v2-declarative-visual',

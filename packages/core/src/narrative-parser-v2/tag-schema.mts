@@ -171,6 +171,30 @@ export function adhocDisplayName(speakerId: string): string {
   return speakerId.slice(NPC_SPEAKER_PREFIX.length);
 }
 
+/**
+ * 中文代词 / 泛称黑名单。LLM 容易把 prompt 里 "`__npc__<显示名>`" 模板
+ * 套用到第二人称代词上（典型错误：`speaker="__npc__你"`），结果 UI 渲染
+ * 出一个名字叫"你"的 NPC 气泡。这些后缀都不是合法显示名。
+ */
+export const PRONOUN_DISPLAY_NAMES: ReadonlySet<string> = new Set([
+  '你',
+  '我',
+  '他',
+  '她',
+  '它',
+  '他们',
+  '她们',
+  '咱',
+  '自己',
+  '主角',
+]);
+
+/** ad-hoc speaker 的后缀是否是中文代词 / 泛称（不应作为角色 id）。 */
+export function isPronounSpeaker(speakerId: string): boolean {
+  if (!isAdhocSpeaker(speakerId)) return false;
+  return PRONOUN_DISPLAY_NAMES.has(adhocDisplayName(speakerId));
+}
+
 // ============================================================================
 // Degrade 事件名（分类一份）。和 Langfuse tag 对齐（RFC §10.1）。
 // ============================================================================
@@ -178,6 +202,8 @@ export function adhocDisplayName(speakerId: string): string {
 /**
  * reducer 输出的事件分类。多数是 silent-degrade 类（语义降级），
  * `dialogue-adhoc-speaker` 是中性事件（量化用，非降级）。
+ * `dialogue-pronoun-as-speaker` 是 ad-hoc 的细分子类——后缀是中文代词
+ * （"你"/"我"/...），表明 LLM 把第二人称代词错当成 ad-hoc 显示名。
  */
 export type DegradeCode =
   | 'sprite-missing-attr'
@@ -193,4 +219,5 @@ export type DegradeCode =
   | 'dialogue-missing-speaker'
   | 'dialogue-unknown-speaker'
   | 'dialogue-adhoc-speaker'
+  | 'dialogue-pronoun-as-speaker'
   | 'bare-text-outside-container';

@@ -20,6 +20,14 @@
 
 ## 最近完成
 
+**V.8 声明式视觉 IR：dialogue 容器边界 + 代词 ad-hoc speaker degrade（2026-04-26，本会话）**
+- 起因：用户审 trace（ivn-engine session c4b00c7c）怀疑 LLM 把第二人称代词"你"当成 NPC 写成 `__npc__你`，UI 因此渲染出名叫"你"的 NPC 气泡
+- 根因诊断：prompt 里 `__npc__` 后缀模板 few-shot 全是中文显示名（`__npc__保安`/`__npc__同事`/`__npc__店主`），玩家自身 reserved id `player` 是英文裸字符串，模式不对称——LLM 顺着中文显示名的模式套出 `__npc__你` 是合理误用
+- **Parser** [tag-schema.mts](packages/core/src/narrative-parser-v2/tag-schema.mts) + [reducer.mts](packages/core/src/narrative-parser-v2/reducer.mts:611)：加 `PRONOUN_DISPLAY_NAMES` ReadonlySet（10 个中文代词 / 泛称：你 / 我 / 他 / 她 / 它 / 他们 / 她们 / 咱 / 自己 / 主角）+ `isPronounSpeaker` helper；DegradeCode 加 `dialogue-pronoun-as-speaker`；reducer ad-hoc speaker 分支分流，pronoun 走新 degrade（**替代**而非追加 `dialogue-adhoc-speaker`，避免 trace 双计数）
+- **Prompt v2** [engine-rules.mts](packages/core/src/engine-rules.mts)：(a) `__npc__` 章节加禁止条款明确列出 10 个代词 + 解释"你"是叙事代词不是 id；(b) 反面示范段加 `__npc__你` vs `to="player"` 正反例；(c) `<dialogue>` 容器解释加"正文只装直接引语，旁白 / 动作 / 第三人称描写必须走 `<narration>`"硬规则；(d) 反面示范段加用户 trace 原例"俄罗斯？...大拇指..."三单元拆分案例 + LLM 自检启发（"用角色声音念这段会不会别扭"）
+- 测试：reducer 加 13 用例（10 个 pronoun it.each + 2 个 adhoc 边界 + 1 边界 invariants）；engine-rules 加 2 条 prompt 关键词校验；`pnpm test:core` 308/308（从 292 涨 16，含其他维护小项）；`pnpm typecheck` 4 个 package 全绿
+- 后续待评估（**未做**）：把 `player` reserved id 包成 `__player__`（双下划线对称）+ manifest character.id 校验拒绝该 reserved id；等 trace 信号回来再决定。trace 端可 grep `dialogue-pronoun-as-speaker` 事件量化代词误用频率。
+
 **LLM context 组装 + agentic loop 代码清理 round（2026-04-26，本会话）**
 - 用户指令：审计 LLM 上下文组装链路 → 列清单 → 除 SceneState deep-readonly 之外都做
 - 5 个独立 commit，每个改完跑 typecheck + test:core 验证再提交：
@@ -262,6 +270,8 @@
 | 2026-04-24 | Parser v2 全面采用函数式 / 组合式 / 声明式（§2 原则 #7） | 原 parser.ts 350 行手搓状态机难以扩展新 tag（需同步改 enum + switch + 字段）；声明式 schema + 纯 reducer 让加一个 tag 只需追加一行 schema 条目 | parser 层禁 class、禁顶层可变 let；state/reducer/inheritance/tag-schema 模块化；mutation 仅限 htmlparser2 回调边界 |
 | 2026-04-25 | op-kit 单源 Operation 层（迁移 14 个 MCP tool + ALL_OPS 单一注册点 + 8 条防腐契约） | routes/mcp.mts 1378 行业务+协议混合体；同一能力 RESTful + MCP 写两遍 schema 漂移；要为将来换 RPC 框架（tRPC/Hono RPC）留扩展口 | mcp.mts 瘦到 281 行（纯 JSON-RPC 协议层）；HTTP /api/ops/* 自动派生；OpMeta.mcpName 字段做 backward compat 让旧客户端配置免改；op canonical name 强制 `<category>.<verb>` 格式；防腐契约贴在 op-kit.mts 顶部 |
 | 2026-04-25 | 把 op-kit 这条线纳入 feature_list（OP.0-OP.7 + roadmap）；之前 op-kit 4 batch + first op 都没编号 | op-kit 是 platform refactor 不是 v2.0.md 列出的 product feature，CLAUDE.md 工作流默认通过 feature_list 接续上下文，没编号下次 context reset 看 feature_list 看不出 op-kit 在做什么 | feature_list.json +7 entries（OP.0-OP.4 done / OP.5-OP.7 pending）；docs/refactor/op-kit-roadmap.md 全貌；docs/refactor/op-a-extract-referenced-ids-plan.md self-contained 给 OP.5 开工 |
+| 2026-04-26 | `__npc__` 后缀禁代词 + parser 对代词后缀 emit `dialogue-pronoun-as-speaker`（**替代**而非追加 `dialogue-adhoc-speaker` 中性事件） | trace 复盘显示 LLM 把第二人称代词"你"套 NPC 显示名模式产出 `__npc__你`，UI 渲染出名叫"你"的 NPC 气泡。NPC few-shot 全是中文显示名 vs 玩家 reserved id `player` 是英文裸字符串，模式不对称促成误用；选"替代"是为了避免每个 dialogue 的 speaker 类信号在 trace 上双计数 | tag-schema 加 `PRONOUN_DISPLAY_NAMES` + `isPronounSpeaker`；reducer ad-hoc 分支分流；DegradeCode 加新值；v2 prompt `__npc__` 章节列禁词 + 反例 `__npc__你` vs `to="player"`。后续可能把 `player` 包成 `__player__` reserved id（双下划线对称）让 prompt 模式一致 |
+| 2026-04-26 | `<dialogue>` 正文边界教学只走 prompt，不做 parser 硬校验 | 引号检测启发式 false positive 高（中文 ""/英文 \"\" 混用 + 内心独白引号 + 角色嵌引语都常见），启发式信号噪比差；prompt 教学性价比明显更高 | engine-rules `<dialogue>` 容器解释加"正文只装直接引语，旁白动作走 `<narration>`"硬规则；反面示范段加用户 trace 截取的"俄罗斯？...大拇指..."三单元拆分案例 + LLM 自检启发（"用角色声音念这段会不会别扭"）。如果 trace 信号回来还是大量漏判，再考虑加软启发（例如 `<dialogue>` 正文里检测"他/她+动词"模式） |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |

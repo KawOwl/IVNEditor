@@ -619,5 +619,15 @@
     "ref": "apps/ui/src/ui/editor/EditorPlayTab.tsx + apps/ui/src/ui/editor/EditorRightPanel.tsx + apps/ui/src/ui/play/PlayPanel.tsx + apps/ui/src/ui/play/PlaythroughList.tsx",
     "verify": "bun run typecheck（apps/ui tsgo --noEmit）干净；packages/core bun test 248/248 全绿；浏览器端到端：编辑器进试玩 tab，未加载剧本 → 显示'保存剧本后即可...'占位；加载已有剧本 → PlaythroughList 出现 + '+ 开始新游戏'按钮 + 空态'还没有游玩记录'；点 '+ 开始新游戏' → PlayPanel autoStart 跑通且 LLM 真生成（创建 kind=playtest playthrough）；点 '← 返回列表' 回 list 看到刚跑的那条游玩 #1（带 v2 版本号 + preview 文本）；点'继续' → reconnect 成功，状态切'等待输入'，恢复 sprite + choices",
     "note": "用户原话：'在编剧的界面把存档列表也加上，让大家可以读取存档'。设计上把 list 直接放进现有 '试玩' tab 而不是加新 tab，是因为玩家流 PlayPage 也是 list-first，编辑器 admin 心智一致；LLM dropdown 仍在顶部 header（控制下一次 NEW playthrough 选哪套 LLM；恢复老 playthrough 时 LLM 已固化，dropdown 不影响）。PlayPanel editorMode targetPtId 决议改动是这次的关键 bug 修复——之前显式 playthroughId 在 editorMode 下被无脑置 null，'载入历史试玩'整条路径不通。"
+  },
+  {
+    "id": "V.8",
+    "title": "声明式视觉 IR：dialogue 容器边界 + 代词 ad-hoc speaker degrade",
+    "description": "trace 复盘后的两条 prompt + parser 改动。(1) Parser：reducer ad-hoc speaker 路径里识别中文代词（'你/我/他/她/它/他们/她们/咱/自己/主角'），对 `__npc__你` 这类把第二人称代词当 ad-hoc 显示名的错误用法 emit 新 degrade `dialogue-pronoun-as-speaker`（替代原 `dialogue-adhoc-speaker` 中性事件，避免 trace 双计数）；ad-hoc 渲染不阻断，只走信号路径。tag-schema 加 `PRONOUN_DISPLAY_NAMES` ReadonlySet + `isPronounSpeaker` helper。(2) Prompt（v2）：engine-rules.mts 的 __npc__ 章节加禁止条款明确列出 10 个代词 + 解释'你'是叙事代词不是 id；反面示范段加一组 `__npc__你` vs `to=\"player\"` 正反例。(3) Prompt（v2）：<dialogue> 容器解释加'正文只装直接引语，旁白 / 动作 / 第三人称描写必须走 <narration>'硬规则；反面示范段加用户原 trace 截取的'俄罗斯？... 大拇指...'三单元拆分案例 + LLM 自检启发（用角色声音念这段会不会别扭）。",
+    "status": "done",
+    "type": "logic",
+    "ref": "packages/core/src/narrative-parser-v2/{tag-schema.mts,reducer.mts} + packages/core/src/engine-rules.mts",
+    "verify": "pnpm typecheck 4 个 package 全绿；pnpm test:core 308/308（从 292 涨 16：reducer pronoun it.each 10 + adhoc 边界 2 + engine-rules 教学条款校验 4）。trace 端验证：Langfuse trace 里 grep `dialogue-pronoun-as-speaker` 事件可量化代词误用频率；`__npc__你的`（后缀含代词字符但整体不等于代词）仍走 adhoc 路径，边界正确。",
+    "note": "起因：用户审 trace（http://39.108.85.114:30080 ivn-engine session c4b00c7c）怀疑 LLM 把'你'当成 NPC 写成 `__npc__你`，UI 渲染出名叫'你'的 NPC 气泡。原因分析：prompt 里 NPC 后缀模式全是中文显示名（__npc__保安/__npc__同事/__npc__店主），玩家自身 reserved id `player` 是英文裸字符串，模式不对称；LLM 顺着中文显示名套出 `__npc__你` 是合理误用。两个微决策：(a) pronoun emit 新 degrade 替代而非追加 adhoc-speaker，避免 trace 双计数；(b) <dialogue> 正文边界不做 parser 硬校验只走 prompt，因为引号检测不可靠（中文'\"'/英文 \\\"' 混用 + 内心独白引号 + 角色嵌引语）启发式 false positive 高。后续待评估：把 `player` reserved id 包成 `__player__`（双下划线对称）+ manifest character.id 校验拒绝该 reserved id；当前未做，等 trace 信号回来评估。"
   }
 ]

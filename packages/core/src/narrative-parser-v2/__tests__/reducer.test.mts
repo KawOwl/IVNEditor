@@ -149,6 +149,55 @@ describe('reduce · dialogue 容器', () => {
     expect(outputs.degrades.some((d) => d.code === 'dialogue-unknown-speaker')).toBe(false);
   });
 
+  it.each([
+    '__npc__你',
+    '__npc__我',
+    '__npc__他',
+    '__npc__她',
+    '__npc__它',
+    '__npc__他们',
+    '__npc__她们',
+    '__npc__咱',
+    '__npc__自己',
+    '__npc__主角',
+  ])('<dialogue speaker="%s"> → emit dialogue-pronoun-as-speaker（不是 adhoc-speaker）', (speakerId) => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'dialogue', attrs: { speaker: speakerId } },
+      { type: 'text', data: '...' },
+      { type: 'closetag', name: 'dialogue' },
+    ]);
+    expect(outputs.sentences).toHaveLength(1);
+    expect(outputs.sentences[0]!.kind).toBe('dialogue');
+    expect(outputs.degrades).toMatchObject([
+      { code: 'dialogue-pronoun-as-speaker', detail: speakerId },
+    ]);
+    // 互斥：pronoun 路径不再 emit 中性 adhoc-speaker，避免 trace 双计数
+    expect(outputs.degrades.some((d) => d.code === 'dialogue-adhoc-speaker')).toBe(false);
+  });
+
+  it('<dialogue speaker="__npc__你的"> → 后缀含代词但不等于代词，仍走 adhoc 路径', () => {
+    // 前缀匹配不算代词，必须显示名整体相等。"你的"是合法 ad-hoc 显示名。
+    const { outputs } = run([
+      { type: 'opentag', name: 'dialogue', attrs: { speaker: '__npc__你的' } },
+      { type: 'text', data: '...' },
+      { type: 'closetag', name: 'dialogue' },
+    ]);
+    expect(outputs.degrades).toMatchObject([
+      { code: 'dialogue-adhoc-speaker', detail: '__npc__你的' },
+    ]);
+    expect(outputs.degrades.some((d) => d.code === 'dialogue-pronoun-as-speaker')).toBe(false);
+  });
+
+  it('<dialogue speaker="__npc__"> 裸前缀 → 走 adhoc 路径不当代词处理', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'dialogue', attrs: { speaker: '__npc__' } },
+      { type: 'text', data: '...' },
+      { type: 'closetag', name: 'dialogue' },
+    ]);
+    expect(outputs.degrades.some((d) => d.code === 'dialogue-pronoun-as-speaker')).toBe(false);
+    expect(outputs.degrades.some((d) => d.code === 'dialogue-adhoc-speaker')).toBe(true);
+  });
+
   it('<dialogue speaker=" "> 视为 missing', () => {
     const { outputs } = run([
       { type: 'opentag', name: 'dialogue', attrs: { speaker: '   ' } },
