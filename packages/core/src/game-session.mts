@@ -9,8 +9,8 @@
  *
  * 核心循环：Generate + Receive
  *   1. Generate: 组装 context → 调用 LLM（agentic tool loop）→ 追加记忆 → 按需压缩
- *      - signal_input_needed 使用挂起模式：execute 挂起等玩家输入，LLM 拿到结果后继续
- *      - 一次 generate() 内可能有 0 次、1 次或多次玩家互动
+ *      - signal_input_needed 使用 turn-bounded record-only 模式，generate 返回后再等玩家输入
+ *      - 一次 generate() 内只记录待处理输入请求，不直接消费玩家输入
  *   2. Receive: LLM 自然停止后，等待玩家输入（fallback，不经过 signal_input_needed）
  *   循环直到 session 被停止
  *
@@ -23,91 +23,31 @@
 import type {
   BackgroundAsset,
   CharacterAsset,
-  ParticipationFrame,
   PromptSegment,
   ProtocolVersion,
   SceneState,
-  ScratchBlock,
-  Sentence,
 } from '#internal/types';
 import { StateStore } from '#internal/state-store';
 import type { Memory } from '#internal/memory/types';
 import { createMemory } from '#internal/memory/factory';
 import { estimateTokens } from '#internal/tokens';
-import { assembleContext } from '#internal/context-assembler';
 import { computeFocus } from '#internal/focus';
-import { createTools, getEnabledTools } from '#internal/tool-executor';
-import type { ScenePatch } from '#internal/tool-executor';
-import type { SignalInputOptions } from '#internal/tool-executor';
 import { LLMClient } from '#internal/llm-client';
-import type { LLMConfig, StepInfo } from '#internal/llm-client';
+import type { LLMConfig } from '#internal/llm-client';
 import type { SessionEmitter } from '#internal/session-emitter';
-import { NarrativeParser, extractPlainText } from '#internal/narrative-parser';
-import {
-  createParser as createParserV2,
-  type DegradeEvent as DegradeEventV2,
-  type NarrativeParser as NarrativeParserV2,
-  type ParserManifest,
-} from '#internal/narrative-parser-v2';
-import { serializeMessagesForDebug } from '#internal/messages-builder';
-import { createNarrationAccumulator } from '#internal/game-session/narration';
+import type { ParserManifest } from '#internal/narrative-parser-v2';
 import { computeReceivePayload } from '#internal/game-session/input-payload';
-import { applyScenePatchToState } from '#internal/game-session/scene-state';
+import {
+  createGenerateTurnRuntime,
+  type GenerateTurnPendingSignal,
+  type GenerateTurnRuntime,
+} from '#internal/game-session/generate-turn-runtime';
 import type {
   GameSessionConfig,
-  GenerateTraceHandle,
   RestoreConfig,
   SessionPersistence,
   SessionTracing,
-  ToolCallTraceHandle,
 } from '#internal/game-session/types';
-
-type StepStartInfo = {
-  batchId: string;
-  isFollowup: boolean;
-};
-
-type TraceStepRecord = Parameters<GenerateTraceHandle['recordStep']>[0];
-type SceneTransition = 'fade' | 'cut' | 'dissolve';
-
-type GeneratedSentenceDraft =
-  | { kind: 'narration'; text: string }
-  | { kind: 'dialogue'; text: string; pf: ParticipationFrame; truncated?: boolean }
-  | { kind: 'scene_change'; scene: SceneState; transition?: SceneTransition };
-
-type NarrativeBatch = {
-  readonly sentences: ReadonlyArray<Sentence>;
-  readonly scratches: ReadonlyArray<ScratchBlock>;
-  readonly degrades: ReadonlyArray<DegradeEventV2>;
-};
-
-interface NarrativeRuntime {
-  feedTextChunk(chunk: string): void;
-  finalizeParser(): void;
-  flushPendingNarration(): void;
-}
-
-const TRACE_STEP_FIELDS = [
-  'stepNumber',
-  'text',
-  'reasoning',
-  'finishReason',
-  'inputTokens',
-  'outputTokens',
-  'model',
-  'partKinds',
-  'responseTimestamp',
-  'stepStartAt',
-  'stepInputMessages',
-  'effectiveSystemPrompt',
-  'isFollowup',
-] as const satisfies ReadonlyArray<keyof StepInfo & keyof TraceStepRecord>;
-
-function toTraceStepRecord(step: StepInfo): TraceStepRecord {
-  return Object.fromEntries(
-    TRACE_STEP_FIELDS.map((field) => [field, step[field]]),
-  ) as TraceStepRecord;
-}
 
 export {
   NARRATION_HARD_LIMIT,
@@ -155,34 +95,6 @@ export class GameSession {
   private disabledSections?: string[];
   private persistence?: SessionPersistence;
   private tracing?: SessionTracing;
-  // （老 currentTraceHandle 字段已删除 —— 方案 B 下 traceHandle 局部变量即可覆盖
-  //  generate trace 的生命周期；之前是为给 signal 挂起路径的 player_input 事件
-  //  记录用，turn-bounded 后没有这个路径）
-
-  /**
-   * 当前 streaming entry 的叙事文本累积区。
-   * 用途：signal_input_needed 挂起时先把这段文本持久化到 DB，
-   * 避免 generate() 一直挂起导致的叙事丢失。
-   * 每次 beginStreamingEntry 前重置，每次 finalize 前 flush 到 DB。
-   */
-  private currentNarrativeBuffer = '';
-
-  /**
-   * 本轮 LLM 产生的 reasoning (thinking) 累积缓冲 —— reasoner 类模型
-   * （DeepSeek V4 Flash thinking、deepseek-reasoner 等）会产出，写进
-   * narrative_entries.reasoning。
-   *
-   * 为什么要存：DeepSeek thinking 模式要求回放 assistant message 时把
-   * reasoning_content 也带上，否则 API 报 "The reasoning_content in the
-   * thinking mode must be passed back to the API"（方案 A 结构化 messages
-   * 开始带 ToolCallPart 之后暴露；之前都是纯 string content 所以 DeepSeek
-   * 没抱怨）。
-   *
-   * messages-builder 会把 entry.reasoning 投影成 AI SDK 的 ReasoningPart，
-   * openai-compatible provider 序列化为 reasoning_content 字段。
-   */
-  private currentReasoningBuffer = '';
-
   // Session lifecycle
   private active = false;
 
@@ -216,21 +128,6 @@ export class GameSession {
   private characters: ReadonlyArray<CharacterAsset> = [];
   private backgrounds: ReadonlyArray<BackgroundAsset> = [];
 
-  /**
-   * M3: applyScenePatch 完成后额外触发——发出场景事件 + 产出 scene_change Sentence。
-   * 只在 generate() 执行期间非 null。由 generate() 内部初始化。
-   */
-  private scenePatchEmitter:
-    | ((transition?: 'fade' | 'cut' | 'dissolve') => void)
-    | null = null;
-
-  /**
-   * 把 generate() 内部 narration 累积 buffer 刷出去。
-   * signal_input_needed 的 record-only execute 调这个，确保玩家在看到选项之前
-   * 先看到最新的旁白 Sentence。generate() 执行期间非 null。
-   */
-  private pendingNarrationFlusher: (() => void) | null = null;
-
   // 外循环 Receive 阶段的挂起 Promise（等玩家输入，signal / natural stop / maxSteps 共用）
   private inputResolve: ((text: string) => void) | null = null;
 
@@ -238,49 +135,17 @@ export class GameSession {
    * 当前等玩家输入的 signal（方案 B / 2026-04-23 turn-bounded）。
    *
    * 生命周期：
-   *   - signal_input_needed.execute 调 recordPendingSignal 回调时设置
+   *   - GenerateTurnRuntime 在 signal_input_needed.execute 回调时设置
    *   - generate() 因 stopWhen hit 而返回后，coreLoop 的 Receive 阶段读它决定输入模式
    *   - 玩家输入提交、写完 player_input entry 后清回 null
    *
    * null 表示"当前回合没有 signal（LLM 自然停止 / maxSteps / restore 后新一轮）"，
    * 此时 Receive 阶段走 freetext 路径。
    */
-  private pendingSignal: {
-    hint: string;
-    choices: string[];
-    /** 发起 signal 的 LLM step 的 batchId，用于 signal_input / narrative / player_input 分组 */
-    batchId: string | null;
-  } | null = null;
+  private pendingSignal: GenerateTurnPendingSignal | null = null;
 
-  /**
-   * 当前 LLM step 的 batchId（migration 0011）。onStep 回调里从 StepInfo.batchId
-   * 取到并缓存；onSignalInputRecorded / onNarrativeSegmentFinalized 挂起时把它
-   * 一并透传给 persistence，让 narrative_entries.batch_id 统一标记"同一次 LLM
-   * 响应产出的 entries"。
-   *
-   * 生命周期：onStepStart 触发时更新（Bug B 修复 2026-04-24：原先是 onStep
-   * 即 stepFinish 才更新，导致同 step 内 tool.execute 时读到**上一 step** 的
-   * batchId，signal_input / narrative 挂错批次）；onStep 仍然兜底重复写一遍
-   * 以防 onStepStart 回调某种异常未触发；generate() 结束时（finally 块）清空。
-   */
-  private currentStepBatchId: string | null = null;
-
-  /**
-   * 当前 generate 回合的 turn number（Bug A 修复 2026-04-24）。
-   *
-   * 用途：recordPendingSignal 里在 signal_input 写入**之前**，要把 currentNarrativeBuffer
-   * pre-flush 到 memory + DB，保证 narrative_entries 的 orderIdx 顺序和玩家看到的
-   * 顺序一致（narrative → signal_input）。memory.appendTurn 需要 turn 参数，而 turn
-   * 是 coreLoop 内 `const turn` 局部变量，recordPendingSignal 在另一个栈里看不到，
-   * 所以存一份到 this。
-   *
-   * 生命周期：coreLoop 每次 generate 开始时赋值；不在 finally 里清零（没必要，
-   * 下一次 generate 会覆写）。
-   */
-  private currentTurn: number = 0;
-
-  // 用于中断进行中的 generate()（停止/重置时防挂死）
-  private abortController: AbortController | null = null;
+  // 当前 generate 回合的 turn-scoped runtime，用于 stop() 中断 LLM stream。
+  private activeGenerateTurn: GenerateTurnRuntime | null = null;
 
   // compressFn 从 game-session 移除 —— 现在由 Memory adapter 构造时注入
   // （Legacy 用 truncatingCompressFn，LLMSummarizer 用真 LLM）
@@ -444,8 +309,8 @@ export class GameSession {
     this.active = false;
 
     // 中断进行中的 generate()
-    this.abortController?.abort();
-    this.abortController = null;
+    this.activeGenerateTurn?.abort();
+    this.activeGenerateTurn = null;
 
     // resolve 外循环的 waitForInput（防挂死）；方案 B 下没有 signalInputResolve 了
     if (this.inputResolve) {
@@ -496,290 +361,8 @@ export class GameSession {
     while (this.active) {
       // --- Generate Phase ---
       const turn = await this.beginGenerateTurn();
-
-      // 🔭 可观测性：为这一轮 generate 开启 trace（在 try 外层定义，catch 也能访问）
-      const traceHandle: GenerateTraceHandle | undefined = this.tracing?.startGenerateTrace(turn);
-      const toolCallStack = new Map<string, ToolCallTraceHandle[]>();
-
-      try {
-        const allTools = this.createTurnTools();
-        const enabledToolSet = getEnabledTools(allTools, this.enabledTools);
-
-        // Assemble context —— 抽成闭包，让 prepareStep hook 里也能按当前 state 重调。
-        //
-        // Focus Injection D：一次 generate() 可以跨多个 scene 切换（signal_input_needed
-        // 挂起期间 state.current_scene 可能变化），外层 assembleContext 只在开头跑一次
-        // 拿到的是初始 focus 对应的 prompt。为了让后续 step 能看到新 scene 的 segment，
-        // prepareStep 里会在 focus 变化时调这个闭包重新 assemble。
-        const runAssemble = async (focus: ReturnType<typeof computeFocus>) => {
-          return assembleContext({
-            segments: this.segments,
-            stateStore: this.stateStore,
-            memory: this.memory,
-            tokenBudget: this.tokenBudget,
-            initialPrompt: this.initialPrompt,
-            currentQuery: await this.buildRetrievalQuery(),
-            focus,
-            assemblyOrder: this.assemblyOrder,
-            disabledSections: this.disabledSections,
-            protocolVersion: this.protocolVersion,
-            characters: this.characters,
-            backgrounds: this.backgrounds,
-          });
-        };
-
-        let focus = computeFocus(this.stateStore.getAll());
-        let context = await runAssemble(focus);
-
-        // prepareStep 缓存：同一个 focus key 不反复跑 assembleContext，避免无谓的
-        // memory.retrieve + prompt cache miss。只有 focus 真的变了才重算。
-        const focusKey = (f: ReturnType<typeof computeFocus>) =>
-          JSON.stringify({ scene: f.scene, characters: f.characters, stage: f.stage });
-        let cachedFocusKey = focusKey(focus);
-        let cachedSystemPrompt = context.systemPrompt;
-
-        // Compute active segment IDs
-        const activeSegmentIds = this.segments
-          .filter((s) => {
-            if (!s.injectionRule) return true;
-            try {
-              const vars = this.stateStore.getAll();
-              const keys = Object.keys(vars);
-              const values = keys.map((k) => vars[k]);
-              const fn = new Function(...keys, `try { return !!(${s.injectionRule.condition}); } catch { return false; }`);
-              return fn(...values);
-            } catch { return false; }
-          })
-          .map((s) => s.id);
-
-        // context.messages 是 ModelMessage[]（可能含 tool-call / tool-result parts）。
-        // emitter / tracing 的消费者期望 {role, content: string} 扁平结构 —— 用
-        // serializeMessagesForDebug 把 parts 序列化为可读的 "[tool-call] {...json...}"
-        // 行。EditorDebugPanel 和 Langfuse trace.input 直接展示就行。
-        const debugMessages = serializeMessagesForDebug(context.messages);
-
-        // Update global debug state
-        this.emitter.updateDebug({
-          tokenBreakdown: context.tokenBreakdown,
-          assembledSystemPrompt: context.systemPrompt,
-          assembledMessages: debugMessages,
-          activeSegmentIds,
-        });
-
-        // Stage prompt snapshot for this generation entry
-        this.emitter.stagePendingDebug({
-          promptSnapshot: {
-            systemPrompt: context.systemPrompt,
-            messages: debugMessages,
-            tokenBreakdown: context.tokenBreakdown,
-            activeSegmentIds,
-          },
-        });
-
-        // Create abort controller for this generate() call
-        this.abortController = new AbortController();
-
-        // 创建 streaming entry（文本将直接追加到这条 entry）
-        this.currentNarrativeBuffer = '';
-        this.currentReasoningBuffer = '';
-        this.emitter.beginStreamingEntry();
-
-        // 🔭 可观测性：设置 trace 初始上下文（展示 LLM 看到的 prompt）
-        traceHandle?.setInput({
-          systemPrompt: context.systemPrompt,
-          messages: debugMessages,
-        });
-
-        const narrativeRuntime = this.createNarrativeRuntime(turn, traceHandle);
-        this.pendingNarrationFlusher = narrativeRuntime.flushPendingNarration;
-
-        // Call LLM (agentic tool loop — stopWhen 在 signal_input_needed / end_scenario 触发时拦截)
-        //
-        // 推理/叙事分离由 AI SDK 原生通道处理：
-        //   - text-delta 事件 → onTextChunk → 叙事正文
-        //   - reasoning-delta 事件 → onReasoningChunk → 思考过程（仅 reasoner 类模型产生）
-        // 不再做启发式过滤（见 scripts/verify-deepseek-reasoning.ts 的验证结论）
-        const result = await this.llmClient.generate({
-          systemPrompt: context.systemPrompt,
-          messages: context.messages,
-          tools: enabledToolSet,
-          maxSteps: 30,
-          // maxOutputTokens 默认从 LLMClient 的 config.maxOutputTokens 取（P2a 修复）
-          abortSignal: this.abortController.signal,
-          // Focus Injection D：per-step 读 state，focus 变了就重 assemble
-          //
-          // 注意 AI SDK 的 prepareStep 语义：返回 undefined → 用**外层初始** system；
-          // 返回 string → 覆盖本 step 的 system。所以一旦 focus 变过一次，之后每个
-          // step 都必须返回**当时的 cachedSystemPrompt**（而不是 undefined），否则
-          // AI SDK 会回到外层初始 prompt，把之前 refresh 过的场景段又丢了。
-          //
-          // Provider 侧 prompt cache：每次返回相同字符串时 prefix 一致，能命中 cache。
-          // 只有 focus 真的变了那一 step 会 miss 一次。
-          prepareStepSystem: async ({ stepNumber }) => {
-            // step 0 外层已 assemble 过了，返回 undefined 让 AI SDK 用外层 systemPrompt
-            if (stepNumber === 0) return undefined;
-            const curFocus = computeFocus(this.stateStore.getAll());
-            const curKey = focusKey(curFocus);
-            if (curKey === cachedFocusKey) {
-              // focus 没变。如果从没 refresh 过（cachedSystemPrompt 就是外层那份），
-              // 返回 undefined 让 AI SDK 用外层；否则返回缓存值维持现状。
-              if (cachedSystemPrompt === context.systemPrompt) return undefined;
-              return cachedSystemPrompt;
-            }
-            // focus 变了 → 重 assemble
-            const prevFocus = JSON.parse(cachedFocusKey) as unknown;
-            const newCtx = await runAssemble(curFocus);
-            cachedFocusKey = curKey;
-            cachedSystemPrompt = newCtx.systemPrompt;
-            // 可观测性：给 tracing 层打一条 focus 变更事件
-            traceHandle?.event(
-              'focus-refresh',
-              { from: prevFocus, to: curFocus },
-              { stepNumber },
-            );
-            return newCtx.systemPrompt;
-          },
-          onTextChunk: (chunk) => {
-            this.currentNarrativeBuffer += chunk;
-            this.emitter.appendToStreamingEntry(chunk);
-            // M3: 同步喂给 Narrative Parser 产出结构化 Sentence[]
-            narrativeRuntime.feedTextChunk(chunk);
-          },
-          onReasoningChunk: (chunk) => {
-            this.currentReasoningBuffer += chunk;
-            this.emitter.appendReasoningToStreamingEntry(chunk);
-          },
-          onToolCall: (name, args) => {
-            this.emitter.addToolCall({ name, args, result: undefined });
-            this.emitter.addPendingToolCall({ name, args, result: undefined });
-            // 🔭 tracing: 开启 tool span
-            const handle = traceHandle?.startToolCall(name, args);
-            if (handle) {
-              const stack = toolCallStack.get(name) ?? [];
-              stack.push(handle);
-              toolCallStack.set(name, stack);
-            }
-          },
-          onToolResult: (name, toolResult) => {
-            this.emitter.updateToolResult(name, toolResult);
-            this.emitter.updatePendingToolResult(name, toolResult);
-            // 🔭 tracing: 结束 tool span（FIFO 配对同名 call）
-            const stack = toolCallStack.get(name);
-            if (stack && stack.length > 0) {
-              const handle = stack.shift();
-              handle?.end(toolResult);
-            }
-          },
-          onStepStart: (info) => this.handleStepStart(info),
-          onStep: (step) => this.handleStepFinished(step, traceHandle),
-          // migration 0011 / PR-M1：非 signal/end 类工具调用写 kind='tool_call' entry
-          onToolObserved: async (evt) => {
-            await this.persistence?.onToolCallRecorded?.({
-              toolName: evt.toolName,
-              input: evt.input,
-              output: evt.output,
-              batchId: evt.batchId,
-            }).catch((e) =>
-              console.error('[Persistence] onToolCallRecorded failed:', e),
-            );
-          },
-        });
-
-        this.abortController = null;
-
-        // M3: parser 末尾降级（v1 未闭合 <d>，v2 未闭合顶层容器）
-        narrativeRuntime.finalizeParser();
-        // finalize 会把 parser 里剩余的 narrationBuffer emit 成 onNarrationChunk，
-        // 最后再 flush 一次 session 层累积器，保证整 generate 的 narration 全输出
-        narrativeRuntime.flushPendingNarration();
-        this.scenePatchEmitter = null;
-        this.pendingNarrationFlusher = null;
-
-        // Stage finish reason
-        this.emitter.stagePendingDebug({ finishReason: result.finishReason });
-
-        // Finalize streaming → append to narrative entries (with attached debug info)
-        this.emitter.finalizeStreamingEntry();
-
-        // Store LLM response in memory + 持久化 narrative entry。
-        //
-        // 方案 B（turn-bounded）下一次 generate 对应一个玩家回合。
-        // currentNarrativeBuffer 包含本轮 LLM 产出的全部 narrative text
-        // （signal_input 路径也不再提前 flush，见 recordPendingSignal 注释）。
-        //
-        // 这里一次性写 memory + narrative_entries。narrative 的 batchId 挂当前
-        // step 的 id，和同 step 的 tool_call / signal_input entry 共享 batch
-        // → messages-builder 按 batchId 分组合并为一个 assistant message。
-        if (this.currentNarrativeBuffer) {
-          await this.memory.appendTurn({
-            turn,
-            role: 'generate',
-            content: this.currentNarrativeBuffer,
-            tokenCount: estimateTokens(this.currentNarrativeBuffer),
-          });
-        }
-
-        // ② 持久化：本轮 narrative 段入 narrative_entries
-        if (this.currentNarrativeBuffer) {
-          await this.persistence?.onNarrativeSegmentFinalized({
-            entry: {
-              role: 'generate',
-              content: this.currentNarrativeBuffer,
-              // reasoner 类模型的 thinking 内容。DeepSeek v4 Flash thinking 模式
-              // 要求重放时带回 reasoning_content，messages-builder 会投影成
-              // ReasoningPart。空字符串 → null 统一走 DB NULL 约束，avoid 浪费
-              // 列空间存 ''。
-              reasoning: this.currentReasoningBuffer || undefined,
-              finishReason: result.finishReason,
-            },
-            // migration 0011：最后一 step 的 batchId（onStep 里缓存的最后一帧）
-            batchId: this.currentStepBatchId,
-          }).catch((e) => console.error('[Persistence] onNarrativeSegmentFinalized (final) failed:', e));
-          this.currentNarrativeBuffer = '';
-          this.currentReasoningBuffer = '';
-        }
-
-        // 同步 memory 快照和 preview
-        const memSnapGen = await this.memory.snapshot();
-        await this.persistence?.onGenerateComplete({
-          memorySnapshot: memSnapGen,
-          // preview 用 parser 抽纯文本，避免列表里裸露 `<d s="...">` —— 见 D4
-          preview: result.text
-            ? extractPlainText(result.text).slice(0, 80).replace(/\n/g, ' ').trim()
-            : null,
-          // M3: 持久化 VN 当前场景，断线重连时可恢复视觉状态
-          currentScene: this.currentScene,
-        }).catch((e) => console.error('[Persistence] onGenerateComplete failed:', e));
-
-        // 让 adapter 自己决定是否真压缩：legacy 查 token 阈值、mem0 批量 flush 等。
-        // 状态 bar 仅在 legacy/LLMSummarizer 真的跑压缩时切到 'compressing' 比较准，
-        // 目前简化：调用前先切，无操作也不伤害。
-        this.emitter.setStatus('compressing');
-        await this.memory.maybeCompact();
-
-        // Sync debug state
-        await this.syncDebugState();
-
-        // 🔭 可观测性：结束这一轮 trace
-        traceHandle?.end({ text: result.text, finishReason: result.finishReason });
-
-      } catch (error) {
-        if (!this.active) break;
-        // Finalize any partial streaming content so it's not lost
-        this.emitter.finalizeStreamingEntry();
-        // 🔭 可观测性：记录错误到当前 trace
-        traceHandle?.error(
-          error instanceof Error ? error.message : String(error),
-          'generate',
-        );
-        traceHandle?.end({ error: String(error) });
-        // Show error banner but don't change status — Receive Phase will set waiting-input
-        this.emitter.setError(error instanceof Error ? error.message : String(error));
-        // Fall through to Receive Phase — player can re-send to retry
-      } finally {
-        // migration 0011：本轮 generate 彻底结束，清 batchId 防下一轮串台
-        this.currentStepBatchId = null;
-      }
+      const generateResult = await this.runGeneratePhase(turn);
+      if (generateResult.stopped) break;
 
       // --- 本轮 generate 结束检查：剧情是否已结束？ ---
       // LLM 在本轮内调用了 end_scenario → onScenarioEnd 回调设了 scenarioEnded=true。
@@ -813,210 +396,59 @@ export class GameSession {
     this.emitter.setStatus('generating');
     const turn = this.stateStore.getTurn() + 1;
     this.stateStore.setTurn(turn);
-    // Bug A 修复：把 turn 挂到实例，recordPendingSignal 里 memory.appendTurn 要用
-    this.currentTurn = turn;
 
     // ① 持久化：generate 开始
     await this.persistence?.onGenerateStart(turn).catch((e) =>
       console.error('[Persistence] onGenerateStart failed:', e));
 
-    // migration 0011：新 generate 开始，清空 batchId 防上一轮残留串台
-    this.currentStepBatchId = null;
     return turn;
   }
 
-  private createTurnTools(): ReturnType<typeof createTools> {
-    return createTools({
+  private async runGeneratePhase(turn: number): Promise<{ stopped: boolean }> {
+    const runtime = createGenerateTurnRuntime({
+      turn,
+      emitter: this.emitter,
       stateStore: this.stateStore,
       memory: this.memory,
+      llmClient: this.llmClient,
       segments: this.segments,
-      recordPendingSignal: async (options) => {
-        await this.recordPendingSignal(options);
-      },
-      onSetMood: () => {
-        // TODO: connect to mood-capable output consumers.
-      },
+      enabledTools: this.enabledTools,
+      tokenBudget: this.tokenBudget,
+      initialPrompt: this.initialPrompt,
+      assemblyOrder: this.assemblyOrder,
+      disabledSections: this.disabledSections,
+      persistence: this.persistence,
+      tracing: this.tracing,
+      protocolVersion: this.protocolVersion,
+      parserManifest: this.parserManifest,
+      characters: this.characters,
+      backgrounds: this.backgrounds,
+      currentScene: this.currentScene,
+      buildRetrievalQuery: () => this.buildRetrievalQuery(),
+      isActive: () => this.active,
       onScenarioEnd: (reason) => {
         // 只记下 flag；实际的"退出循环 + 持久化"在本轮 generate 返回后做。
         // 这样 LLM 在 end_scenario 之后还能继续输出一小段收尾文字再 stop。
         this.scenarioEnded = true;
         this.scenarioEndReason = reason;
       },
-      onSceneChange: (patch) => {
-        this.applyScenePatch(patch);
-      },
-    });
-  }
-
-  private createNarrativeRuntime(
-    turn: number,
-    traceHandle: GenerateTraceHandle | undefined,
-  ): NarrativeRuntime {
-    return this.protocolVersion === 'v2-declarative-visual'
-      ? this.createDeclarativeNarrativeRuntime(turn, traceHandle)
-      : this.createToolDrivenNarrativeRuntime(turn, traceHandle);
-  }
-
-  private createDeclarativeNarrativeRuntime(
-    turn: number,
-    traceHandle: GenerateTraceHandle | undefined,
-  ): NarrativeRuntime {
-    const parserV2: NarrativeParserV2 = createParserV2({
-      manifest: this.parserManifest!,
-      turnNumber: turn,
-      startIndex: 0,
-      initialScene: { ...this.currentScene },
     });
 
-    const drainBatch = (batch: NarrativeBatch) => {
-      for (const sentence of batch.sentences) {
-        if (sentence.kind !== 'scene_change') {
-          this.currentScene = { ...sentence.sceneRef };
-        }
-        this.emitter.appendSentence(sentence);
-        if (sentence.kind === 'dialogue' && sentence.truncated) {
-          this.traceNarrativeTruncation(traceHandle, turn, {
-            kind: 'dialogue',
-            speaker: sentence.pf.speaker,
-            partialLength: sentence.text.length,
-          });
-        }
-        if (sentence.kind === 'narration' && sentence.truncated) {
-          this.traceNarrativeTruncation(traceHandle, turn, {
-            kind: 'narration',
-            partialLength: sentence.text.length,
-          });
-        }
+    this.activeGenerateTurn = runtime;
+    try {
+      const result = await runtime.run();
+      this.currentScene = result.currentScene;
+      this.pendingSignal = result.pendingSignal;
+      return { stopped: result.stopped };
+    } finally {
+      if (this.activeGenerateTurn === runtime) {
+        this.activeGenerateTurn = null;
       }
-
-      if (batch.scratches.length > 0) {
-        traceHandle?.event(
-          'ir-scratch',
-          {
-            count: batch.scratches.length,
-            totalChars: batch.scratches.reduce((n, scratch) => n + scratch.text.length, 0),
-          },
-          { turn },
-        );
-      }
-
-      for (const degrade of batch.degrades) {
-        traceHandle?.event(
-          `ir-degrade:${degrade.code}`,
-          degrade.detail ? { detail: degrade.detail } : {},
-          { turn },
-        );
-      }
-    };
-
-    this.scenePatchEmitter = null;
-    return {
-      feedTextChunk: (chunk) => drainBatch(parserV2.feed(chunk)),
-      finalizeParser: () => drainBatch(parserV2.finalize()),
-      flushPendingNarration: () => {},
-    };
-  }
-
-  private createToolDrivenNarrativeRuntime(
-    turn: number,
-    traceHandle: GenerateTraceHandle | undefined,
-  ): NarrativeRuntime {
-    let turnSentenceIndex = 0;
-    const emitSentence = (draft: GeneratedSentenceDraft) => {
-      this.emitter.appendSentence(
-        this.createGeneratedSentence(draft, turn, turnSentenceIndex),
-      );
-      turnSentenceIndex += 1;
-    };
-
-    const narrationAcc = createNarrationAccumulator((para) =>
-      emitSentence({ kind: 'narration', text: para }),
-    );
-    const flushPendingNarration = () => narrationAcc.flush();
-
-    const narrativeParser = new NarrativeParser({
-      onNarrationChunk: (text) => narrationAcc.push(text),
-      onDialogueStart: () => {
-        flushPendingNarration();
-      },
-      onDialogueEnd: (pf, fullText, truncated) => {
-        emitSentence({ kind: 'dialogue', text: fullText, pf, truncated });
-        if (truncated) {
-          this.traceNarrativeTruncation(traceHandle, turn, {
-            kind: 'dialogue',
-            speaker: pf.speaker,
-            partialLength: fullText.length,
-          });
-        }
-      },
-    });
-
-    this.scenePatchEmitter = (transition) => {
-      flushPendingNarration();
-      this.emitter.emitSceneChange(this.currentScene, transition);
-      emitSentence({ kind: 'scene_change', scene: { ...this.currentScene }, transition });
-      traceHandle?.event(
-        'scene-change',
-        { scene: this.currentScene, transition },
-        { turn },
-      );
-    };
-
-    return {
-      feedTextChunk: (chunk) => narrativeParser.push(chunk),
-      finalizeParser: () => narrativeParser.finalize(),
-      flushPendingNarration,
-    };
-  }
-
-  private createGeneratedSentence(
-    draft: GeneratedSentenceDraft,
-    turnNumber: number,
-    index: number,
-  ): Sentence {
-    const base = { turnNumber, index };
-
-    if (draft.kind === 'narration') {
-      return { kind: 'narration', text: draft.text, sceneRef: { ...this.currentScene }, ...base };
     }
-
-    if (draft.kind === 'dialogue') {
-      return {
-        kind: 'dialogue',
-        text: draft.text,
-        pf: draft.pf,
-        sceneRef: { ...this.currentScene },
-        ...base,
-        ...(draft.truncated !== undefined ? { truncated: draft.truncated } : {}),
-      };
-    }
-
-    return {
-      kind: 'scene_change',
-      scene: draft.scene,
-      ...(draft.transition !== undefined ? { transition: draft.transition } : {}),
-      ...base,
-    };
-  }
-
-  private traceNarrativeTruncation(
-    traceHandle: GenerateTraceHandle | undefined,
-    turn: number,
-    event:
-      | { kind: 'dialogue'; speaker: string; partialLength: number }
-      | { kind: 'narration'; partialLength: number },
-  ): void {
-    traceHandle?.event(
-      'narrative-truncation',
-      event.kind === 'dialogue'
-        ? { speaker: event.speaker, partialLength: event.partialLength }
-        : { partialLength: event.partialLength },
-      { turn, kind: event.kind },
-    );
   }
 
   private async runReceivePhase(turn: number): Promise<void> {
-    // Snapshot pendingSignal 副本：recordPendingSignal 已经完事，
+    // Snapshot pendingSignal 副本：GenerateTurnRuntime 已经记录完 signal，
     // 我们在 coreLoop 内消费。下一轮 generate 开始前清零。
     const signal = this.pendingSignal;
     const waitingHint = signal?.hint ?? null;
@@ -1083,26 +515,6 @@ export class GameSession {
     this.emitter.setInputType('freetext');
   }
 
-  private handleStepStart(info: StepStartInfo): void {
-    // Bug B 修复（2026-04-24）：在 step 开始时就缓存 batchId，让本 step 内
-    // tool.execute / recordPendingSignal 读到当前 step，而不是上一 step。
-    this.rememberMainStepBatch(info);
-  }
-
-  private handleStepFinished(step: StepInfo, traceHandle: GenerateTraceHandle | undefined): void {
-    // onStepStart 是主路径；这里仍兜底同步一次，防止 start 回调异常时 batchId 丢失。
-    this.rememberMainStepBatch(step);
-    traceHandle?.recordStep(toTraceStepRecord(step));
-  }
-
-  private rememberMainStepBatch(step: Pick<StepInfo, 'batchId' | 'isFollowup'>): void {
-    // follow-up step 是 llm-client 的 post-step 补刀。它可以被 tracing 记录，但不能覆盖
-    // currentStepBatchId，否则 narrative 和 signal_input 会跨 batch 分组。
-    if (!step.isFollowup) {
-      this.currentStepBatchId = step.batchId ?? null;
-    }
-  }
-
   /**
    * 为本轮 generate 构造 Memory.retrieve 的 query。
    *
@@ -1156,138 +568,6 @@ export class GameSession {
     });
   }
 
-  /**
-   * 把 signal_input_needed 事件 emit 成一条 `signal_input` Sentence（migration
-   * 0010 / Step 4），让 backlog 回看时能看到"GM 问了什么、给了哪些选项"。
-   *
-   * 交互视图里不占 click；live 交互由当前 consumer 的 input request 承担。
-   *
-   * 和 `onSignalInputRecorded` DB 写入配对，两者同时调用：
-   *   - appendSentence → 输出端口的 sentence 事件
-   *   - onSignalInputRecorded → narrative_entries 表（供下次 restore 重放）
-   */
-  private emitSignalInputSentence(hint: string, choices: string[]): void {
-    this.emitter.appendSentence({
-      kind: 'signal_input',
-      hint,
-      choices,
-      sceneRef: { ...this.currentScene },
-      turnNumber: this.stateStore.getTurn(),
-      index: Date.now(),
-    });
-  }
-
-  /**
-   * 方案 B（turn-bounded）：signal_input_needed 的 record-only handler。
-   *
-   * 触发路径：LLM 调 signal_input_needed → tool.execute 调 ctx.recordPendingSignal →
-   * 此方法。**不挂起 Promise**，做完就 return；后续流程：
-   *   1. AI SDK 把 tool_result `{success:true}` 回给 LLM
-   *   2. 本 step 结束时 stopWhen 检测到 hasToolCall('signal_input_needed') → generate() 返回
-   *   3. 外层 coreLoop 看到 this.pendingSignal 非空，进入 Receive 阶段等玩家输入
-   *
-   * 本方法内部做的事：
-   *   - flush pendingNarrationFlusher → 消费端先收到叙事 Sentence 再收到选项
-   *   - emit signal_input Sentence 到输出端口
-   *   - 写 signal_input entry 进 narrative_entries（供 restore / backlog）
-   *   - 设 this.pendingSignal 供 coreLoop 读
-   *
-   * 不做的事：
-   *   - **不** flush currentNarrativeBuffer 到 DB。挂起模式 v1 时代会做，
-   *     方案 B 下冗余（见下方 ★ 2 注释 + messages-builder.test.ts A1-A3
-   *     canonical tests 证明 batchId 分组机制足够）
-   *   - 不设 waiting-input（generate 还在 generating，stopWhen 拦截后 coreLoop 统一切换）
-   *   - 不调 onWaitingInput（由 coreLoop 在 generate 返回后统一调）
-   *   - 不 return Promise（execute 的 async 立即 resolve → tool_result success:true 可用）
-   */
-  private async recordPendingSignal(options: SignalInputOptions): Promise<void> {
-    const hint = options.hint ?? '';
-    const choices = options.choices ?? [];
-
-    // ★ 1. flush 累积的 narration 段落 Sentence 到输出端口，
-    //    让玩家先看到叙事再看到选项。
-    this.pendingNarrationFlusher?.();
-
-    // ★ 2. Bug A 修复（2026-04-24）：把 currentNarrativeBuffer pre-flush 到
-    //    memory + DB，**之后**再写 signal_input entry。
-    //
-    //    为什么必须现在刷：narrative_entries 的 orderIdx 是 DB INSERT 时分配
-    //    的自增序号，restore 时消费端按 orderIdx ASC 回放。如果 signal_input
-    //    先 insert（orderIdx=N），narrative 留到 generate 结束才 insert
-    //    （orderIdx=N+1），restore 回放顺序就变成"选项 → 旁白"，和直播顺序
-    //    （旁白 → 选项）完全颠倒，玩家读档后看到的历史一塌糊涂（Bug A 现象）。
-    //
-    //    之前的注释说"messages-builder 按 batchId 分组 orderIdx 颠倒不影响" ——
-    //    那是对 LLM 看到的 assistant message 上下文的修复，messages-builder
-    //    确实能按 batchId 合并。但 **history restore 给消费端** 走的是
-    //    loadEntries → Sentence 序列（ws-client-emitter case 'restored'），
-    //    这条路径没有 messages-builder，它按 orderIdx 逐条 replay，所以这里
-    //    的顺序颠倒就是玩家可见的问题。
-    //
-    //    流程：
-    //      a. 把 buffer 快照出来 + 清空 this 字段，防止后面被重复 flush
-    //      b. memory.appendTurn（memory 里也要按发生顺序追加）
-    //      c. persistence.onNarrativeSegmentFinalized（DB insert，orderIdx=N）
-    //      d. 紧接着 ★ 4 走 signal_input（DB insert，orderIdx=N+1）
-    //      e. 后续 coreLoop 尾部通用路径会看到 currentNarrativeBuffer='' →
-    //         跳过（避免重复写）
-    if (this.currentNarrativeBuffer) {
-      const buffered = this.currentNarrativeBuffer;
-      const bufferedReasoning = this.currentReasoningBuffer;
-      this.currentNarrativeBuffer = '';
-      this.currentReasoningBuffer = '';
-
-      try {
-        await this.memory.appendTurn({
-          turn: this.currentTurn,
-          role: 'generate',
-          content: buffered,
-          tokenCount: estimateTokens(buffered),
-        });
-      } catch (e) {
-        console.error('[recordPendingSignal] memory.appendTurn failed:', e);
-      }
-
-      try {
-        await this.persistence?.onNarrativeSegmentFinalized({
-          entry: {
-            role: 'generate',
-            content: buffered,
-            reasoning: bufferedReasoning || undefined,
-            // 标记"signal_input 前预 flush"——tracing / debug 能区分这条 entry
-            // 是中途 flush 还是 generate 结束时 flush 的。
-            finishReason: 'signal-input-preflush',
-          },
-          batchId: this.currentStepBatchId,
-        });
-      } catch (e) {
-        console.error('[recordPendingSignal] onNarrativeSegmentFinalized failed:', e);
-      }
-    }
-
-    // ★ 3. 缓存 pendingSignal 供 coreLoop Receive 阶段读（hint + choices + batchId）
-    this.pendingSignal = {
-      hint,
-      choices,
-      batchId: this.currentStepBatchId,
-    };
-
-    // ★ 4. VN Sentence + DB signal_input entry（供 backlog / restore）
-    //    narrative_entries.content NOT NULL —— 只有 hint 非空才写 entry。
-    //    choices 允许为空（freetext 模式 signal 也是合法事件）。
-    if (hint) {
-      this.emitSignalInputSentence(hint, choices);
-      await this.persistence?.onSignalInputRecorded?.({
-        hint,
-        choices,
-        batchId: this.currentStepBatchId,
-      }).catch((e) => console.error('[Persistence] onSignalInputRecorded failed:', e));
-    }
-
-    // 方法到此结束 —— execute 立即 resolve tool_result success:true，stopWhen 在下一 step 前拦截
-  }
-
-
   private waitForInput(): Promise<string> {
     return new Promise<string>((resolve) => {
       this.inputResolve = resolve;
@@ -1309,16 +589,4 @@ export class GameSession {
     });
   }
 
-  /**
-   * M3: 应用 change_scene / change_sprite / clear_stage 工具产生的 scene patch。
-   * 步骤：
-   *   1. 更新 this.currentScene
-   *   2. 通过 scenePatchEmitter（由 generate() 装载）emit 场景事件 + Sentence
-   *   3. onGenerateComplete 时把 currentScene 持久化到 DB
-   */
-  private applyScenePatch(patch: ScenePatch): void {
-    const { scene, transition } = applyScenePatchToState(this.currentScene, patch);
-    this.currentScene = scene;
-    this.scenePatchEmitter?.(transition);
-  }
 }
