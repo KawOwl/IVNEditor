@@ -1,12 +1,40 @@
 # 项目进度
 
 ## 当前状态
-声明式视觉 IR Step V.4 / V.5 / V.6 / V.7 全部完成并过绿。frontend tsc 0 error，frontend core + stores tests 248/248 全绿（新增 7 个 game-store-catchup V.4 测试），server tests 141/141 全绿。v2 声明式 IR 从 system prompt、parser、session 接线、前端消费、续写、tracing、到编辑器协议切换已端到端打通。新建剧本默认走 v2；老剧本载入保持 v1 不迁移。下一步：本地连 ivn-test 跑一轮 E2E 验证后再决定是否 rollout；不 push 远端。
+
+**两条平行工作线**：
+
+1. **V.x 声明式视觉 IR（product feature）**：V.1 - V.7 全部完成并过绿。frontend tsc 0 error，frontend core + stores tests 248/248 全绿，server tests 181/181 全绿（注：181 = 141 v2 IR 完成时基线 + 40 op-kit 迁移期增量）。v2 IR 从 parser / system prompt / session 接线 / 前端消费 / 续写 / tracing / 编辑器协议切换已端到端打通。新建剧本默认 v2；老剧本载入保持 v1 不迁移。等本地连 ivn-test 跑一轮 E2E 验证后决定是否 rollout。
+2. **OP.x op-kit 单源 Operation 层（platform refactor + 业务能力）**：OP.0 - OP.4 完成（14 个 MCP tool 全部从 routes/mcp.mts 迁到 op-kit；mcp.mts 1378 → 281 行）。OP.5 - OP.7 P0 lint 套件 plan 就绪未开工，详见 `docs/refactor/op-kit-roadmap.md` 和 `docs/refactor/op-a-extract-referenced-ids-plan.md`。
 
 ## 当前任务
-**（空闲）V.4-V.7 done。本地连 ivn-test 跑一轮验证（v2 剧本完整一局 + v1 老剧本回归）后再决定是否 rollout；不 push 远端。**
+
+**OP.5 = Op A: `script.extract_referenced_ids`**
+- 类型：实现（op-kit 业务能力扩展）
+- 来源：op-kit roadmap 下一批 P0 lint 套件首个
+- 目标：补完"修复型 agent"工具链中的"知道剧本实际引用了什么"这块拼图，作为 OP.7 propose_manifest_alignment 的纯函数上游
+- 进展：**plan 已就绪，未开工**。完整 plan + 恢复指令模板见 `docs/refactor/op-a-extract-referenced-ids-plan.md`（顶部"恢复上下文指令"段直接 copy 给新会话即可开工）
+
+**辅助任务（待评估）**：V.x 这条线的"本地连 ivn-test 跑 E2E 验证"还没跑。是否在 OP.5 之前 / 之后 / 并行做，看用户指示。
 
 ## 最近完成
+
+**op-kit 重构线 OP.0 - OP.4（2026-04-25）**
+- **OP.0** `f843d61` op-kit 单源 Operation 定义 + 第一例 `script.lint_manifest`
+  - 建 `apps/server/src/operations/`：`op-kit.mts`（`Op<I,O>` + `defineOp` + `runOp` + 8 条防腐契约）+ `errors.mts` + `context.mts` + `adapters/{http,mcp}.mts` + `registry.mts`
+  - 首个 op `script.lint_manifest`：检查段落正文与 manifest 引用一致性（覆盖 undefined-bg/char/emotion + orphan + mixed-protocol，severity error/warning 二级）
+  - 第一例就解决真实业务问题：trace `b45a0df9` 的 `bg-unknown-scene` degrade 根因诊断
+- **OP.1** `eb60eaa` Batch 1：6 个 read MCP tool 迁移（list_scripts / list_versions / get_overview / get_segment / get_full_manifest / list_assets）；mcp.mts 1378 → 1119
+- **OP.2** `65bfb20` Batch 2：3 个 write MCP tool（update_segment_content / replace_manifest / publish_version）；mcp.mts 1119 → 950
+- **OP.3** `338ae1a` Batch 3：3 个 asset write MCP tool（upload_asset / add_background / add_character_sprite）；mcp.mts 950 → 386（最大瘦身，helper 一并搬走）
+- **OP.4** `91aa9ce` Batch 4：destructive `delete_script` 迁移 + 14 个 op 全部完成；mcp.mts 386 → **281（纯 JSON-RPC 协议层，加新 MCP tool 不再碰）**
+- 设计要点：`Op<I,O>` 类型不依赖 web 框架；HTTP / MCP / 将来的 OpenAPI / 前端 typed client 都从同一个 op 定义派生；`OpMeta.mcpName` 字段做 MCP 名 backward compat 让旧客户端配置无需改；防腐契约 8 条贴在 `op-kit.mts` 顶部
+- 验证：apps/server 181/181 + packages/core 248/248 + tsc 干净；起 server smoke MCP `tools/list` 返回 14 tool 同名同形 + HTTP `GET /api/ops` 列出 14 op 含 effect: 'destructive' 标记 + delete_script dry-run / confirm 校验严格
+- 详细报告：`docs/refactor/negentropy-2026-04-25-op-kit-bootstrap.md`（OP.0）+ `docs/refactor/negentropy-2026-04-25-mcp-tool-migration.md`（OP.1-OP.4 总览）+ `docs/refactor/op-kit-roadmap.md`（全貌 + 后续 OP.5-OP.10 路线）
+
+**chore: setup:env 脚本（2026-04-25）**
+- `cf3bbab` 加 `scripts/link-env.sh` + `pnpm setup:env`，把集中存放在 `~/.config/ivn-editor/{.env,.env.test}` 的真实 env 文件软链到 `apps/server/.env*`，幂等可反复跑
+- CLAUDE.md 第三节顶部加"新 worktree 第一次开工：`pnpm install && pnpm setup:env`"
 
 **V.7 ScriptInfoPanel 协议版本选择器（2026-04-24）**
 - `ScriptInfoPanel`：基本信息段新增"叙事协议"dropdown，两选项 v2-declarative-visual（默认）/ v1-tool-call（老剧本）；选 v1 时显示黄色提示引导用 v2
@@ -209,6 +237,8 @@
 | 2026-04-24 | 声明式视觉 IR 采用嵌套 XML 子标签（`<dialogue>`/`<narration>` + 子 `<background/>`/`<sprite/>`/`<stage/>`），替代 change_scene/change_sprite/clear_stage 工具；manifest 加 protocolVersion="v2"，v1/v2 并存 | N=30 实测方案 B（紧凑 DSL）四项通过率只有 63%，Shape C 30%；方案 C（嵌套 XML 全名）87% / Shape C 70%，且 mc-as-sprite / `?` 占位符 / DSL 语法错全部归零。XML 贴近 LLM 训练分布 + Anthropic 官方推荐 + TEI/articy prior art 同构 | RFC-声明式视觉IR_2026-04-24.md；新 Sentence 字段 bg/sprites/bgChanged/spritesChanged；视觉状态继承为默认，显式为例外；parser 换 htmlparser2 + FP reducer（§11 Step V.1~V.7） |
 | 2026-04-24 | 新增 `<scratch>` 顶层容器 + §2 设计原则 #6（为"非目标输出"提供合法分类出口，而非 prompt 禁令） | Langfuse trace 显示 LLM 会在叙事里泄漏"让我先读取 state..."等元叙述，污染 `<narration>`；prohibition 经验上服从率低；Anthropic 官方推荐结构化 `<thinking>` 模式（`<scratch>` 避开 DeepSeek-R1 `<think>` 冲突） | `<scratch>` 不产出 Sentence、不渲染、保留给下一轮 messages；tracing 单独事件 `ir-scratch`（非 degrade，用于量化元叙述转移率） |
 | 2026-04-24 | Parser v2 全面采用函数式 / 组合式 / 声明式（§2 原则 #7） | 原 parser.ts 350 行手搓状态机难以扩展新 tag（需同步改 enum + switch + 字段）；声明式 schema + 纯 reducer 让加一个 tag 只需追加一行 schema 条目 | parser 层禁 class、禁顶层可变 let；state/reducer/inheritance/tag-schema 模块化；mutation 仅限 htmlparser2 回调边界 |
+| 2026-04-25 | op-kit 单源 Operation 层（迁移 14 个 MCP tool + ALL_OPS 单一注册点 + 8 条防腐契约） | routes/mcp.mts 1378 行业务+协议混合体；同一能力 RESTful + MCP 写两遍 schema 漂移；要为将来换 RPC 框架（tRPC/Hono RPC）留扩展口 | mcp.mts 瘦到 281 行（纯 JSON-RPC 协议层）；HTTP /api/ops/* 自动派生；OpMeta.mcpName 字段做 backward compat 让旧客户端配置免改；op canonical name 强制 `<category>.<verb>` 格式；防腐契约贴在 op-kit.mts 顶部 |
+| 2026-04-25 | 把 op-kit 这条线纳入 feature_list（OP.0-OP.7 + roadmap）；之前 op-kit 4 batch + first op 都没编号 | op-kit 是 platform refactor 不是 v2.0.md 列出的 product feature，CLAUDE.md 工作流默认通过 feature_list 接续上下文，没编号下次 context reset 看 feature_list 看不出 op-kit 在做什么 | feature_list.json +7 entries（OP.0-OP.4 done / OP.5-OP.7 pending）；docs/refactor/op-kit-roadmap.md 全貌；docs/refactor/op-a-extract-referenced-ids-plan.md self-contained 给 OP.5 开工 |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |
