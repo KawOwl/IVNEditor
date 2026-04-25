@@ -81,6 +81,16 @@ export type { RecordedSessionOutput, RecordingSessionEmitter } from '#internal/g
 export * from '#internal/game-session/core-events';
 export { validateCoreEventSequence } from '#internal/game-session/core-event-protocol';
 export {
+  createCoreEventLogSink,
+  replayCoreEventEnvelopes,
+} from '#internal/game-session/event-log-core-event-sink';
+export type {
+  CoreEventLogSink,
+  CoreEventLogSinkOptions,
+  CoreEventLogWriter,
+  CoreEventReplayOptions,
+} from '#internal/game-session/event-log-core-event-sink';
+export {
   createSessionPersistenceCoreEventSink,
   isSessionPersistenceCoreEvent,
 } from '#internal/game-session/persistence-core-event-sink';
