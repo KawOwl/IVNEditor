@@ -66,6 +66,15 @@ export interface OpMeta {
   readonly auth: OpAuth;
   /** UI / Agent 友好的简短标签（缺省用 description 的第一句） */
   readonly uiLabel?: string;
+  /**
+   * MCP tool 名 override。缺省时 mcp adapter 把 `<category>.<verb>` 的
+   * category 前缀剥掉（例 `script.lint_manifest` → `lint_manifest`）。
+   *
+   * 为已有 MCP tool 做 backward compat 时填这个字段。例：op.name 是
+   * 干净的 `script.list_versions`，但旧 MCP 客户端配置里写的是
+   * `list_script_versions`，那就 `mcpName: 'list_script_versions'`。
+   */
+  readonly mcpName?: string;
 }
 
 /** Op 主体定义。Input/Output 的运行时校验来自 Zod，类型从 z.infer 推。*/
@@ -84,6 +93,7 @@ export interface DefineOpInput<I, O> {
   effect: OpEffect;
   auth: OpAuth;
   uiLabel?: string;
+  mcpName?: string;
   input: z.ZodType<I>;
   output: z.ZodType<O>;
   exec: (input: I, ctx: OpContext) => Promise<O>;
@@ -146,6 +156,7 @@ export function defineOp<I, O>(spec: DefineOpInput<I, O>): Op<I, O> {
     effect: spec.effect,
     auth: spec.auth,
     uiLabel: spec.uiLabel,
+    mcpName: spec.mcpName,
     input: spec.input,
     output: spec.output,
     exec: spec.exec,

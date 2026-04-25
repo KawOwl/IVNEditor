@@ -7,9 +7,24 @@
 
 import type { AnyOp } from '#internal/operations/op-kit';
 import { lintManifestOp } from '#internal/operations/script/lint-manifest';
+import { listScriptsOp } from '#internal/operations/script/list-scripts';
+import { listVersionsOp } from '#internal/operations/script/list-versions';
+import { getOverviewOp } from '#internal/operations/script/get-overview';
+import { getSegmentOp } from '#internal/operations/script/get-segment';
+import { getFullManifestOp } from '#internal/operations/script/get-full-manifest';
+import { listAssetsOp } from '#internal/operations/script/list-assets';
 
 /** 全部 op 列表。新增 op 在这里登记。*/
-export const ALL_OPS = [lintManifestOp] as const satisfies ReadonlyArray<AnyOp>;
+export const ALL_OPS = [
+  // script.* —— 只读
+  listScriptsOp,
+  listVersionsOp,
+  getOverviewOp,
+  getSegmentOp,
+  getFullManifestOp,
+  listAssetsOp,
+  lintManifestOp,
+] as const satisfies ReadonlyArray<AnyOp>;
 
 /** 按 category 分组（adapter / 文档生成器用）*/
 export function groupOpsByCategory(): Record<string, ReadonlyArray<AnyOp>> {

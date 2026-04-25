@@ -50,14 +50,19 @@ function textResult(value: unknown, isError = false): McpToolResult {
 // ============================================================================
 
 /**
- * 把 op.name `"script.lint_manifest"` 转成 MCP tool name `"lint_manifest"`。
- * MCP tool 命名习惯是不带 namespace 前缀，category 通过 description 体现。
+ * 把 op 转成 MCP tool name。
  *
- * 如果将来同名冲突（两个 category 下都有 `delete`），可以改成保留 `_`
- * 拼接版本，但目前 op 名都是动词独立的不会撞。
+ * 优先级：
+ *   1. op.mcpName 显式给（用于 backward compat 旧 MCP 客户端配置）
+ *   2. 否则把 `<category>.<verb>` 的 category 前缀剥掉
+ *
+ * 例：
+ *   { name: 'script.lint_manifest' } → 'lint_manifest'
+ *   { name: 'script.list_versions', mcpName: 'list_script_versions' } → 'list_script_versions'
  */
-function opNameToMcpName(opName: string): string {
-  return opName.split('.').slice(1).join('.');
+function opNameToMcpName<I, O>(op: Op<I, O>): string {
+  if (op.mcpName) return op.mcpName;
+  return op.name.split('.').slice(1).join('.');
 }
 
 /**
@@ -75,7 +80,7 @@ export function opToMcpTool<I, O>(op: Op<I, O>): McpToolDef {
   const taggedDescription = buildTaggedDescription(op);
 
   return {
-    name: opNameToMcpName(op.name),
+    name: opNameToMcpName(op),
     description: taggedDescription,
     inputSchema: inputSchema as Record<string, unknown>,
     async handler(args, identity) {
