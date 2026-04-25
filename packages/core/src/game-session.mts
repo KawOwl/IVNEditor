@@ -73,9 +73,11 @@ export * from '#internal/game-session/core-events';
 export { validateCoreEventSequence } from '#internal/game-session/core-event-protocol';
 export { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
 export {
+  createLegacySessionEmitterProjection,
   createSessionEmitterProjection,
+  projectCoreEventToLegacySessionEmitter,
   projectCoreEventToSessionEmitter,
-} from '#internal/game-session/session-emitter-projection';
+} from '#internal/game-session/legacy-session-emitter-projection';
 export type {
   GameSessionConfig,
   GenerateTraceHandle,

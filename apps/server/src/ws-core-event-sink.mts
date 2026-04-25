@@ -1,5 +1,5 @@
 import {
-  createSessionEmitterProjection,
+  createLegacySessionEmitterProjection,
   type CoreEventSink,
 } from '@ivn/core/game-session';
 import { createWebSocketEmitter } from '#internal/ws-session-emitter';
@@ -10,7 +10,7 @@ export function createWebSocketCoreEventSink(
   ws: WS,
   options?: { enableDebug?: boolean },
 ): CoreEventSink {
-  return createSessionEmitterProjection(
+  return createLegacySessionEmitterProjection(
     createWebSocketEmitter(ws, options),
   );
 }

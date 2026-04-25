@@ -29,7 +29,7 @@ import {
   type RecordingSessionEmitter,
   type RecordedSessionOutput,
 } from '#internal/game-session/recording-emitter';
-import { createSessionEmitterProjection } from '#internal/game-session/session-emitter-projection';
+import { createLegacySessionEmitterProjection } from '#internal/game-session/legacy-session-emitter-projection';
 import type { SessionPersistence } from '#internal/game-session/types';
 import { LLMClient, type GenerateOptions, type GenerateResult, type LLMConfig, type StepInfo } from '#internal/llm-client';
 import { createMemory } from '#internal/memory/factory';
@@ -515,7 +515,7 @@ function validateSessionEmitterProjection(
   coreEvents: ReadonlyArray<CoreEvent>,
 ): SessionEmitterProjectionReport {
   const projectedRecorder = createRecordingSessionEmitter();
-  const projection = createSessionEmitterProjection(projectedRecorder.emitter);
+  const projection = createLegacySessionEmitterProjection(projectedRecorder.emitter);
   for (const event of coreEvents) {
     projection.publish(event);
   }
@@ -561,7 +561,7 @@ function createHarnessCoreEventSink(
   recording: RecordingSessionEmitter,
   downstream: CoreEventSink,
 ): CoreEventSink {
-  const projection = createSessionEmitterProjection(recording.emitter);
+  const projection = createLegacySessionEmitterProjection(recording.emitter);
   return {
     publish(event) {
       projection.publish(event);

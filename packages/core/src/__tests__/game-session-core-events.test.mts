@@ -4,7 +4,7 @@ import type { RestoreConfig } from '#internal/game-session/types';
 import { createCoreEventBus } from '#internal/game-session/core-events';
 import { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
 import { createRecordingSessionEmitter } from '#internal/game-session/recording-emitter';
-import { createSessionEmitterProjection } from '#internal/game-session/session-emitter-projection';
+import { createLegacySessionEmitterProjection } from '#internal/game-session/legacy-session-emitter-projection';
 import type { MemoryConfig, PromptSegment, SceneState, StateSchema } from '#internal/types';
 
 describe('GameSession CoreEvent projection', () => {
@@ -13,7 +13,7 @@ describe('GameSession CoreEvent projection', () => {
     const coreRecorder = createRecordingCoreEventSink({ playthroughId: 'pt-core-events' });
     const session = new GameSession();
     const coreEventSink = createCoreEventBus([
-      createSessionEmitterProjection(recording.emitter),
+      createLegacySessionEmitterProjection(recording.emitter),
       coreRecorder,
     ]);
     const scene: SceneState = { background: 'hall', sprites: [] };

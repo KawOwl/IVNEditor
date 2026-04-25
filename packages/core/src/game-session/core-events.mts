@@ -1,4 +1,4 @@
-import type { DebugSnapshot } from '#internal/session-emitter';
+import type { DebugSnapshot } from '#internal/legacy-session-emitter';
 import type {
   PromptSnapshot,
   SceneState,

@@ -1,5 +1,5 @@
 import type { CoreEvent, SessionSnapshot } from '#internal/game-session/core-events';
-import type { DebugSnapshot, SessionEmitter } from '#internal/session-emitter';
+import type { DebugSnapshot, SessionEmitter } from '#internal/legacy-session-emitter';
 import type {
   ParticipationFrame,
   PromptSnapshot,
@@ -16,21 +16,21 @@ type ProjectionHandlers = {
   ) => void;
 };
 
-export interface SessionEmitterProjection {
+export interface LegacySessionEmitterProjection {
   publish(event: CoreEvent): void;
 }
 
-export function createSessionEmitterProjection(
+export function createLegacySessionEmitterProjection(
   emitter: SessionEmitter,
-): SessionEmitterProjection {
+): LegacySessionEmitterProjection {
   return {
     publish(event) {
-      projectCoreEventToSessionEmitter(event, emitter);
+      projectCoreEventToLegacySessionEmitter(event, emitter);
     },
   };
 }
 
-export function projectCoreEventToSessionEmitter(
+export function projectCoreEventToLegacySessionEmitter(
   event: CoreEvent,
   emitter: SessionEmitter,
 ): void {
@@ -310,3 +310,12 @@ function copySentence(sentence: Sentence): Sentence {
 
   return { ...sentence, sceneRef: copyScene(sentence.sceneRef) };
 }
+
+/** @deprecated Use `LegacySessionEmitterProjection`. */
+export type SessionEmitterProjection = LegacySessionEmitterProjection;
+
+/** @deprecated Use `createLegacySessionEmitterProjection`. */
+export const createSessionEmitterProjection = createLegacySessionEmitterProjection;
+
+/** @deprecated Use `projectCoreEventToLegacySessionEmitter`. */
+export const projectCoreEventToSessionEmitter = projectCoreEventToLegacySessionEmitter;

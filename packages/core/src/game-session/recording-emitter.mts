@@ -1,11 +1,12 @@
 /**
  * RecordingSessionEmitter
  *
- * A view-independent SessionEmitter for tests, backend jobs, and evaluation
- * harnesses. It consumes GameSession output without WebSocket, Zustand, or DOM.
+ * A view-independent legacy SessionEmitter for tests, backend jobs, and
+ * evaluation harnesses. It consumes projected CoreEvents without WebSocket,
+ * Zustand, or DOM.
  */
 
-import type { DebugSnapshot, SessionEmitter, SessionStatus } from '#internal/session-emitter';
+import type { DebugSnapshot, SessionEmitter, SessionStatus } from '#internal/legacy-session-emitter';
 import type {
   ParticipationFrame,
   PromptSnapshot,

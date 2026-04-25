@@ -1,14 +1,14 @@
 /**
- * WebSocketSessionEmitter — SessionEmitter 的 WebSocket 实现
+ * WebSocketSessionEmitter — legacy SessionEmitter 的 WebSocket 实现
  *
- * 将 GameSession 的事件序列化为 JSON 通过 WebSocket 推送到前端。
+ * 将投影后的 CoreEvent 兼容输出序列化为 JSON，通过 WebSocket 推送到前端。
  *
  * enableDebug 控制是否推送 debug 数据（完整 prompt snapshot / 调试面板等）：
  *   - 玩家正式游玩（kind='production'）→ false，避免泄漏剧本内容
  *   - 编剧试玩（kind='playtest'）→ true，编辑器需要看到 prompt 上下文
  */
 
-import type { SessionEmitter, SessionStatus, DebugSnapshot } from '@ivn/core/session-emitter';
+import type { SessionEmitter, SessionStatus, DebugSnapshot } from '@ivn/core/legacy-session-emitter';
 import type { PromptSnapshot, ToolCallEntry, SceneState, Sentence } from '@ivn/core/types';
 
 type WS = { send(data: string): void };

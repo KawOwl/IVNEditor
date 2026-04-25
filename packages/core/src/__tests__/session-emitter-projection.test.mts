@@ -2,10 +2,10 @@ import { describe, expect, it } from 'bun:test';
 import { runMemoryEvaluationSuite } from '#internal/evaluation/memory-harness';
 import { batchId, turnId } from '#internal/game-session/core-events';
 import { createRecordingSessionEmitter, type RecordedSessionOutput } from '#internal/game-session/recording-emitter';
-import { createSessionEmitterProjection } from '#internal/game-session/session-emitter-projection';
+import { createLegacySessionEmitterProjection } from '#internal/game-session/legacy-session-emitter-projection';
 import type { MemoryConfig, PromptSegment, Sentence, StateSchema, ToolCallEntry } from '#internal/types';
 
-describe('createSessionEmitterProjection', () => {
+describe('createLegacySessionEmitterProjection', () => {
   it('replays CoreEvents into the same RecordingSessionEmitter output as the legacy emitter', async () => {
     const report = await runMemoryEvaluationSuite({
       scenario: {
@@ -62,7 +62,7 @@ describe('createSessionEmitterProjection', () => {
 
     for (const run of report.runs) {
       const projectionRecording = createRecordingSessionEmitter();
-      const projection = createSessionEmitterProjection(projectionRecording.emitter);
+      const projection = createLegacySessionEmitterProjection(projectionRecording.emitter);
 
       for (const event of run.coreEvents) {
         projection.publish(event);
@@ -76,7 +76,7 @@ describe('createSessionEmitterProjection', () => {
 
   it('projects scene changes before the scene-change sentence', () => {
     const recording = createRecordingSessionEmitter();
-    const projection = createSessionEmitterProjection(recording.emitter);
+    const projection = createLegacySessionEmitterProjection(recording.emitter);
     const scene = { background: 'library', sprites: [] };
     const sentence: Sentence = {
       kind: 'scene_change',
@@ -103,7 +103,7 @@ describe('createSessionEmitterProjection', () => {
 
   it('projects finished restore snapshots to finished status', () => {
     const recording = createRecordingSessionEmitter();
-    const projection = createSessionEmitterProjection(recording.emitter);
+    const projection = createLegacySessionEmitterProjection(recording.emitter);
 
     projection.publish({
       type: 'session-restored',

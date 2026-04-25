@@ -5,7 +5,7 @@ import {
   createRecordingSessionEmitter,
   type RecordingSessionEmitter,
 } from '#internal/game-session/recording-emitter';
-import { createSessionEmitterProjection } from '#internal/game-session/session-emitter-projection';
+import { createLegacySessionEmitterProjection } from '#internal/game-session/legacy-session-emitter-projection';
 import type { CoreEventSink } from '#internal/game-session/core-events';
 import type { GenerateOptions, GenerateResult, LLMClient, StepInfo } from '#internal/llm-client';
 import type { Memory } from '#internal/memory/types';
@@ -293,7 +293,7 @@ describe('GenerateTurnRuntime', () => {
 const emptyStateSchema: StateSchema = { variables: [] };
 
 function createRecordingProjectionSink(recording: RecordingSessionEmitter): CoreEventSink {
-  const projection = createSessionEmitterProjection(recording.emitter);
+  const projection = createLegacySessionEmitterProjection(recording.emitter);
   return { publish: (event) => projection.publish(event) };
 }
 
