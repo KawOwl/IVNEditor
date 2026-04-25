@@ -21,15 +21,15 @@ describe('GenerateTurnRuntime', () => {
     const recording = createRecordingSessionEmitter();
     const llmClient = createLLMDouble(async (options) => {
       options.onStepStart?.({ stepNumber: 0, batchId: 'batch-1', isFollowup: false });
-      options.onTextChunk?.('雨停了。');
+      options.onTextChunk?.('<narration>雨停了。</narration>');
       options.onReasoningChunk?.('天气观察');
       options.onStep?.(stepInfo({
         batchId: 'batch-1',
-        text: '雨停了。',
+        text: '<narration>雨停了。</narration>',
         reasoning: '天气观察',
         partKinds: ['reasoning', 'text'],
       }));
-      return { text: '雨停了。', toolCalls: [], finishReason: 'stop' };
+      return { text: '<narration>雨停了。</narration>', toolCalls: [], finishReason: 'stop' };
     });
 
     const result = await createGenerateTurnRuntime({
@@ -42,7 +42,7 @@ describe('GenerateTurnRuntime', () => {
       tokenBudget: 12000,
       persistence,
       coreEventSink: createRecordingProjectionSink(recording),
-      protocolVersion: 'v1-tool-call',
+      ...runtimeProtocolConfig(),
       characters: [],
       backgrounds: [],
       currentScene: { background: null, sprites: [] },
@@ -61,7 +61,7 @@ describe('GenerateTurnRuntime', () => {
     expect(output.streamingEntries).toEqual([
       {
         id: 'recording-stream-1',
-        text: '雨停了。',
+        text: '<narration>雨停了。</narration>',
         reasoning: '天气观察',
         finalized: true,
       },
@@ -71,11 +71,15 @@ describe('GenerateTurnRuntime', () => {
         kind: 'narration',
         text: '雨停了。',
         sceneRef: { background: null, sprites: [] },
+        bgChanged: false,
+        spritesChanged: false,
         turnNumber: 2,
         index: 0,
       },
     ]);
-    expect(memory.appendedTurns.map((turn) => turn.content)).toEqual(['雨停了。']);
+    expect(memory.appendedTurns.map((turn) => turn.content)).toEqual([
+      '<narration>雨停了。</narration>',
+    ]);
     expect(persistence.narrativeEntries).toEqual([
       {
         entry: {
@@ -89,7 +93,7 @@ describe('GenerateTurnRuntime', () => {
       {
         entry: {
           role: 'generate',
-          content: '雨停了。',
+          content: '<narration>雨停了。</narration>',
           reasoning: undefined,
           finishReason: 'stop',
         },
@@ -98,7 +102,7 @@ describe('GenerateTurnRuntime', () => {
     ]);
     expect(persistence.generateCompletes).toEqual([
       {
-        memorySnapshot: { entries: [{ role: 'generate', content: '雨停了。' }], summaries: [] },
+        memorySnapshot: { entries: [{ role: 'generate', content: '<narration>雨停了。</narration>' }], summaries: [] },
         preview: '雨停了。',
         currentScene: { background: null, sprites: [] },
       },
@@ -124,7 +128,7 @@ describe('GenerateTurnRuntime', () => {
       enabledTools: [],
       tokenBudget: 12000,
       coreEventSink: createRecordingProjectionSink(recording),
-      protocolVersion: 'v1-tool-call',
+      ...runtimeProtocolConfig(),
       characters: [],
       backgrounds: [],
       currentScene: { background: null, sprites: [] },
@@ -171,7 +175,7 @@ describe('GenerateTurnRuntime', () => {
       tokenBudget: 12000,
       persistence,
       coreEventSink: createRecordingProjectionSink(recording),
-      protocolVersion: 'v1-tool-call',
+      ...runtimeProtocolConfig(),
       characters: [],
       backgrounds: [],
       currentScene: { background: null, sprites: [] },
@@ -201,11 +205,11 @@ describe('GenerateTurnRuntime', () => {
     const recording = createRecordingSessionEmitter();
     const llmClient = createLLMDouble(async (options) => {
       options.onStepStart?.({ stepNumber: 0, batchId: 'batch-scene', isFollowup: false });
-      options.onTextChunk?.('你走进屋子。');
+      options.onTextChunk?.('<narration>你走进屋子。</narration>');
       options.onReasoningChunk?.('玩家进屋了，先切场景');
       options.onStep?.(stepInfo({
         batchId: 'batch-scene',
-        text: '你走进屋子。',
+        text: '<narration>你走进屋子。</narration>',
         reasoning: '玩家进屋了，先切场景',
         finishReason: 'tool-calls',
         partKinds: ['reasoning', 'text', 'tool-call'],
@@ -213,7 +217,7 @@ describe('GenerateTurnRuntime', () => {
       }));
 
       options.onStepStart?.({ stepNumber: 1, batchId: 'batch-signal', isFollowup: false });
-      options.onTextChunk?.('沙发上坐着 sakuya。');
+      options.onTextChunk?.('<narration>沙发上坐着 sakuya。</narration>');
       options.onReasoningChunk?.('描绘进屋后的画面 + 提供选项');
       await options.tools['signal_input_needed']!.execute({
         prompt_hint: '接下来呢？',
@@ -221,14 +225,14 @@ describe('GenerateTurnRuntime', () => {
       });
       options.onStep?.(stepInfo({
         batchId: 'batch-signal',
-        text: '沙发上坐着 sakuya。',
+        text: '<narration>沙发上坐着 sakuya。</narration>',
         reasoning: '描绘进屋后的画面 + 提供选项',
         finishReason: 'tool-calls',
         partKinds: ['reasoning', 'text', 'tool-call'],
         toolCalls: [{ name: 'signal_input_needed', args: {} }],
       }));
       return {
-        text: '你走进屋子。沙发上坐着 sakuya。',
+        text: '<narration>你走进屋子。</narration><narration>沙发上坐着 sakuya。</narration>',
         toolCalls: [],
         finishReason: 'tool-calls',
       };
@@ -244,7 +248,7 @@ describe('GenerateTurnRuntime', () => {
       tokenBudget: 12000,
       persistence,
       coreEventSink: createRecordingProjectionSink(recording),
-      protocolVersion: 'v1-tool-call',
+      ...runtimeProtocolConfig(),
       characters: [],
       backgrounds: [],
       currentScene: { background: null, sprites: [] },
@@ -271,7 +275,7 @@ describe('GenerateTurnRuntime', () => {
       {
         entry: {
           role: 'generate',
-          content: '你走进屋子。沙发上坐着 sakuya。',
+          content: '<narration>你走进屋子。</narration><narration>沙发上坐着 sakuya。</narration>',
           reasoning: undefined,
           finishReason: 'signal-input-preflush',
         },
@@ -288,6 +292,31 @@ describe('GenerateTurnRuntime', () => {
       },
     ]);
   });
+
+  it('rejects legacy-readable v1 as a runtime protocol', () => {
+    const stateStore = new StateStore(emptyStateSchema);
+    const memory = createMemoryDouble();
+    const recording = createRecordingSessionEmitter();
+    const llmClient = createLLMDouble(async () => ({ text: '', toolCalls: [], finishReason: 'stop' }));
+
+    expect(() => createGenerateTurnRuntime({
+      turn: 1,
+      stateStore,
+      memory,
+      llmClient,
+      segments: [],
+      enabledTools: [],
+      tokenBudget: 12000,
+      coreEventSink: createRecordingProjectionSink(recording),
+      protocolVersion: 'v1-tool-call',
+      characters: [],
+      backgrounds: [],
+      currentScene: { background: null, sprites: [] },
+      buildRetrievalQuery: async () => '',
+      isActive: () => true,
+      onScenarioEnd: () => {},
+    })).toThrow(/legacy-readable only/);
+  });
 });
 
 const emptyStateSchema: StateSchema = { variables: [] };
@@ -295,6 +324,17 @@ const emptyStateSchema: StateSchema = { variables: [] };
 function createRecordingProjectionSink(recording: RecordingSessionEmitter): CoreEventSink {
   const projection = createLegacySessionEmitterProjection(recording.emitter);
   return { publish: (event) => projection.publish(event) };
+}
+
+function runtimeProtocolConfig() {
+  return {
+    protocolVersion: 'v2-declarative-visual' as const,
+    parserManifest: {
+      characters: new Set<string>(),
+      moodsByChar: new Map<string, ReadonlySet<string>>(),
+      backgrounds: new Set<string>(),
+    },
+  };
 }
 
 type AppendedTurn = Parameters<Memory['appendTurn']>[0];

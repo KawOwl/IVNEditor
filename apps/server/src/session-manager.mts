@@ -18,6 +18,7 @@ import type {
 import type { ScriptManifest, PromptSegment, SceneState } from '@ivn/core/types';
 import type { LLMConfig } from '@ivn/core/llm-client';
 import { buildParserManifest, type ParserManifest } from '@ivn/core/narrative-parser-v2';
+import { CURRENT_PROTOCOL_VERSION } from '@ivn/core/protocol-version';
 import { createWebSocketCoreEventSink } from '#internal/ws-core-event-sink';
 import { createPlaythroughPersistence } from '#internal/services/playthrough-persistence';
 import { createNarrativeHistoryReader } from '#internal/services/narrative-reader';
@@ -193,11 +194,9 @@ export class GameSessionWrapper {
     const manifest = this.manifest;
     const allSegments: PromptSegment[] = manifest.chapters.flatMap((ch) => ch.segments);
 
-    // V.2：parser 分叉的触发键。
-    //   - manifest.protocolVersion 缺省 → 'v1-tool-call'（老剧本 / 未迁移剧本）
-    //   - 'v2-declarative-visual' → 启用 parser-v2，不再注册 change_scene 等工具
-    const protocolVersion: ProtocolVersion = manifest.protocolVersion ?? 'v1-tool-call';
-    // parserManifest 只有 v2 需要。v1 下计算也无害但多余，所以按需算。
+    // 当前运行协议缺省为声明式视觉 IR。manifest 显式标成 v1-tool-call 时，
+    // core runtime 会拒绝执行；server 仍可保留 manifest 供历史读取/迁移工具解析。
+    const protocolVersion: ProtocolVersion = manifest.protocolVersion ?? CURRENT_PROTOCOL_VERSION;
     const parserManifest: ParserManifest | undefined =
       protocolVersion === 'v2-declarative-visual' ? buildParserManifest(manifest) : undefined;
 

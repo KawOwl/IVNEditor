@@ -39,8 +39,9 @@ import type {
   MemorySnapshot,
 } from '#internal/memory/types';
 import type { NarrativeHistoryReader } from '#internal/memory/narrative-reader';
-import type { ParserManifest } from '#internal/narrative-parser-v2';
+import { buildParserManifest, type ParserManifest } from '#internal/narrative-parser-v2';
 import type { EntryKind, NarrativeEntry } from '#internal/persistence-entry';
+import { resolveRuntimeProtocolVersion } from '#internal/protocol-version';
 import { StateStore } from '#internal/state-store';
 import { estimateTokens } from '#internal/tokens';
 import type {
@@ -266,8 +267,7 @@ export async function runMemoryEvaluationCase(options: {
       disabledSections: scenario.disabledSections,
       persistence: journal.persistence,
       coreEventSink: harnessCoreEventSink,
-      protocolVersion: scenario.protocolVersion ?? 'v1-tool-call',
-      parserManifest: scenario.parserManifest,
+      ...createRuntimeProtocolConfig(scenario),
       characters: scenario.characters ?? [],
       backgrounds: scenario.backgrounds ?? [],
       currentScene,
@@ -422,8 +422,7 @@ export async function runLiveMemoryEvaluationCase(options: {
       disabledSections: scenario.disabledSections,
       persistence: journal.persistence,
       coreEventSink: harnessCoreEventSink,
-      protocolVersion: scenario.protocolVersion ?? 'v1-tool-call',
-      parserManifest: scenario.parserManifest,
+      ...createRuntimeProtocolConfig(scenario),
       characters: scenario.characters ?? [],
       backgrounds: scenario.backgrounds ?? [],
       currentScene,
@@ -590,6 +589,20 @@ function createVariantMemory(options: {
     mem0ApiKey: variant.mem0ApiKey,
     reader: options.reader,
   });
+}
+
+function createRuntimeProtocolConfig(scenario: MemoryEvaluationScenario): {
+  readonly protocolVersion: ProtocolVersion;
+  readonly parserManifest: ParserManifest;
+} {
+  const protocolVersion = resolveRuntimeProtocolVersion(scenario.protocolVersion);
+  return {
+    protocolVersion,
+    parserManifest: scenario.parserManifest ?? buildParserManifest({
+      characters: scenario.characters,
+      backgrounds: scenario.backgrounds,
+    }),
+  };
 }
 
 function buildRetrievalQuery(

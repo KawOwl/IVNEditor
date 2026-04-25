@@ -13,12 +13,12 @@
  *    （例如 signal_input_needed、update_state）。
  *
  * V.3（2026-04-24）：新增 `buildEngineRules({ protocolVersion, ... })`
- * 按 `manifest.protocolVersion` 分叉产出 v1 / v2 不同的叙事格式段：
- *   - `'v1-tool-call'`（缺省，存量剧本）→ 老 XML-lite `<d>` 标签 + tool 切景
- *   - `'v2-declarative-visual'`（新声明式视觉 IR）→ 嵌套 `<dialogue>` /
+ * 按 `manifest.protocolVersion` 分叉产出 legacy v1 / 当前声明式协议不同的叙事格式段：
+ *   - `'v1-tool-call'`（历史只读）→ 老 XML-lite `<d>` 标签 + tool 切景
+ *   - `'v2-declarative-visual'`（当前运行协议）→ 嵌套 `<dialogue>` /
  *     `<narration>` / `<scratch>` + `<background/>` / `<sprite/>` / `<stage/>`
  *
- * v1 和 v2 共享前半段（GM 身份 / 回合收尾 / signal_input / end_scenario）；
+ * 两个协议共享前半段（GM 身份 / 回合收尾 / signal_input / end_scenario）；
  * 只有"叙事输出格式"那一大段按版本切换。共享段保持字节级稳定，避免
  * 重新引入 prompt cache miss。
  *
@@ -31,6 +31,7 @@
  */
 
 import type { ProtocolVersion } from '#internal/types';
+import { CURRENT_PROTOCOL_VERSION } from '#internal/protocol-version';
 
 // ============================================================================
 // 共享段：GM 身份 / 回合收尾 / signal_input_needed / end_scenario
@@ -369,7 +370,7 @@ function buildNarrativeFormatV2(
 // ============================================================================
 
 export interface EngineRulesOpts {
-  /** 剧本 protocolVersion；缺省 'v1-tool-call'（向后兼容） */
+  /** 剧本 protocolVersion；缺省为当前运行协议。 */
   readonly protocolVersion?: ProtocolVersion;
   /**
    * 仅 v2 需要：剧本白名单 —— 角色及其情绪列表。
@@ -395,7 +396,7 @@ export interface EngineRulesOpts {
  * - 叙事格式段按版本切分；v2 还会插入 manifest 白名单
  */
 export function buildEngineRules(opts: EngineRulesOpts = {}): string {
-  const { protocolVersion = 'v1-tool-call', characters = [], backgrounds = [] } = opts;
+  const { protocolVersion = CURRENT_PROTOCOL_VERSION, characters = [], backgrounds = [] } = opts;
   const narrativeFormat =
     protocolVersion === 'v2-declarative-visual'
       ? buildNarrativeFormatV2(characters, backgrounds)
@@ -410,7 +411,7 @@ export function buildEngineRules(opts: EngineRulesOpts = {}): string {
 /**
  * v1 规则文本常量。等价于 `buildEngineRules({ protocolVersion: 'v1-tool-call' })`。
  *
- * 保留此导出给还没迁到 `buildEngineRules()` 的消费者（例如编辑器 AI 改写）。
+ * 保留此导出给历史只读解析、lint、迁移工具，以及还没迁到当前协议的消费者。
  * 字节级稳定 —— 修改本文件共享段或 v1 段时确保这条仍是 v1 完整文本。
  */
 export const ENGINE_RULES_CONTENT: string = buildEngineRules({

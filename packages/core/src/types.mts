@@ -5,6 +5,10 @@
  * This file is the single source of truth for data structures across the engine.
  */
 
+import type { ProtocolVersion } from '#internal/protocol-version';
+
+export type { ProtocolVersion } from '#internal/protocol-version';
+
 // ============================================================================
 // LLM Provider Config — LLM 提供商配置（core 统一接口）
 // ============================================================================
@@ -160,8 +164,6 @@ export interface MemoryConfig {
  * 能引用而不触发到 runtime 模块，V.3 提上来 `types.ts`。
  * `game-session.ts` 仍 re-export 此类型向后兼容。
  */
-export type ProtocolVersion = 'v1-tool-call' | 'v2-declarative-visual';
-
 export interface ScriptManifest {
   id: string;
   label: string;
@@ -172,13 +174,11 @@ export interface ScriptManifest {
   initialPrompt?: string;         // 首轮 user message（等效于 prompt.txt）
   /**
    * 视觉 IR 协议版本（RFC-声明式视觉IR_2026-04-24）。
-   *   - 'v1-tool-call'（默认 / 缺省）：change_scene / change_sprite / clear_stage
-   *     工具调用 + XML-lite（<d>/<n>）叙事解析。老 parser（v1 NarrativeParser）。
-   *   - 'v2-declarative-visual'：嵌套 XML 声明式视觉（<dialogue>/<narration>/
-   *     <scratch> + 子 <background/>/<sprite/>/<stage/>）。新 parser（
-   *     src/core/narrative-parser-v2）。视觉 tools 不启用。
-   * 两种协议的 playthrough 共存：session 启动时按此字段分叉 parser，v1 老
-   * playthrough 不受影响（RFC §6）。
+   *   - 'v2-declarative-visual'（缺省运行协议）：嵌套 XML 声明式视觉
+   *    （<dialogue>/<narration>/<scratch> + 子
+   *     <background/>/<sprite/>/<stage/>）。视觉 tools 不启用。
+   *   - 'v1-tool-call'：历史只读协议。保留给旧剧本/历史内容解析、lint 和
+   *     迁移工具；新的 GameSession runtime 不再执行它。
    */
   protocolVersion?: ProtocolVersion;
   // --- 展示字段 ---

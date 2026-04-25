@@ -26,7 +26,7 @@ describe('memory evaluation harness', () => {
       script: [
         {
           generate: {
-            text: 'Luna 把一枚银钥匙放到你掌心。',
+            text: '<narration>Luna 把一枚银钥匙放到你掌心。</narration>',
             toolCalls: [
               {
                 name: 'signal_input_needed',
@@ -41,7 +41,7 @@ describe('memory evaluation harness', () => {
         },
         {
           generate: {
-            text: '你记得银钥匙属于图书馆深处的禁门。',
+            text: '<narration>你记得银钥匙属于图书馆深处的禁门。</narration>',
             toolCalls: [
               {
                 name: 'signal_input_needed',
@@ -62,8 +62,8 @@ describe('memory evaluation harness', () => {
         status: 'waiting-input',
         turnsRun: 2,
         generatedTexts: [
-          'Luna 把一枚银钥匙放到你掌心。',
-          '你记得银钥匙属于图书馆深处的禁门。',
+          '<narration>Luna 把一枚银钥匙放到你掌心。</narration>',
+          '<narration>你记得银钥匙属于图书馆深处的禁门。</narration>',
         ],
         inputRequestCount: 2,
         narrativeEntryCount: 5,
@@ -78,8 +78,8 @@ describe('memory evaluation harness', () => {
         status: 'waiting-input',
         turnsRun: 2,
         generatedTexts: [
-          'Luna 把一枚银钥匙放到你掌心。',
-          '你记得银钥匙属于图书馆深处的禁门。',
+          '<narration>Luna 把一枚银钥匙放到你掌心。</narration>',
+          '<narration>你记得银钥匙属于图书馆深处的禁门。</narration>',
         ],
         inputRequestCount: 2,
         narrativeEntryCount: 5,

@@ -23,6 +23,7 @@ import type {
 import { estimateTokens } from '@ivn/core/tokens';
 import { buildEngineRules } from '@ivn/core/engine-rules';
 import { VIRTUAL_IDS, buildStateSection } from '@ivn/core/context-assembler';
+import { CURRENT_PROTOCOL_VERSION } from '@ivn/core/protocol-version';
 import { cn } from '#internal/lib/utils';
 
 // ============================================================================
@@ -43,8 +44,8 @@ export interface PromptPreviewProps {
   /** 禁用状态变更回调 */
   onDisabledChange?: (disabled: string[]) => void;
   /**
-   * V.3：声明式视觉 IR 协议版本。用于 ENGINE RULES 虚拟 section 的预览 —— v2 要插入
-   * 白名单 + few-shot，预览要和运行时一致。缺省 'v1-tool-call'。
+   * V.3：声明式视觉 IR 协议版本。用于 ENGINE RULES 虚拟 section 的预览。
+   * 缺省为当前运行协议；v1 仅用于历史读取/迁移。
    */
   protocolVersion?: ProtocolVersion;
   /** V.3：角色白名单（插值到 v2 prompt 里） */
@@ -100,7 +101,7 @@ function buildAllSections(
   segments: PromptSegment[],
   stateSchema: StateSchema,
   initialPrompt?: string,
-  protocolVersion: ProtocolVersion = 'v1-tool-call',
+  protocolVersion: ProtocolVersion = CURRENT_PROTOCOL_VERSION,
   characters: ReadonlyArray<CharacterAsset> = [],
   backgrounds: ReadonlyArray<BackgroundAsset> = [],
 ): PreviewSection[] {
@@ -312,7 +313,7 @@ export function PromptPreviewPanel({
   onOrderChange,
   disabledSections = [],
   onDisabledChange,
-  protocolVersion = 'v1-tool-call',
+  protocolVersion = CURRENT_PROTOCOL_VERSION,
   characters,
   backgrounds,
 }: PromptPreviewProps) {

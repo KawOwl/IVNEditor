@@ -34,6 +34,7 @@ import {
 import { serializeMessagesForDebug } from '#internal/messages-builder';
 import { createNarrationAccumulator } from '#internal/game-session/narration';
 import { applyScenePatchToState } from '#internal/game-session/scene-state';
+import { resolveRuntimeProtocolVersion } from '#internal/protocol-version';
 import type { CoreEventSink, RuntimeSentence, StepId, TurnId } from '#internal/game-session/core-events';
 import {
   batchId as toBatchId,
@@ -145,7 +146,11 @@ const TRACE_STEP_FIELDS = [
 ] as const satisfies ReadonlyArray<keyof StepInfo & keyof TraceStepRecord>;
 
 export function createGenerateTurnRuntime(deps: GenerateTurnRuntimeDeps): GenerateTurnRuntime {
-  return new DefaultGenerateTurnRuntime(deps);
+  const protocolVersion = resolveRuntimeProtocolVersion(deps.protocolVersion);
+  if (!deps.parserManifest) {
+    throw new Error(`[GenerateTurnRuntime] protocolVersion="${protocolVersion}" requires parserManifest`);
+  }
+  return new DefaultGenerateTurnRuntime({ ...deps, protocolVersion });
 }
 
 function toTraceStepRecord(step: StepInfo): TraceStepRecord {

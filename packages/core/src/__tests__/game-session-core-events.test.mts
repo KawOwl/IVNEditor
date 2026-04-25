@@ -5,6 +5,7 @@ import { createCoreEventBus } from '#internal/game-session/core-events';
 import { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
 import { createRecordingSessionEmitter } from '#internal/game-session/recording-emitter';
 import { createLegacySessionEmitterProjection } from '#internal/game-session/legacy-session-emitter-projection';
+import { buildParserManifest } from '#internal/narrative-parser-v2';
 import type { MemoryConfig, PromptSegment, SceneState, StateSchema } from '#internal/types';
 
 describe('GameSession CoreEvent projection', () => {
@@ -38,6 +39,27 @@ describe('GameSession CoreEvent projection', () => {
     expect(coreRecorder.getEvents().map((event) => event.type)).toEqual([
       'session-restored',
       'session-stopped',
+    ]);
+  });
+
+  it('reports an error instead of running legacy-readable v1 sessions', async () => {
+    const coreRecorder = createRecordingCoreEventSink({ playthroughId: 'pt-v1-readonly' });
+    const session = new GameSession();
+
+    await session.restore({
+      ...baseRestoreConfig,
+      playthroughId: 'pt-v1-readonly',
+      coreEventSink: coreRecorder,
+      protocolVersion: 'v1-tool-call',
+      parserManifest: undefined,
+    });
+
+    expect(coreRecorder.getEvents()).toEqual([
+      {
+        type: 'session-error',
+        phase: 'restore',
+        message: '[protocol] v1-tool-call is legacy-readable only and cannot be used to run a session',
+      },
     ]);
   });
 });
@@ -88,6 +110,8 @@ const baseRestoreConfig = {
     reasoningEffort: null,
   },
   enabledTools: [],
+  protocolVersion: 'v2-declarative-visual',
+  parserManifest: buildParserManifest({}),
   stateVars: {},
   turn: 0,
   memorySnapshot: null,

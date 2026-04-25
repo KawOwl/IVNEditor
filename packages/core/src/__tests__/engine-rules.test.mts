@@ -2,8 +2,7 @@
  * engine-rules.ts 单元测试（V.3）
  *
  * 覆盖目标：
- *   1. v1 字节回归 —— `buildEngineRules()` 缺省 / 'v1-tool-call' 的输出完全等价于
- *      老的 `ENGINE_RULES_CONTENT` 常量。切换导出不变，prompt cache 不破。
+ *   1. 当前协议为缺省运行规则；v1 字节回归显式通过 'v1-tool-call' 保留。
  *   2. v1 和 v2 共享的 prologue / epilogue 保持字节一致（不干扰 prompt 缓存
  *      命中率 —— 前缀稳定是关键）。
  *   3. v2 白名单插值：
@@ -18,9 +17,12 @@ import { describe, it, expect } from 'bun:test';
 import { buildEngineRules, ENGINE_RULES_CONTENT } from '#internal/engine-rules';
 
 describe('buildEngineRules', () => {
-  it('缺省 protocolVersion === v1，输出和 ENGINE_RULES_CONTENT 字节一致', () => {
+  it('缺省 protocolVersion === 当前声明式协议', () => {
     const text = buildEngineRules();
-    expect(text).toBe(ENGINE_RULES_CONTENT);
+    expect(text).not.toBe(ENGINE_RULES_CONTENT);
+    expect(text).toContain('<narration>');
+    expect(text).toContain('<background');
+    expect(text).toMatch(/不要.*change_scene/);
   });
 
   it('v1-tool-call 显式传入，输出和 ENGINE_RULES_CONTENT 字节一致', () => {

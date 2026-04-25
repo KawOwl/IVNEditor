@@ -168,14 +168,14 @@ export function ScriptInfoPanel({
               <option value="v2-declarative-visual">
                 v2 声明式视觉 IR（推荐，新剧本默认）
               </option>
-              <option value="v1-tool-call">
-                v1 XML-lite + 视觉工具调用（老剧本）
+              <option value="v1-tool-call" disabled>
+                v1 XML-lite + 视觉工具调用（历史只读）
               </option>
             </select>
           </Field>
           {protocolVersion === 'v1-tool-call' && (
             <div className="text-[11px] text-amber-500/80 pl-[5.5rem]">
-              ⓘ v1 走老的 {'<d>'} + change_scene/change_sprite/clear_stage 工具路径。新剧本建议用 v2。
+              ⓘ v1 仅保留历史读取和迁移解析；新的运行时不会执行 v1 剧本。
             </div>
           )}
         </Section>

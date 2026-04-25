@@ -26,6 +26,7 @@ import { serializeStateVars } from '#internal/state-store';
 import { estimateTokens } from '#internal/tokens';
 import { buildEngineRules } from '#internal/engine-rules';
 import { rankSegments, scoreSegment } from '#internal/focus';
+import { CURRENT_PROTOCOL_VERSION } from '#internal/protocol-version';
 
 // ============================================================================
 // Types
@@ -98,8 +99,9 @@ export interface AssembleOptions {
   disabledSections?: string[]; // 被禁用的 section ID 列表（不参与组装）
   /**
    * 声明式视觉 IR 协议版本。
-   *   - 'v1-tool-call'（缺省）→ 引擎规则输出老 XML-lite `<d>` 格式
-   *   - 'v2-declarative-visual' → 输出 `<dialogue>/<narration>/<background>/<sprite>/<stage>/<scratch>` 嵌套格式
+   *   - 'v2-declarative-visual'（缺省运行协议）→ 输出
+   *     `<dialogue>/<narration>/<background>/<sprite>/<stage>/<scratch>` 嵌套格式
+   *   - 'v1-tool-call' → 历史只读规则文本，供旧内容解析/迁移使用
    */
   protocolVersion?: ProtocolVersion;
   /**
@@ -192,7 +194,7 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
     focus,
     assemblyOrder,
     disabledSections,
-    protocolVersion = 'v1-tool-call',
+    protocolVersion = CURRENT_PROTOCOL_VERSION,
     characters = [],
     backgrounds = [],
   } = options;
@@ -293,8 +295,8 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
 
   // Engine rules (can be disabled)
   //
-  // v2 按 protocolVersion 走不同规则体 + 白名单插值；v1 保留老 ENGINE_RULES_CONTENT
-  // 的输出（buildEngineRules('v1-tool-call') 的字节输出跟 ENGINE_RULES_CONTENT 完全等价）。
+  // 当前协议按白名单插值；legacy v1 保留老 ENGINE_RULES_CONTENT 的输出
+  //（buildEngineRules('v1-tool-call') 的字节输出跟 ENGINE_RULES_CONTENT 完全等价）。
   if (!disabledSet.has(VIRTUAL_IDS.RULES)) {
     const rulesContent = buildEngineRules({ protocolVersion, characters, backgrounds });
     sectionContent.set(VIRTUAL_IDS.RULES, rulesContent);

@@ -35,6 +35,10 @@ import { computeFocus } from '#internal/focus';
 import { LLMClient } from '#internal/llm-client';
 import type { LLMConfig } from '#internal/llm-client';
 import type { ParserManifest } from '#internal/narrative-parser-v2';
+import {
+  CURRENT_PROTOCOL_VERSION,
+  resolveRuntimeProtocolVersion,
+} from '#internal/protocol-version';
 import { computeReceivePayload } from '#internal/game-session/input-payload';
 import type {
   BatchId,
@@ -127,8 +131,8 @@ export class GameSession {
 
   /**
    * VN 当前场景快照（M3）。
-   * v1 路径：由 change_scene / change_sprite / clear_stage 工具演进（applyScenePatch）。
-   * v2 路径：由 parser-v2 每条 Sentence 的 sceneRef 更新。
+   * 当前运行路径：由声明式 parser 每条 Sentence 的 sceneRef 更新。
+   * legacy v1 工具切景只保留历史读取/迁移兼容，新的 runtime 不再执行。
    * start() 时从 manifest.defaultScene 或 {background:null, sprites:[]} 初始化，
    * restore() 时从 DB 恢复。每次变化在 generate 结束后持久化。
    */
@@ -138,10 +142,10 @@ export class GameSession {
   };
 
   /**
-   * 视觉 IR 协议版本。缺省 v1-tool-call；v2-declarative-visual 使用 parser-v2，
-   * 且不再注册视觉工具驱动的 scene_change Sentence。
+   * 视觉 IR 协议版本。缺省使用当前声明式视觉协议。
+   * v1-tool-call 只保留历史读取/迁移兼容，runtime 不再执行。
    */
-  private protocolVersion: ProtocolVersion = 'v1-tool-call';
+  private protocolVersion: ProtocolVersion = CURRENT_PROTOCOL_VERSION;
   private parserManifest?: ParserManifest;
   private characters: ReadonlyArray<CharacterAsset> = [];
   private backgrounds: ReadonlyArray<BackgroundAsset> = [];
@@ -175,8 +179,10 @@ export class GameSession {
 
   /** Initialize and start the game session */
   async start(config: GameSessionConfig): Promise<void> {
+    let initialized = false;
     try {
       await this.initializeCore(config);
+      initialized = true;
 
       // inheritedSummary 已从架构里移除：章节不再是 memory 生命周期事件。
 
@@ -192,7 +198,7 @@ export class GameSession {
       this.active = true;
       await this.coreLoop();
     } catch (error) {
-      if (this.active) {
+      if (!initialized || this.active) {
         this.publishCoreEvent({
           type: 'session-error',
           phase: 'start',
@@ -211,8 +217,10 @@ export class GameSession {
    *   - idle → 等玩家触发，进入完整 coreLoop
    */
   async restore(config: RestoreConfig): Promise<void> {
+    let initialized = false;
     try {
       await this.initializeCore(config);
+      initialized = true;
 
       // 注入持久化快照
       this.stateStore.restore(config.stateVars, config.turn);
@@ -319,7 +327,7 @@ export class GameSession {
         await this.coreLoop();
       }
     } catch (error) {
-      if (this.active) {
+      if (!initialized || this.active) {
         this.publishCoreEvent({
           type: 'session-error',
           phase: 'restore',
@@ -388,12 +396,12 @@ export class GameSession {
     this.persistence = config.persistence;
     this.tracing = config.tracing;
     this.coreEventSink = config.coreEventSink;
-    this.protocolVersion = config.protocolVersion ?? 'v1-tool-call';
+    this.protocolVersion = resolveRuntimeProtocolVersion(config.protocolVersion);
     this.parserManifest = config.parserManifest;
     this.characters = config.characters ?? [];
     this.backgrounds = config.backgrounds ?? [];
-    if (this.protocolVersion === 'v2-declarative-visual' && !this.parserManifest) {
-      throw new Error('[GameSession] protocolVersion="v2-declarative-visual" requires parserManifest');
+    if (!this.parserManifest) {
+      throw new Error(`[GameSession] protocolVersion="${this.protocolVersion}" requires parserManifest`);
     }
   }
 

@@ -29,7 +29,10 @@ describe('createLegacySessionEmitterProjection', () => {
       script: [
         {
           generate: {
-            text: ['Luna 把一枚银钥匙', '放到你掌心。'],
+            text: [
+              '<narration>Luna 把一枚银钥匙',
+              '放到你掌心。</narration>',
+            ],
             reasoning: ['需要给玩家选择。'],
             toolCalls: [
               {
@@ -45,7 +48,7 @@ describe('createLegacySessionEmitterProjection', () => {
         },
         {
           generate: {
-            text: '你记得银钥匙属于图书馆深处的禁门。',
+            text: '<narration>你记得银钥匙属于图书馆深处的禁门。</narration>',
             toolCalls: [
               {
                 name: 'signal_input_needed',
