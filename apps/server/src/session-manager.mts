@@ -9,6 +9,10 @@
  */
 
 import { GameSession } from '@ivn/core/game-session';
+import {
+  createCoreEventBus,
+  createCoreEventLogSink,
+} from '@ivn/core/game-session';
 import type {
   CoreEventSink,
   GameSessionConfig,
@@ -22,6 +26,7 @@ import { CURRENT_PROTOCOL_VERSION } from '@ivn/core/protocol-version';
 import { createWebSocketCoreEventSink } from '#internal/ws-core-event-sink';
 import { createPlaythroughPersistence } from '#internal/services/playthrough-persistence';
 import { createNarrativeHistoryReader } from '#internal/services/narrative-reader';
+import { coreEventLogService } from '#internal/services/core-event-log';
 import { createBoundTracing } from '#internal/tracing';
 import { getServerEnv } from '#internal/env';
 
@@ -70,7 +75,7 @@ export class GameSessionWrapper {
     this.llmConfig = llmConfig;
   }
 
-  attachWebSocket(ws: WS): void {
+  async attachWebSocket(ws: WS): Promise<void> {
     this.clearTTL();
 
     // 停掉旧 GameSession，防止 "双活" 竞态：
@@ -82,9 +87,17 @@ export class GameSessionWrapper {
     }
 
     this.ws = ws;
-    this.coreEventSink = createWebSocketCoreEventSink(ws, {
-      enableDebug: this.kind === 'playtest',
-    });
+    const lastSequence = await coreEventLogService.getLastSequence(this.playthroughId);
+    this.coreEventSink = createCoreEventBus([
+      createCoreEventLogSink({
+        playthroughId: this.playthroughId,
+        writer: coreEventLogService.createWriter(),
+        initialSequence: lastSequence,
+      }),
+      createWebSocketCoreEventSink(ws, {
+        enableDebug: this.kind === 'playtest',
+      }),
+    ]);
     this.gameSession = new GameSession();
   }
 

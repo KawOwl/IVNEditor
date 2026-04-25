@@ -487,6 +487,7 @@ describe('PlaythroughPersistence', () => {
       expect(detail!.entries[0].kind).toBe('player_input');
 
       // 检查状态更新
+      expect(detail!.status).toBe('idle');
       expect(detail!.stateVars).toEqual(stateVars);
       expect(detail!.turn).toBe(1);
       expect(detail!.memorySnapshot).toEqual(memorySnapshot);
@@ -612,6 +613,7 @@ describe('PlaythroughPersistence', () => {
       expect(detail!.entries.length).toBe(2);
       expect(detail!.entries[0].role).toBe('generate');
       expect(detail!.entries[1].role).toBe('receive');
+      expect(detail!.status).toBe('idle');
       expect(detail!.stateVars).toEqual({ awake: true });
       expect(detail!.inputHint).toBeNull();
       expect(detail!.choices).toBeNull();

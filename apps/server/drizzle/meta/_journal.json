@@ -99,6 +99,13 @@
       "when": 1777143934599,
       "tag": "0013_scripts_soft_delete",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1777846400000,
+      "tag": "0014_core_event_envelopes",
+      "breakpoints": true
     }
   ]
 }

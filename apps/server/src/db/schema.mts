@@ -29,6 +29,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import type { ScriptManifest } from '@ivn/core/types';
+import type { CoreEvent } from '@ivn/core/game-session';
 
 // ============================================================================
 // Roles — 用户角色表
@@ -340,6 +341,25 @@ export const narrativeEntries = pgTable('narrative_entries', {
   index('idx_narrative_entries_batch_id').on(table.playthroughId, table.batchId),
   // 防止并发写入导致 orderIdx 重复（P1 修复）
   unique('uniq_narrative_entry_order').on(table.playthroughId, table.orderIdx),
+]);
+
+// ============================================================================
+// Core Event Envelopes — runtime event log
+// ============================================================================
+
+export const coreEventEnvelopes = pgTable('core_event_envelopes', {
+  id: text('id').primaryKey(),
+  playthroughId: text('playthrough_id')
+    .notNull()
+    .references(() => playthroughs.id, { onDelete: 'cascade' }),
+  schemaVersion: integer('schema_version').notNull(),
+  sequence: integer('sequence').notNull(),
+  occurredAt: bigint('occurred_at', { mode: 'number' }).notNull(),
+  event: jsonb('event').$type<CoreEvent>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_core_event_envelopes_playthrough_id').on(table.playthroughId),
+  unique('uniq_core_event_envelope_sequence').on(table.playthroughId, table.sequence),
 ]);
 
 // ============================================================================

@@ -83,6 +83,15 @@ export type { RecordingSessionOutputSink } from '#internal/game-session/recordin
 export * from '#internal/game-session/core-events';
 export { validateCoreEventSequence } from '#internal/game-session/core-event-protocol';
 export {
+  deriveCoreEventLogRestoreState,
+  deriveCoreEventRestoreState,
+} from '#internal/game-session/core-event-log-restore';
+export type {
+  CoreEventLogRestoreOptions,
+  CoreEventLogRestoreState,
+  CoreEventLogRestoreStatus,
+} from '#internal/game-session/core-event-log-restore';
+export {
   createCoreEventLogSink,
   replayCoreEventEnvelopes,
 } from '#internal/game-session/event-log-core-event-sink';

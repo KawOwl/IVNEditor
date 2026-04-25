@@ -68,7 +68,15 @@ used.
   - tool start/finish pairing
   - main batch membership
   - player request/payload consistency
-- A durable event-log sink and replay helper exist in core.
+- A durable event-log sink, replay helper, and restore-state reducer exist in
+  core. The server now persists CoreEvent envelopes per playthrough and uses
+  them on session open to derive the restore/continue point before falling back
+  to historical narrative-entry recovery.
+- Server-side CoreEvent log storage allocates `sequence` inside the database
+  transaction with a per-playthrough advisory lock. This protects restore/reload
+  from stale `initialSequence` races when an old WebSocket sink still has
+  pending appends. See
+  `docs/refactor/core-event-log-sequence-ordering-2026-04-26.md`.
 - Historical `v1-tool-call` playthroughs have a readonly readback boundary that
   reconstructs Sentence streams from old narrative/tool entries without running
   the engine or using SessionEmitter projection.
@@ -80,8 +88,8 @@ used.
 
 ## Remaining
 
-- Wire `CoreEventLogSink` to a real server-side durable store if event replay is
-  needed beyond test/eval memory.
+- Keep event-log restore as the preferred runtime recovery path; historical
+  playthroughs without CoreEvent logs continue through narrative-entry fallback.
 - Keep expanding validator coverage only when a real timing invariant appears;
   avoid making it a duplicate runtime implementation.
 

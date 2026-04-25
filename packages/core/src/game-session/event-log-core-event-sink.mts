@@ -15,6 +15,7 @@ export interface CoreEventLogSink extends CoreEventSink {
 export interface CoreEventLogSinkOptions {
   readonly playthroughId: string;
   readonly writer: CoreEventLogWriter;
+  readonly initialSequence?: number;
   readonly now?: () => number;
   readonly onError?: (error: unknown, envelope: CoreEventEnvelope) => void;
 }
@@ -26,7 +27,7 @@ export interface CoreEventReplayOptions {
 export function createCoreEventLogSink(options: CoreEventLogSinkOptions): CoreEventLogSink {
   const now = options.now ?? (() => Date.now());
   const onError = options.onError ?? logCoreEventLogError;
-  let sequence = 0;
+  let sequence = options.initialSequence ?? 0;
   let tail = Promise.resolve();
 
   return {
