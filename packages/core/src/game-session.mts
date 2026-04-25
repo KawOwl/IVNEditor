@@ -1025,28 +1025,29 @@ export class GameSession {
     // onStepStart 是主路径；这里仍兜底同步一次，防止 start 回调异常时 batchId 丢失。
     this.rememberMainStepBatch(step);
     traceHandle?.recordStep(toTraceStepRecord(step));
-    this.persistToolOnlyStepReasoning(step);
+    this.persistStepReasoning(step);
   }
 
   /**
-   * DeepSeek V4 thinking 模式 replay 修复（2026-04-25）。
+   * DeepSeek V4 thinking 模式 replay 修复（2026-04-25 起）。
    *
    * 协议规则（DeepSeek 官方文档原文）：**两个 user 消息之间，只要发生过任何
    * tool_call，那段 span 内的所有 assistant 消息（含纯文字收尾的那条）都必须
    * 回传 reasoning_content 给 API**，否则 400。
    *
-   * 触发的场景：一次 generate() 内 LLM 走多 step 的 agentic loop，其中某个 step
-   * 是 tool-only（partKinds 不含 'text'）—— 比如 change_scene + update_state
-   * 这种 mid-loop 工具步。当前 generate 收尾的 final flush 只把累计 reasoning 挂到
-   * **最后一 step** 的 batchId（见本文件 line ~864 的 onNarrativeSegmentFinalized
-   * 调用），中间那个 tool-only step 的 batch 因此只有 tool_call entries、没载体
-   * 存它的 reasoning。下次 messages-builder replay 时该批次 assistant 序列化出
-   * `[ToolCallPart, ToolCallPart]` 没 ReasoningPart → DeepSeek 400。
+   * 把每个非 follow-up 的 step（tool-only / narrative+tool / 任何含 reasoning
+   * 的）都追加一条 stub narrative entry（content=''、reasoning=本 step reasoning、
+   * batchId=本 step batch），messages-builder 现成的
+   * `[ReasoningPart, TextPart?, ToolCallPart...]` 路径直接生效，不动 schema、不改
+   * messages-builder。
    *
-   * 修：tool-only 主 step 在这里**追加一条 stub narrative entry**（content=''、
-   * reasoning=本 step reasoning、batchId=本 step batch）。messages-builder 已有
-   * 的 `[ReasoningPart, TextPart?, ToolCallPart...]` 路径直接生效，不动 schema、
-   * 不改 messages-builder。
+   * 不只覆盖 "tool-only step" 而是 "every step with reasoning"，是因为 narrative+tool
+   * step 也会踩坑：它的 narrative 文本会被 currentNarrativeBuffer 累积起来，**直到
+   * 后续某个 step 的 recordPendingSignal pre-flush 才落地**——pre-flush 用的是
+   * `currentStepBatchId`（已经被后面那个 step 覆盖了的 batchId），导致前面那个
+   * narrative+tool step 的 batch 上**只有 tool_call entry、没 narrative 也没 stub**，
+   * 跟 tool-only step 漏 reasoning 是同样的现象。线上 staging playthrough
+   * `5cad49b2` 实测 step 2 = narrative+tool(change_scene) 就栽在这里。
    *
    * 跳过 follow-up：post-step 补刀 / continuation follow-up 由 llm-client 用 fresh
    * batchId 标记但实体落到 mainLastBatchId 上（见 llm-client.mts 的 isFollowup
@@ -1055,27 +1056,22 @@ export class GameSession {
    * 防重复：把已经持久化的 step.reasoning 从 currentReasoningBuffer 末尾砍掉，
    * 避免最终 flush 在 last step 的 batch 上把它再写一遍（buffer 是 reasoning-delta
    * 累计值；onStepFinish 通常在该 step 的 reasoning-delta 流完之后才触发，
-   * endsWith 是防御性检查防止 provider 排序异常）。
+   * endsWith 是防御性检查防止 provider 排序异常）。配合 recordPendingSignal
+   * pre-flush 现在不再带 reasoning（reasoning 由 stub 独占持久化路径），保证
+   * 每个 step 的 reasoning 在 DB 里最多只出现一次。
    *
    * 验证：scripts/verify-deepseek-reasoning.mts case 5（无 reasoning_content → 400）
    * vs case 6（每条 assistant 都带 reasoning_content → 200）。
    */
-  private persistToolOnlyStepReasoning(step: StepInfo): void {
-    // tool-only step 的判定靠 `!partKinds.includes('text')`：当前 AI SDK v6 的
-    // step.content part type 集合是 {text, reasoning, tool-call, tool-result}，
-    // 没 'text' = 这一步纯走工具，没产 narrative 文字 = final-flush 分支拿不到
-    // 这一步的 reasoning（content='' 时 final flush 跳过整段写入）。
-    //
-    // ⚠ 未来 AI SDK 升级要重新审：如果 SDK 把 reasoning 拆成新的 part type
-    //   （比如 'thinking' / 'reasoning-summary' 之类），或者新增其它非文字
-    //    part（图像、audio、structured-output…），这里的 "没 'text' 就是
-    //    tool-only" 启发式可能误判。届时考虑改成更精确的 `partKinds.length
-    //    === 1 && partKinds[0] === 'tool-call'` 或显式 enum 检查。
+  private persistStepReasoning(step: StepInfo): void {
+    // ⚠ "step has reasoning" 用 `!step.reasoning` 简单判，AI SDK v6 onStepFinish
+    //   会把 step.reasoningText 透出来。未来 SDK 把 reasoning 拆出新的 part type
+    //   （比如 'thinking' / 'reasoning-summary' 之类）或多模态 reasoning 时，
+    //   这里要重新审字段语义。
     if (
       step.isFollowup ||
       !step.batchId ||
       !step.reasoning ||
-      step.partKinds.includes('text') ||
       !this.persistence
     ) {
       return;
@@ -1092,7 +1088,7 @@ export class GameSession {
         batchId: step.batchId,
       })
       .catch((err) =>
-        console.error('[Persistence] tool-only step reasoning stub failed:', err),
+        console.error('[Persistence] step reasoning stub failed:', err),
       );
 
     if (this.currentReasoningBuffer.endsWith(stepReasoning)) {
@@ -1242,9 +1238,12 @@ export class GameSession {
     //         跳过（避免重复写）
     if (this.currentNarrativeBuffer) {
       const buffered = this.currentNarrativeBuffer;
-      const bufferedReasoning = this.currentReasoningBuffer;
       this.currentNarrativeBuffer = '';
-      this.currentReasoningBuffer = '';
+      // 注意：currentReasoningBuffer **不在此处 reset**。reasoning 持久化由
+      // persistStepReasoning 通过 per-step stub 走专属路径，这里 pre-flush 只负
+      // 责把 narrative 文本落到 currentStepBatchId（防玩家读档顺序错乱，见
+      // ★ 2 注释）。如果在这里 reset reasoningBuffer，stub 之后的 endsWith 砍
+      // 不到对应 chunk，反而留 stale 数据等 final flush 重写。
 
       try {
         await this.memory.appendTurn({
@@ -1262,7 +1261,13 @@ export class GameSession {
           entry: {
             role: 'generate',
             content: buffered,
-            reasoning: bufferedReasoning || undefined,
+            // reasoning 不在这里持久化：每个 step 的 reasoning 由 persistStepReasoning
+            // 在 onStepFinish 时 stub 到该 step 自己的 batchId 上（DeepSeek V4 thinking
+            // replay 要求每个 assistant 都带 reasoning_content）。这里若也写 reasoning，
+            // 同一个 step 的 reasoning 会在 stub + 这条 narrative 上各出现一次，
+            // messages-builder 把同 batch 里所有 narrative entry 的 reasoning concat
+            // 到 ReasoningPart，等于把 reasoning_content 重复发了。
+            reasoning: undefined,
             // 标记"signal_input 前预 flush"——tracing / debug 能区分这条 entry
             // 是中途 flush 还是 generate 结束时 flush 的。
             finishReason: 'signal-input-preflush',
