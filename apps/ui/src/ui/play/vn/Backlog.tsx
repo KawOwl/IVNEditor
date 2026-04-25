@@ -15,6 +15,7 @@
 import { useRef, useState } from 'react';
 import { useGameStore } from '@/stores/game-store';
 import type { Sentence, CharacterAsset } from '@ivn/core/types';
+import { resolveSpeakerName } from '#internal/ui/play/vn/speaker-name';
 
 export interface BacklogProps {
   characters: CharacterAsset[];
@@ -98,7 +99,7 @@ function BacklogEntry({
 }) {
   if (sentence.kind === 'scene_change') {
     const bg = sentence.scene.background ?? '（无背景）';
-    const sprites = sentence.scene.sprites.map((sp) => `${resolveName(sp.id, characters)}:${sp.emotion}`).join(', ') || '（无立绘）';
+    const sprites = sentence.scene.sprites.map((sp) => `${resolveSpeakerName(sp.id, characters)}:${sp.emotion}`).join(', ') || '（无立绘）';
     return (
       <div className="rounded border border-zinc-800 bg-zinc-900/50 px-3 py-2 font-mono text-[11px] text-zinc-500">
         〔场景 → {bg} / {sprites}〕
@@ -170,12 +171,3 @@ function BacklogEntry({
   );
 }
 
-function resolveSpeakerName(speakerId: string, characters: CharacterAsset[]): string {
-  if (speakerId === 'player') return '我';
-  if (speakerId === 'unknown') return '？';
-  return resolveName(speakerId, characters);
-}
-
-function resolveName(id: string, characters: CharacterAsset[]): string {
-  return characters.find((c) => c.id === id)?.displayName ?? id;
-}

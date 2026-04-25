@@ -25,6 +25,11 @@ import {
 import { reduce, type ParserEvent } from '#internal/narrative-parser-v2/reducer';
 
 export type { ParserManifest, DegradeEvent } from '#internal/narrative-parser-v2/state';
+export {
+  NPC_SPEAKER_PREFIX,
+  isAdhocSpeaker,
+  adhocDisplayName,
+} from '#internal/narrative-parser-v2/tag-schema';
 
 // ============================================================================
 // 输出形状

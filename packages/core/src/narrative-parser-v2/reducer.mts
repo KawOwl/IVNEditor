@@ -26,6 +26,7 @@ import {
   isTopLevelTag,
   isVisualChildTag,
   isValidPosition,
+  isAdhocSpeaker,
   type VisualChildTagSpec,
 } from '#internal/narrative-parser-v2/tag-schema';
 import {
@@ -605,8 +606,17 @@ function buildSentences(
   } else {
     kind = 'dialogue';
     pf = unit.pf ?? { speaker: unit.rawSpeaker ?? '' };
-    if (pf.speaker && !manifest.characters.has(pf.speaker)) {
-      extraDegrades.push({ code: 'dialogue-unknown-speaker', detail: pf.speaker });
+    if (pf.speaker) {
+      if (isAdhocSpeaker(pf.speaker)) {
+        // ad-hoc 角色（`__npc__保安` 等）：合法的"白名单外但有意为之"。
+        // emit 中性事件供 trace 量化使用，不算降级——dialogue 正常 emit，
+        // pf.speaker 保留完整 raw 字符串，UI 渲染时 strip 前缀。
+        extraDegrades.push({ code: 'dialogue-adhoc-speaker', detail: pf.speaker });
+      } else if (!manifest.characters.has(pf.speaker)) {
+        // 真·杜撰 speaker（白名单外、又没声明 ad-hoc 前缀）：保留 dialogue
+        // 但 emit degrade，方便 prompt 调优时追踪 LLM 漂移。
+        extraDegrades.push({ code: 'dialogue-unknown-speaker', detail: pf.speaker });
+      }
     }
   }
 

@@ -97,7 +97,7 @@ describe('reduce · dialogue 容器', () => {
     expect(outputs.degrades).toMatchObject([{ code: 'dialogue-missing-speaker' }]);
   });
 
-  it('<dialogue> speaker 不在白名单 → 保留 dialogue + degrade', () => {
+  it('<dialogue> speaker 不在白名单且无 __npc__ 前缀 → 保留 dialogue + unknown degrade', () => {
     const { outputs } = run([
       { type: 'opentag', name: 'dialogue', attrs: { speaker: 'ghost' } },
       { type: 'text', data: 'boo' },
@@ -108,6 +108,45 @@ describe('reduce · dialogue 容器', () => {
     expect(outputs.degrades).toMatchObject([
       { code: 'dialogue-unknown-speaker', detail: 'ghost' },
     ]);
+  });
+
+  it('<dialogue speaker="__npc__保安"> → dialogue + adhoc 事件，不发 unknown degrade', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'dialogue', attrs: { speaker: '__npc__保安' } },
+      { type: 'text', data: '你不能在这里拍照。' },
+      { type: 'closetag', name: 'dialogue' },
+    ]);
+    expect(outputs.sentences).toHaveLength(1);
+    const s = outputs.sentences[0]!;
+    expect(s.kind).toBe('dialogue');
+    if (s.kind === 'dialogue') {
+      // pf.speaker 保留完整 raw 字符串，UI 渲染时 strip 前缀
+      expect(s.pf.speaker).toBe('__npc__保安');
+      expect(s.text).toBe('你不能在这里拍照。');
+    }
+    expect(outputs.degrades).toMatchObject([
+      { code: 'dialogue-adhoc-speaker', detail: '__npc__保安' },
+    ]);
+    expect(outputs.degrades.some((d) => d.code === 'dialogue-unknown-speaker')).toBe(false);
+  });
+
+  it('<dialogue speaker="__npc__店主" to="__npc__同事,player"> → pf.addressee 透传 ad-hoc id', () => {
+    const { outputs } = run([
+      {
+        type: 'opentag',
+        name: 'dialogue',
+        attrs: { speaker: '__npc__店主', to: '__npc__同事, player' },
+      },
+      { type: 'text', data: '欢迎光临' },
+      { type: 'closetag', name: 'dialogue' },
+    ]);
+    expect(outputs.sentences).toHaveLength(1);
+    const s = outputs.sentences[0]!;
+    if (s.kind !== 'dialogue') throw new Error('expected dialogue');
+    expect(s.pf.speaker).toBe('__npc__店主');
+    expect(s.pf.addressee).toEqual(['__npc__同事', 'player']);
+    expect(outputs.degrades.some((d) => d.code === 'dialogue-adhoc-speaker' && d.detail === '__npc__店主')).toBe(true);
+    expect(outputs.degrades.some((d) => d.code === 'dialogue-unknown-speaker')).toBe(false);
   });
 
   it('<dialogue speaker=" "> 视为 missing', () => {

@@ -13,6 +13,7 @@
  */
 
 import type { Sentence, CharacterAsset } from '@ivn/core/types';
+import { resolveSpeakerName } from '#internal/ui/play/vn/speaker-name';
 
 export interface DialogBoxProps {
   /** 当前要展示的 Sentence；null = 等待叙事中 */
@@ -133,9 +134,3 @@ function renderBody(
   );
 }
 
-function resolveSpeakerName(speakerId: string, characters: CharacterAsset[]): string {
-  if (speakerId === 'player') return '我';
-  if (speakerId === 'unknown') return '？';
-  const c = characters.find((ch) => ch.id === speakerId);
-  return c?.displayName ?? speakerId;
-}

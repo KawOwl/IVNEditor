@@ -136,12 +136,48 @@ export function isValidPosition(v: string): v is 'left' | 'center' | 'right' {
 }
 
 // ============================================================================
+// Ad-hoc 角色（白名单外 NPC）约定
+// ============================================================================
+
+/**
+ * 临时 NPC 角色 id 前缀。剧本作者不可能预设所有路人 / 临时登场角色的 id，
+ * 但又希望保持 `<dialogue>` 数据结构（speaker label、participation frame、
+ * backlog 头像位等）。约定 `__npc__<显示名>` 作为 ad-hoc speaker id：
+ *
+ *   <dialogue speaker="__npc__保安" to="player">
+ *     "你不能在这里拍照。"
+ *   </dialogue>
+ *
+ * - 后缀部分（即 `id.slice(NPC_SPEAKER_PREFIX.length)`）就是要展示给玩家的名字
+ * - 双下划线规避剧本作者真实 snake_case id 撞名（manifest id 命名校验已限制 `^[a-z]`）
+ * - 同 trace 内同名 ad-hoc 当作同人，不同 trace / 不同名漂移可接受
+ *   （路人本身就是一次性；反复出场要升级到正式 manifest characters）
+ * - sprite 仍严格白名单——ad-hoc 角色就是名字气泡，没立绘
+ */
+export const NPC_SPEAKER_PREFIX = '__npc__';
+
+/** id 是否为 ad-hoc NPC（带 `__npc__` 前缀）。 */
+export function isAdhocSpeaker(speakerId: string): boolean {
+  return speakerId.startsWith(NPC_SPEAKER_PREFIX);
+}
+
+/**
+ * 取 ad-hoc speaker 的显示名（前缀后的部分）。
+ * 非 ad-hoc id 直接返回原值。后缀为空（裸 `__npc__`）也原样返回——
+ * UI 自行决定怎么显示空名字。
+ */
+export function adhocDisplayName(speakerId: string): string {
+  if (!isAdhocSpeaker(speakerId)) return speakerId;
+  return speakerId.slice(NPC_SPEAKER_PREFIX.length);
+}
+
+// ============================================================================
 // Degrade 事件名（分类一份）。和 Langfuse tag 对齐（RFC §10.1）。
 // ============================================================================
 
 /**
- * 所有 silent-degrade 的分类名。reducer 只输出这个 union，
- * 调用方（tracing）决定打成 `ir-degrade:*` 还是其他形式。
+ * reducer 输出的事件分类。多数是 silent-degrade 类（语义降级），
+ * `dialogue-adhoc-speaker` 是中性事件（量化用，非降级）。
  */
 export type DegradeCode =
   | 'sprite-missing-attr'
@@ -156,4 +192,5 @@ export type DegradeCode =
   | 'container-truncated'
   | 'dialogue-missing-speaker'
   | 'dialogue-unknown-speaker'
+  | 'dialogue-adhoc-speaker'
   | 'bare-text-outside-container';

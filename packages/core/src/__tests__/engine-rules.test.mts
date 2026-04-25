@@ -91,17 +91,21 @@ describe('buildEngineRules', () => {
     expect(text).toContain('- ghost: （该角色未定义情绪）');
   });
 
-  it('v2 必须包含"非白名单角色转写到 <narration>"硬性规则（RFC §12.1.1 Shape C 补丁）', () => {
+  it('v2 必须包含 __npc__ ad-hoc speaker 约定 + 反伪装守卫', () => {
     const text = buildEngineRules({
       protocolVersion: 'v2-declarative-visual',
       characters: [{ id: 'sakuya', sprites: [{ id: 'smiling' }] }],
       backgrounds: [{ id: 'classroom' }],
     });
-    // 关键指令：path B 的强化
+    // 关键指令：白名单外 NPC 走 __npc__ 前缀（取代老的"塞进 narration"硬规则）
+    expect(text).toContain('__npc__');
     expect(text).toContain('非白名单');
+    // 必须给具体例子，让 LLM 直接照抄格式
+    expect(text).toMatch(/<dialogue\s+speaker="__npc__/);
+    // 反伪装守卫：不能把白名单已有角色用 __npc__ 写
+    expect(text).toMatch(/禁止.*伪装|白名单内角色必须用对应 id/);
+    // 环境音 / 群众嘈杂仍走 narration（不是任何具体角色说的话）
     expect(text).toContain('<narration>');
-    // 老 v2 bug 的根源：LLM 把 NPC 塞进 speaker 属性
-    expect(text).toMatch(/不要.*塞进.*dialogue speaker/);
   });
 
   it('v2 必须禁止调用旧视觉工具（change_scene / change_sprite / clear_stage）', () => {
