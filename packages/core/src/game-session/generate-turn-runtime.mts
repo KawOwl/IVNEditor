@@ -149,6 +149,105 @@ function toTraceStepRecord(step: StepInfo): TraceStepRecord {
   ) as TraceStepRecord;
 }
 
+interface DrainBatchContext {
+  readonly initialScene: SceneState;
+  readonly publish: (event: Parameters<CoreEventSink['publish']>[0]) => void;
+  readonly traceHandle: GenerateTraceHandle | undefined;
+  readonly turnId: TurnId;
+  readonly turn: number;
+  /** Closure so the read happens at publish time, not at drain entry. */
+  readonly getBatchId: () => string | null;
+}
+
+/**
+ * Project a parser-v2 batch into core events + tracing side effects, returning
+ * the scene after the last non-`scene_change` sentence (caller assigns it back
+ * to its mutable `currentScene`).
+ *
+ * Side effects emitted in fixed order:
+ *   1. per-sentence `narrative-truncation` trace events (dialogue / narration)
+ *   2. one aggregated `ir-scratch` event if scratches non-empty
+ *   3. per-degrade `ir-degrade:<code>` event
+ *   4. one `narrative-batch-emitted` core event if anything was in the batch
+ */
+function drainNarrativeBatch(
+  batch: NarrativeBatch,
+  ctx: DrainBatchContext,
+): SceneState {
+  let scene = ctx.initialScene;
+
+  for (const sentence of batch.sentences) {
+    if (sentence.kind !== 'scene_change') {
+      scene = copyScene(sentence.sceneRef);
+    }
+    if (sentence.kind === 'dialogue' && sentence.truncated) {
+      traceNarrativeTruncation(ctx.traceHandle, ctx.turn, {
+        kind: 'dialogue',
+        speaker: sentence.pf.speaker,
+        partialLength: sentence.text.length,
+      });
+    } else if (sentence.kind === 'narration' && sentence.truncated) {
+      traceNarrativeTruncation(ctx.traceHandle, ctx.turn, {
+        kind: 'narration',
+        partialLength: sentence.text.length,
+      });
+    }
+  }
+
+  if (batch.scratches.length > 0) {
+    ctx.traceHandle?.event(
+      'ir-scratch',
+      {
+        count: batch.scratches.length,
+        totalChars: batch.scratches.reduce((n, scratch) => n + scratch.text.length, 0),
+      },
+      { turn: ctx.turn },
+    );
+  }
+
+  for (const degrade of batch.degrades) {
+    ctx.traceHandle?.event(
+      `ir-degrade:${degrade.code}`,
+      degrade.detail ? { detail: degrade.detail } : {},
+      { turn: ctx.turn },
+    );
+  }
+
+  if (
+    batch.sentences.length > 0 ||
+    batch.scratches.length > 0 ||
+    batch.degrades.length > 0
+  ) {
+    ctx.publish({
+      type: 'narrative-batch-emitted',
+      turnId: ctx.turnId,
+      batchId: toBatchId(ctx.getBatchId()),
+      sentences: batch.sentences.filter(isRuntimeSentence).map(copyRuntimeSentence),
+      scratches: batch.scratches.map((scratch) => ({ ...scratch })),
+      degrades: batch.degrades.map((degrade) => ({ ...degrade })),
+      sceneAfter: copyScene(scene),
+    });
+  }
+
+  return scene;
+}
+
+function traceNarrativeTruncation(
+  traceHandle: GenerateTraceHandle | undefined,
+  turn: number,
+  event:
+    | { kind: 'dialogue'; speaker: string; partialLength: number }
+    | { kind: 'narration'; partialLength: number },
+): void {
+  traceHandle?.event(
+    'narrative-truncation',
+    event.kind === 'dialogue'
+      ? { speaker: event.speaker, partialLength: event.partialLength }
+      : { partialLength: event.partialLength },
+    { turn, kind: event.kind },
+  );
+}
+
 class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   private readonly turnId: TurnId;
   private currentScene: SceneState;
@@ -540,81 +639,21 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       initialScene: copyScene(this.currentScene),
     });
 
-    const drainBatch = (batch: NarrativeBatch) => {
-      for (const sentence of batch.sentences) {
-        if (sentence.kind !== 'scene_change') {
-          this.currentScene = copyScene(sentence.sceneRef);
-        }
-        if (sentence.kind === 'dialogue' && sentence.truncated) {
-          this.traceNarrativeTruncation(traceHandle, {
-            kind: 'dialogue',
-            speaker: sentence.pf.speaker,
-            partialLength: sentence.text.length,
-          });
-        }
-        if (sentence.kind === 'narration' && sentence.truncated) {
-          this.traceNarrativeTruncation(traceHandle, {
-            kind: 'narration',
-            partialLength: sentence.text.length,
-          });
-        }
-      }
-
-      if (batch.scratches.length > 0) {
-        traceHandle?.event(
-          'ir-scratch',
-          {
-            count: batch.scratches.length,
-            totalChars: batch.scratches.reduce((n, scratch) => n + scratch.text.length, 0),
-          },
-          { turn: this.deps.turn },
-        );
-      }
-
-      for (const degrade of batch.degrades) {
-        traceHandle?.event(
-          `ir-degrade:${degrade.code}`,
-          degrade.detail ? { detail: degrade.detail } : {},
-          { turn: this.deps.turn },
-        );
-      }
-
-      if (
-        batch.sentences.length > 0 ||
-        batch.scratches.length > 0 ||
-        batch.degrades.length > 0
-      ) {
-        this.publish({
-          type: 'narrative-batch-emitted',
-          turnId: this.turnId,
-          batchId: toBatchId(this.currentStepBatchId),
-          sentences: batch.sentences.filter(isRuntimeSentence).map(copyRuntimeSentence),
-          scratches: batch.scratches.map((scratch) => ({ ...scratch })),
-          degrades: batch.degrades.map((degrade) => ({ ...degrade })),
-          sceneAfter: copyScene(this.currentScene),
-        });
-      }
+    const drain = (batch: NarrativeBatch) => {
+      this.currentScene = drainNarrativeBatch(batch, {
+        initialScene: this.currentScene,
+        publish: (event) => this.publish(event),
+        traceHandle,
+        turnId: this.turnId,
+        turn: this.deps.turn,
+        getBatchId: () => this.currentStepBatchId,
+      });
     };
 
     return {
-      feedTextChunk: (chunk) => drainBatch(parserV2.feed(chunk)),
-      finalizeParser: () => drainBatch(parserV2.finalize()),
+      feedTextChunk: (chunk) => drain(parserV2.feed(chunk)),
+      finalizeParser: () => drain(parserV2.finalize()),
     };
-  }
-
-  private traceNarrativeTruncation(
-    traceHandle: GenerateTraceHandle | undefined,
-    event:
-      | { kind: 'dialogue'; speaker: string; partialLength: number }
-      | { kind: 'narration'; partialLength: number },
-  ): void {
-    traceHandle?.event(
-      'narrative-truncation',
-      event.kind === 'dialogue'
-        ? { speaker: event.speaker, partialLength: event.partialLength }
-        : { partialLength: event.partialLength },
-      { turn: this.deps.turn, kind: event.kind },
-    );
   }
 
   private handleStepStart(info: StepStartInfo): void {
