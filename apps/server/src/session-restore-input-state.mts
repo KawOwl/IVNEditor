@@ -6,6 +6,10 @@ export interface RestorableInputState {
   readonly choices: string[] | null;
 }
 
+export interface RestorableSessionState extends RestorableInputState {
+  readonly status: string;
+}
+
 type InputStateSnapshot = Pick<PlaythroughDetail, 'status' | 'inputHint' | 'inputType' | 'choices'>;
 type RestoreInputEntry = Pick<NarrativeEntryRow, 'kind' | 'content' | 'payload'>;
 
@@ -13,21 +17,50 @@ export function resolveRestorableInputState(
   snapshot: InputStateSnapshot,
   recentEntries: readonly RestoreInputEntry[],
 ): RestorableInputState {
+  const { status: _status, ...inputState } = resolveRestorableSessionState(snapshot, recentEntries);
+  return inputState;
+}
+
+export function resolveRestorableSessionState(
+  snapshot: InputStateSnapshot,
+  recentEntries: readonly RestoreInputEntry[],
+): RestorableSessionState {
   const current = {
+    status: snapshot.status,
     inputHint: snapshot.inputHint,
     inputType: snapshot.inputType,
     choices: copyChoices(snapshot.choices),
   };
-  if (snapshot.status !== 'waiting-input' || hasChoiceState(current)) return current;
+  const recoverableStatus = snapshot.status === 'waiting-input' || snapshot.status === 'generating';
+  if (!recoverableStatus) return current;
 
-  const signal = findLatestUnconsumedSignalInput(recentEntries);
-  if (!signal) return current;
+  const boundary = findLatestInputBoundary(recentEntries);
+  if (boundary?.kind === 'player_input') {
+    return {
+      status: 'idle',
+      inputHint: null,
+      inputType: 'freetext',
+      choices: null,
+    };
+  }
 
-  const choices = readChoices(signal.payload);
-  if (choices.length === 0) return current;
+  if (snapshot.status === 'waiting-input' && hasChoiceState(current)) return current;
+
+  if (!boundary || boundary.kind !== 'signal_input') return current;
+
+  const choices = readChoices(boundary.payload);
+  if (choices.length === 0) {
+    return {
+      status: 'waiting-input',
+      inputHint: boundary.content || current.inputHint,
+      inputType: 'freetext',
+      choices: null,
+    };
+  }
 
   return {
-    inputHint: signal.content || current.inputHint,
+    status: 'waiting-input',
+    inputHint: boundary.content || current.inputHint,
     inputType: 'choice',
     choices,
   };
@@ -37,13 +70,13 @@ function hasChoiceState(state: RestorableInputState): boolean {
   return state.inputType === 'choice' && !!state.choices && state.choices.length > 0;
 }
 
-function findLatestUnconsumedSignalInput(
+function findLatestInputBoundary(
   entries: readonly RestoreInputEntry[],
 ): RestoreInputEntry | null {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
     if (!entry) continue;
-    if (entry.kind === 'player_input') return null;
+    if (entry.kind === 'player_input') return entry;
     if (entry.kind === 'signal_input') return entry;
   }
   return null;

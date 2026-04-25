@@ -20,8 +20,10 @@ import { playthroughService, type PlaythroughDetail } from '#internal/services/p
 import { scriptVersionService } from '#internal/services/script-version-service';
 import { llmConfigService, type LlmConfigRow } from '#internal/services/llm-config-service';
 import { resolvePlayerSession } from '#internal/auth-identity';
-import { resolveRestorableInputState } from '#internal/session-restore-input-state';
+import { coreEventLogService } from '#internal/services/core-event-log';
+import { resolveRestorableSessionState } from '#internal/session-restore-input-state';
 import type { LLMConfig } from '@ivn/core/llm-client';
+import { deriveCoreEventLogRestoreState } from '@ivn/core/game-session';
 import type { ScriptManifest } from '@ivn/core/types';
 
 const sessionManager = new SessionManager();
@@ -152,24 +154,59 @@ async function loadSessionOpenContext(
 }
 
 async function normalizeRestorableDetail(detail: PlaythroughDetail): Promise<PlaythroughDetail> {
-  const needsInputRecovery =
-    detail.status === 'waiting-input' &&
-    !(detail.inputType === 'choice' && detail.choices && detail.choices.length > 0);
+  const eventLogState = deriveCoreEventLogRestoreState(
+    await coreEventLogService.load(detail.id),
+    { sortBySequence: true },
+  );
+  const fromEventLog = eventLogState
+    ? applyRestorableState(detail, {
+        status: eventLogState.status,
+        turn: eventLogState.turn,
+        stateVars: eventLogState.stateVars,
+        memorySnapshot: eventLogState.memorySnapshot,
+        currentScene: eventLogState.currentScene,
+        inputHint: eventLogState.inputHint,
+        inputType: eventLogState.inputType,
+        choices: eventLogState.choices,
+      })
+    : detail;
 
-  const recentEntries = needsInputRecovery && detail.hasMore
-    ? await playthroughService.loadLatestEntries(detail.id, 100)
-    : detail.entries;
+  if (eventLogState && fromEventLog.status !== 'waiting-input') return fromEventLog;
+  if (!eventLogState && !['waiting-input', 'generating'].includes(fromEventLog.status)) return fromEventLog;
 
-  const inputState = resolveRestorableInputState(detail, recentEntries);
+  const recentEntries = fromEventLog.hasMore
+    ? await playthroughService.loadLatestEntries(fromEventLog.id, 100)
+    : fromEventLog.entries;
+  const sessionState = resolveRestorableSessionState(fromEventLog, recentEntries);
+  const turnPatch =
+    !eventLogState && fromEventLog.status === 'generating' && sessionState.status === 'idle'
+      ? { turn: Math.max(0, fromEventLog.turn - 1) }
+      : {};
+
+  return applyRestorableState(fromEventLog, { ...sessionState, ...turnPatch });
+}
+
+function applyRestorableState(
+  detail: PlaythroughDetail,
+  patch: Partial<Pick<
+    PlaythroughDetail,
+    'status' | 'turn' | 'stateVars' | 'memorySnapshot' | 'currentScene' | 'inputHint' | 'inputType' | 'choices'
+  >>,
+): PlaythroughDetail {
+  const next = { ...detail, ...patch };
   if (
-    inputState.inputHint === detail.inputHint &&
-    inputState.inputType === detail.inputType &&
-    sameChoices(inputState.choices, detail.choices)
+    next.status === detail.status &&
+    next.turn === detail.turn &&
+    next.stateVars === detail.stateVars &&
+    next.memorySnapshot === detail.memorySnapshot &&
+    next.currentScene === detail.currentScene &&
+    next.inputHint === detail.inputHint &&
+    next.inputType === detail.inputType &&
+    sameChoices(next.choices, detail.choices)
   ) {
     return detail;
   }
-
-  return { ...detail, ...inputState };
+  return next;
 }
 
 function sameChoices(a: readonly string[] | null, b: readonly string[] | null): boolean {
@@ -178,7 +215,7 @@ function sameChoices(a: readonly string[] | null, b: readonly string[] | null): 
   return a.every((choice, index) => choice === b[index]);
 }
 
-function attachSessionWrapper(ws: SessionSocket, context: SessionOpenContext) {
+async function attachSessionWrapper(ws: SessionSocket, context: SessionOpenContext) {
   const wrapper = sessionManager.getOrCreate(
     context.playthroughId,
     context.manifest,
@@ -187,7 +224,7 @@ function attachSessionWrapper(ws: SessionSocket, context: SessionOpenContext) {
     context.detail.kind,
     context.llmConfig,
   );
-  wrapper.attachWebSocket(ws);
+  await wrapper.attachWebSocket(ws);
   return wrapper;
 }
 
@@ -223,8 +260,8 @@ function restoreExistingPlaythrough(
   });
 }
 
-function connectSessionWebSocket(ws: SessionSocket, context: SessionOpenContext): void {
-  const wrapper = attachSessionWrapper(ws, context);
+async function connectSessionWebSocket(ws: SessionSocket, context: SessionOpenContext): Promise<void> {
+  const wrapper = await attachSessionWrapper(ws, context);
   sendConnected(ws, context.playthroughId);
 
   if (!isNewPlaythrough(context.detail)) {
@@ -247,7 +284,7 @@ async function openSessionWebSocket(ws: ClosableSessionSocket): Promise<void> {
     return;
   }
 
-  connectSessionWebSocket(ws, context.value);
+  await connectSessionWebSocket(ws, context.value);
 }
 
 export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })

@@ -133,6 +133,7 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
 
       // 更新状态 + memory
       await playthroughService.updateState(playthroughId, {
+        status: 'idle',
         stateVars: data.stateVars,
         turn: data.turn,
         memorySnapshot: data.memorySnapshot,

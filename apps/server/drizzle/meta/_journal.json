@@ -92,6 +92,13 @@
       "when": 1777842800000,
       "tag": "0012_llm_thinking_control",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1777846400000,
+      "tag": "0013_core_event_envelopes",
+      "breakpoints": true
     }
   ]
 }

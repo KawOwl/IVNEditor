@@ -46,6 +46,21 @@ describe('CoreEvent log sink', () => {
     ]);
   });
 
+  it('continues sequence numbers from an existing log tail', async () => {
+    const envelopes: CoreEventEnvelope[] = [];
+    const sink = createCoreEventLogSink({
+      playthroughId: 'pt-log',
+      writer: createMemoryWriter(envelopes),
+      now: createClock(2000),
+      initialSequence: 41,
+    });
+
+    sink.publish({ type: 'generate-turn-started', turn: 1, turnId: turnId(1) });
+    await sink.flushDurable();
+
+    expect(envelopes[0]?.sequence).toBe(42);
+  });
+
   it('replays envelopes into a sink in sequence order when requested', async () => {
     const recorder = createRecordingCoreEventSink({ playthroughId: 'pt-replay' });
     const bus = createCoreEventBus([recorder]);

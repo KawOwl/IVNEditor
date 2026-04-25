@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import { resolveRestorableInputState } from '#internal/session-restore-input-state';
+import {
+  resolveRestorableInputState,
+  resolveRestorableSessionState,
+} from '#internal/session-restore-input-state';
 
 describe('resolveRestorableInputState', () => {
   it('keeps a durable waiting choice state when the playthrough row is complete', () => {
@@ -50,9 +53,42 @@ describe('resolveRestorableInputState', () => {
     });
   });
 
-  it('does not infer choices for non-waiting sessions', () => {
-    expect(resolveRestorableInputState({
+  it('marks waiting-input as idle when the latest input boundary is player_input', () => {
+    expect(resolveRestorableSessionState({
+      status: 'waiting-input',
+      inputHint: 'old pick',
+      inputType: 'choice',
+      choices: ['old'],
+    }, [
+      { kind: 'signal_input', content: 'old pick', payload: { choices: ['old'] } },
+      { kind: 'player_input', content: 'old', payload: { inputType: 'choice', selectedIndex: 0 } },
+    ])).toEqual({
+      status: 'idle',
+      inputHint: null,
+      inputType: 'freetext',
+      choices: null,
+    });
+  });
+
+  it('recovers an input request when a generating row already recorded signal_input', () => {
+    expect(resolveRestorableSessionState({
       status: 'generating',
+      inputHint: null,
+      inputType: 'freetext',
+      choices: null,
+    }, [
+      { kind: 'signal_input', content: 'pick one', payload: { choices: ['A'] } },
+    ])).toEqual({
+      status: 'waiting-input',
+      inputHint: 'pick one',
+      inputType: 'choice',
+      choices: ['A'],
+    });
+  });
+
+  it('does not infer choices for idle sessions', () => {
+    expect(resolveRestorableInputState({
+      status: 'idle',
       inputHint: null,
       inputType: 'freetext',
       choices: null,
