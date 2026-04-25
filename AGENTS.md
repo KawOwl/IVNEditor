@@ -90,8 +90,11 @@ Prefer:
 
 Current project boundaries:
 
-- Core session logic depends on `SessionPersistence`, `SessionEmitter`, and
+- Core session logic depends on `SessionPersistence`, `CoreEventSink`, and
   `SessionTracing` interfaces.
+- `SessionEmitter` is a legacy projection target for WebSocket, recording, and
+  existing UI/debug consumers. New core runtime code should emit `CoreEvent`
+  and use a projection adapter when legacy emitter output is required.
 - Server-side DB persistence is implemented in
   `apps/server/src/services/playthrough-persistence.mts`.
 - Parser v2 keeps pure reducer logic separate from the htmlparser2 streaming
@@ -129,18 +132,21 @@ Choose verification proportional to the change:
 - Server DB/session changes: `bun --env-file ../../.env test` from `apps/server`
 - UI changes: run the UI and inspect the relevant flow in the browser
 
-For commits in this refactor line, run negentropy before committing and include
-a report under `docs/refactor/`. The CLI is installed system-wide as
-`negentropy`:
+For commits in this refactor line, run negentropy before committing. Save the
+machine-readable JSON under `docs/refactor/negentropy-json/` and include a
+human-readable report under `docs/refactor/`. The CLI is installed system-wide
+as `negentropy`:
 
 ```bash
-negentropy analyze . --format json --fail-on none --output /tmp/ivn-negentropy.json
+negentropy analyze . --format json --fail-on none --output docs/refactor/negentropy-json/negentropy-YYYY-MM-DD-slug.json
 ```
 
 Common variants (pick one based on what you want to see):
 
-- Full machine-readable JSON for diff/archive (recommended for the report):
-  `negentropy analyze . --format json --fail-on none --output /tmp/ivn-negentropy.json`
+- Full machine-readable JSON for archive and future baselines:
+  `negentropy analyze . --format json --fail-on none --output docs/refactor/negentropy-json/negentropy-YYYY-MM-DD-slug.json`
+- Delta against the previous committed JSON report:
+  `negentropy analyze . --format json --fail-on none --baseline docs/refactor/negentropy-json/negentropy-YYYY-MM-DD-previous-slug.json --output docs/refactor/negentropy-json/negentropy-YYYY-MM-DD-slug.json`
 - Quick top-N hotspot table while iterating:
   `negentropy analyze . --format table --fail-on none --top 10`
 - Both at once (terminal table + JSON file): drop `--output` and use
@@ -151,6 +157,11 @@ Flags worth knowing: `--top N` (default 3) for hotspot count;
 none|medium|high` to control whether the run exits non-zero. Existing high
 negentropy risk does not block a commit when the scan is run with
 `--fail-on none`, but new hotspots should be investigated.
+
+When a baseline JSON exists, prefer `--baseline <previous-json>` and mention the
+dimension changes, `new_hotspots`, and `resolved_hotspots` in the markdown
+report. The previous JSON should normally be the latest committed file under
+`docs/refactor/negentropy-json/`.
 
 Historical reports under `docs/refactor/` may show the older
 `cargo run --manifest-path /Users/kawowl/project/negentropy-labs/...` form;

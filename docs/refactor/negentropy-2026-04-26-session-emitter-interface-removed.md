@@ -25,6 +25,7 @@ pnpm test:core
 cd apps/server && bun --env-file ../../.env test
 MEMORY_EVAL_OUTPUT=/tmp/ivn-memory-live-eval-session-emitter-interface-removed-2026-04-26.json pnpm eval:memory:live
 negentropy analyze . --format json --fail-on none --output /tmp/ivn-negentropy-session-emitter-interface-removed-2026-04-26.json
+negentropy analyze . --format json --fail-on none --baseline /tmp/ivn-negentropy-outer-core-event-first-2026-04-26.json --output docs/refactor/negentropy-json/negentropy-2026-04-26-session-emitter-interface-removed.json
 ```
 
 Results:
@@ -57,7 +58,11 @@ protocol or projection failure.
 
 Source JSON:
 
-- `/tmp/ivn-negentropy-session-emitter-interface-removed-2026-04-26.json`
+- `docs/refactor/negentropy-json/negentropy-2026-04-26-session-emitter-interface-removed.json`
+
+Baseline JSON:
+
+- `/tmp/ivn-negentropy-outer-core-event-first-2026-04-26.json`
 
 Summary:
 
@@ -78,6 +83,19 @@ Top reported hotspots remain existing server/UI/schema/test areas:
 - `packages/core/src/architect/injection-rule-generator.mts`
 
 No new hotspot is introduced by this slice.
+
+Delta:
+
+- `module_abstraction`: unchanged
+- `logic_cohesion`: unchanged
+- `change_blast_radius`: unchanged
+- `architecture_decoupling`: unchanged
+- `testability_pluggability`: unchanged
+- `intent_redundancy`: unchanged
+- `state_encapsulation`: `oa` changed from `0.039` to `0.040`; `sse`
+  unchanged at `1.604`; risk unchanged at high
+- `new_hotspots`: none
+- `resolved_hotspots`: none
 
 ## Architecture Note
 
