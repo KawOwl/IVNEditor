@@ -130,6 +130,24 @@
 
 ---
 
+## 三·五、Preview 启动顺序（避免 fetch race）
+
+通过 Claude Preview MCP 起 dev 环境时**必须先 server 后 dev**，否则前端会在 backend 还没 listen 时跑 `ensureSessionId` → `fetch /api/auth/init` 失败 → React 19 + StrictMode 把 effect 错误包装成误导性的 "Invalid hook call. ... more than one copy of React"（实际并不是双 React，是 effect crash 把 hooks dispatcher 污染了）。
+
+**正确顺序**：
+
+1. `preview_start server`（或 `bun run --cwd apps/server src/index.mts`）
+2. **轮询 health 接口**直到返回 200：
+   ```
+   until curl -sf http://localhost:3001/health > /dev/null; do sleep 0.3; done
+   ```
+   `GET /health` 返回 `{"ok":true,"timestamp":...}`，不需要 auth。**不要靠 stdout 文本匹配判断启动完成**——日志格式会变。
+3. `preview_start dev`
+
+`launch.json` 的 `dependsOn` 字段 Claude Preview MCP 不支持（已实测，被静默忽略），所以这个顺序只能靠纪律保证。
+
+---
+
 ## 四、提交纪律
 
 - **小而频繁**：每完成一个有意义的步骤就提交
