@@ -1,0 +1,35 @@
+{
+  "name": "@ivn/specification",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.mts",
+  "types": "./src/index.mts",
+  "imports": {
+    "#internal/*": "./src/*.mts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.mts",
+      "import": "./src/index.mts",
+      "default": "./src/index.mts"
+    },
+    "./*": {
+      "types": "./src/*.mts",
+      "import": "./src/*.mts",
+      "default": "./src/*.mts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "typecheck:tsc": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "7.0.0-dev.20260421.2",
+    "typescript": "^6.0.2"
+  }
+}

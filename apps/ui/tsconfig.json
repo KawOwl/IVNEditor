@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+
+    /* Paths */
+    "paths": {
+      "#internal/*": ["./src/*.mts", "./src/*.tsx", "./src/*"],
+      "@/*": ["./src/*.mts", "./src/*.tsx", "./src/*"],
+      "@scenario/*": ["../../scenario/*"],
+      "@ivn/core/narrative-parser-v2": ["../../packages/core/src/narrative-parser-v2/index.mts"],
+      "@ivn/core/narrative-parser-v2/*": ["../../packages/core/src/narrative-parser-v2/*.mts"],
+      "@ivn/core/*": ["../../packages/core/src/*"],
+      "@ivn/specification/*": ["../../packages/specification/src/*"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["src/**/__tests__/**", "src/**/*.test.mts"]
+}

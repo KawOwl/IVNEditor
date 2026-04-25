@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist",
+    "rootDir": "../..",
+    "paths": {
+      "@ivn/core/narrative-parser-v2": ["../../packages/core/src/narrative-parser-v2/index.mts"],
+      "@ivn/core/narrative-parser-v2/*": ["../../packages/core/src/narrative-parser-v2/*.mts"],
+      "@ivn/core/*": ["../../packages/core/src/*"],
+      "@ivn/specification/*": ["../../packages/specification/src/*"]
+    }
+  },
+  "include": [
+    "src/**/*",
+    "scripts/**/*",
+    "drizzle.config.mts",
+    "../../packages/core/src/**/*",
+    "../../packages/specification/src/**/*"
+  ],
+  "exclude": [
+    "../../packages/core/src/**/__tests__/**",
+    "../../packages/core/src/**/*.test.mts",
+    "../../packages/specification/src/**/__tests__/**",
+    "../../packages/specification/src/**/*.test.mts"
+  ]
+}

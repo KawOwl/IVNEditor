@@ -4,9 +4,11 @@
 
 # 依赖和构建产物（镜像里会自己装）
 node_modules/
-server/node_modules/
+apps/*/node_modules/
+packages/*/node_modules/
 dist/
-server/dist/
+apps/*/dist/
+packages/*/dist/
 
 # 开发本地文件
 .git/
@@ -26,9 +28,9 @@ server/dist/
 .env
 .env.*
 !.env.example
-server/.env
-server/.env.*
-!server/.env.example
+apps/server/.env
+apps/server/.env.*
+!apps/server/.env.example
 ops/k3s-pressuretest/env
 ops/langfuse/.env
 
@@ -39,7 +41,7 @@ scenario/
 
 # 项目文档（不进镜像）
 *.md
-!server/src/**/*.md
+!apps/server/src/**/*.md
 MODULE7_*.md
 SOP*.md
 PROGRESS.md
