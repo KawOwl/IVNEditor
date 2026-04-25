@@ -173,6 +173,17 @@ export function buildStateSection(vars: Record<string, unknown>): string {
 // ENGINE_RULES_CONTENT 现在在 ./engine-rules.ts 单独维护，
 // 玩家侧运行时 + 编剧侧 AI 改写都从那里 import，保持单一真源。
 
+type SectionCategory = 'system' | 'context' | 'state' | 'summary';
+
+interface AssembledSection {
+  readonly content: string;
+  readonly tokens: number;
+  /** Token-breakdown bucket the section's tokens are accounted to. */
+  readonly category: SectionCategory;
+  /** false → never trimmed by budget (system / state / rules). */
+  readonly trimmable: boolean;
+}
+
 export async function assembleContext(options: AssembleOptions): Promise<AssembledContext> {
   const {
     segments,
@@ -213,32 +224,34 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
     return true;
   });
 
-  // --- 2. Build named section content map ---
-  // Each user segment gets its own ID; virtual sections use VIRTUAL_IDS
-  // User segments (use derivedContent if useDerived)
+  // --- 2. Build named section map ---
   //
+  // Each user segment gets its own ID; virtual sections use VIRTUAL_IDS.
   // 每段用 `--- [${label}] ---\n<body>` 包裹，作为 Focus Injection 的 ID
   // 锚点 —— `_engine_scene_context` 里提到的 segment ID/label 能让 LLM 找到
   // 对应段落。label 为空时 fallback 到 id。
-  const segmentSections = activeSegments.map((seg) => {
-    const body = (seg.useDerived && seg.derivedContent) ? seg.derivedContent : seg.content;
-    const labelHeader = `--- [${seg.label || seg.id}] ---`;
-    const content = `${labelHeader}\n${body}`;
-    return { id: seg.id, content, tokens: estimateTokens(content) };
-  });
-  const sectionContent = new Map<string, string>(
-    segmentSections.map((section) => [section.id, section.content] as const),
-  );
-  const sectionTokens = new Map<string, number>(
-    segmentSections.map((section) => [section.id, section.tokens] as const),
-  );
+  //
+  // category + trimmable 在 section 创建处一并定下来，consumption 阶段直接读
+  // 字段，不再按 id 走 if/else 链回查身份。
+  const sections = new Map<string, AssembledSection>();
+  const addSection = (id: string, content: string, category: SectionCategory, trimmable: boolean): void => {
+    sections.set(id, { content, tokens: estimateTokens(content), category, trimmable });
+  };
 
-  // State YAML (can be disabled)
+  for (const seg of activeSegments) {
+    const body = (seg.useDerived && seg.derivedContent) ? seg.derivedContent : seg.content;
+    const content = `--- [${seg.label || seg.id}] ---\n${body}`;
+    addSection(
+      seg.id,
+      content,
+      seg.role === 'system' ? 'system' : 'context',
+      seg.role !== 'system',
+    );
+  }
+
+  // State YAML (can be disabled). Not trimmed.
   if (!disabledSet.has(VIRTUAL_IDS.STATE)) {
-    const stateSection = buildStateSection(stateStore.getAll());
-    const stateTokenCount = estimateTokens(stateSection);
-    sectionContent.set(VIRTUAL_IDS.STATE, stateSection);
-    sectionTokens.set(VIRTUAL_IDS.STATE, stateTokenCount);
+    addSection(VIRTUAL_IDS.STATE, buildStateSection(stateStore.getAll()), 'state', false);
   }
 
   // Focus Injection（见 src/core/focus.ts 和 .claude/plans/focus-injection.md）
@@ -251,6 +264,7 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
   //
   // 生成条件：focus 有效（至少一维有值）即生成。即使无 segment 匹配当前 focus，
   // 也输出 focus 头（scene: xxx），让 LLM 明确知道"在某个场景，但没专属内容"。
+  // tokens 计入 system bucket，但是 trimmable（高预算压力下可以丢）。
   if (!disabledSet.has(VIRTUAL_IDS.SCENE_CONTEXT) && focus) {
     const focusLines = [
       focus.scene ? `scene: ${focus.scene}` : undefined,
@@ -262,67 +276,59 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
         ? ['', 'Most relevant segments:', ...ranked.map((s) => ` - ${s.label || s.id}`)]
         : [];
       const lines = ['[Current Focus]', ...focusLines, ...relevantLines];
-      const content = `---\n${lines.join('\n')}\n---`;
-      sectionContent.set(VIRTUAL_IDS.SCENE_CONTEXT, content);
-      sectionTokens.set(VIRTUAL_IDS.SCENE_CONTEXT, estimateTokens(content));
+      addSection(VIRTUAL_IDS.SCENE_CONTEXT, `---\n${lines.join('\n')}\n---`, 'system', true);
     }
   }
 
-  // Memory summaries (can be disabled)
+  // Memory summaries (can be disabled). Trimmable.
   // 内容由 Memory.retrieve 产出：legacy 下是 summaries + pinned（修复了原 bug：
   // pinned entries 原本漏读不在 section 里）；mem0 下是向量检索的相关记忆。
   if (!disabledSet.has(VIRTUAL_IDS.MEMORY)) {
     const retrieval = await memory.retrieve(currentQuery);
-    const summaryContent = retrieval.summary
-      ? `---\n[Memory Summary]\n${retrieval.summary}\n---`
-      : '';
-    if (summaryContent) {
-      const summaryTokenCount = estimateTokens(summaryContent);
-      sectionContent.set(VIRTUAL_IDS.MEMORY, summaryContent);
-      sectionTokens.set(VIRTUAL_IDS.MEMORY, summaryTokenCount);
+    if (retrieval.summary) {
+      addSection(VIRTUAL_IDS.MEMORY, `---\n[Memory Summary]\n${retrieval.summary}\n---`, 'summary', true);
     }
   }
 
-  // Engine rules (can be disabled)
-  //
-  // 当前协议按白名单插值；legacy v1 保留老 ENGINE_RULES_CONTENT 的输出
-  //（buildEngineRules('v1-tool-call') 的字节输出跟 ENGINE_RULES_CONTENT 完全等价）。
+  // Engine rules (can be disabled). Not trimmed.
   if (!disabledSet.has(VIRTUAL_IDS.RULES)) {
-    const rulesContent = buildEngineRules({ protocolVersion, characters, backgrounds });
-    sectionContent.set(VIRTUAL_IDS.RULES, rulesContent);
-    sectionTokens.set(VIRTUAL_IDS.RULES, estimateTokens(rulesContent));
+    addSection(
+      VIRTUAL_IDS.RULES,
+      buildEngineRules({ protocolVersion, characters, backgrounds }),
+      'system',
+      false,
+    );
   }
 
   // --- 3. Determine assembly order ---
   let orderedIds: string[];
   if (assemblyOrder && assemblyOrder.length > 0) {
-    // Use custom order, filtering to only existing sections
-    const existingIds = Array.from(sectionContent.keys());
-    const existing = new Set(existingIds);
-    const customOrder = assemblyOrder.filter((id) => existing.has(id));
+    // Use custom order, filtering to only existing sections, then append
+    // any new sections not mentioned in the custom order.
+    const existingIds = Array.from(sections.keys());
+    const customOrder = assemblyOrder.filter((id) => sections.has(id));
     const customOrderSet = new Set(customOrder);
-    // Append any new sections not in custom order
     orderedIds = [
       ...customOrder,
       ...existingIds.filter((id) => !customOrderSet.has(id)),
     ];
   } else {
-    // Default order: system segs → state → memory → context segs → rules
+    // Default order: system segs → state → focus → memory → context segs → rules
     const systemSegs = activeSegments
       .filter((s) => s.role === 'system')
       .sort((a, b) => a.priority - b.priority);
     const contextSegs = activeSegments
       .filter((s) => s.role === 'context')
       .sort((a, b) => a.priority - b.priority);
-    // 只把实际存在于 sectionContent 里的虚拟 section 加入默认顺序
-    // （被 disabled 的不会被 set，所以 has 为 false，不进 orderedIds）
+    // 只把实际 set 进来的虚拟 section 列入默认顺序（被 disabled 的不在 sections 里）
+    const virtualIfPresent = (id: string): string[] => sections.has(id) ? [id] : [];
     orderedIds = [
       ...systemSegs.map((s) => s.id),
-      ...(sectionContent.has(VIRTUAL_IDS.STATE) ? [VIRTUAL_IDS.STATE] : []),
-      ...(sectionContent.has(VIRTUAL_IDS.SCENE_CONTEXT) ? [VIRTUAL_IDS.SCENE_CONTEXT] : []),
-      ...(sectionContent.has(VIRTUAL_IDS.MEMORY) ? [VIRTUAL_IDS.MEMORY] : []),
+      ...virtualIfPresent(VIRTUAL_IDS.STATE),
+      ...virtualIfPresent(VIRTUAL_IDS.SCENE_CONTEXT),
+      ...virtualIfPresent(VIRTUAL_IDS.MEMORY),
       ...contextSegs.map((s) => s.id),
-      ...(sectionContent.has(VIRTUAL_IDS.RULES) ? [VIRTUAL_IDS.RULES] : []),
+      ...virtualIfPresent(VIRTUAL_IDS.RULES),
     ];
   }
 
@@ -334,32 +340,16 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
 
   // --- 4. Assemble system prompt following order, respecting budget ---
   const systemPromptSections: string[] = [];
-  let systemTokens = 0;
-  let contextTokens = 0;
-  let stateTokensFinal = 0;
-  let summaryTokensFinal = 0;
+  const breakdown: Record<SectionCategory, number> = { system: 0, context: 0, state: 0, summary: 0 };
 
   for (const id of orderedIds) {
-    const content = sectionContent.get(id);
-    const tokens = sectionTokens.get(id) ?? 0;
-    if (!content) continue;
+    const section = sections.get(id);
+    if (!section) continue;
+    if (section.trimmable && usedTokens + section.tokens > availableBudget) continue;
 
-    // System segments and engine rules are not trimmed
-    const seg = activeSegments.find((s) => s.id === id);
-    const isSystemOrRules = (seg?.role === 'system') || id === VIRTUAL_IDS.RULES || id === VIRTUAL_IDS.STATE;
-
-    if (!isSystemOrRules && usedTokens + tokens > availableBudget) continue;
-
-    systemPromptSections.push(content);
-    usedTokens += tokens;
-
-    // Track token categories
-    if (seg?.role === 'system') systemTokens += tokens;
-    else if (seg?.role === 'context') contextTokens += tokens;
-    else if (id === VIRTUAL_IDS.STATE) stateTokensFinal = tokens;
-    else if (id === VIRTUAL_IDS.MEMORY) summaryTokensFinal = tokens;
-    else if (id === VIRTUAL_IDS.SCENE_CONTEXT) systemTokens += tokens;
-    else if (id === VIRTUAL_IDS.RULES) systemTokens += tokens;
+    systemPromptSections.push(section.content);
+    usedTokens += section.tokens;
+    breakdown[section.category] += section.tokens;
   }
 
   const systemPrompt = systemPromptSections.join('\n\n');
@@ -385,11 +375,11 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
     systemPrompt,
     messages,
     tokenBreakdown: {
-      system: systemTokens,
-      state: stateTokensFinal,
-      summaries: summaryTokensFinal,
+      system: breakdown.system,
+      state: breakdown.state,
+      summaries: breakdown.summary,
       recentHistory: historyTokens,
-      contextSegments: contextTokens,
+      contextSegments: breakdown.context,
       total: usedTokens,
       budget: availableBudget,
     },
