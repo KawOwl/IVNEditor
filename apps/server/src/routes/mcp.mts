@@ -49,8 +49,6 @@ import type {
   BackgroundAsset,
   SpriteAsset,
 } from '@ivn/core/types';
-import { rehashSegment } from '@ivn/core/architect/prompt-splitter';
-import { estimateTokens } from '@ivn/core/tokens';
 import { scriptService } from '#internal/services/script-service';
 import { scriptVersionService } from '#internal/services/script-version-service';
 import { assetService, type AssetKind } from '#internal/services/asset-service';
@@ -650,143 +648,8 @@ const tools: ToolDef[] = [
 
   // ------------------------------------------------------------------------
   // 写操作（永远创建 draft，不自动 publish —— 编剧审完再手动 publish）
+  // update_segment_content / replace_script_manifest 已迁到 op-kit
   // ------------------------------------------------------------------------
-  {
-    name: 'update_segment_content',
-    description:
-      '修改单个 segment 的正文。会以"最新版本"（published 优先，否则最新 draft）为基线，' +
-      '把改动打包成一个**新的 draft 版本**（不自动发布）。返回新建的 versionId。' +
-      '如果要让玩家看到，编剧或 AI 需要再调 publish_script_version。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        scriptId: { type: 'string' },
-        chapterId: { type: 'string' },
-        segmentId: { type: 'string' },
-        newContent: { type: 'string', description: '替换后的 segment.content 完整原文' },
-        versionLabel: {
-          type: 'string',
-          description: '可选：给新 draft 版本起个名字，方便在版本列表里辨认',
-        },
-        versionNote: {
-          type: 'string',
-          description: '可选：改动说明（提交信息），会存在 script_versions.note 里',
-        },
-      },
-      required: ['scriptId', 'chapterId', 'segmentId', 'newContent'],
-      additionalProperties: false,
-    },
-    async handler(args) {
-      const scriptId = String(args.scriptId);
-      const chapterId = String(args.chapterId);
-      const segmentId = String(args.segmentId);
-      const newContent = String(args.newContent);
-      const versionLabel = args.versionLabel ? String(args.versionLabel) : undefined;
-      const versionNote = args.versionNote ? String(args.versionNote) : undefined;
-
-      // 以最新版本作为基线
-      const base = await getBaselineVersion(scriptId);
-
-      // 深拷一份 manifest，改对应 segment
-      const manifest: ScriptManifest = JSON.parse(JSON.stringify(base.manifest)) as ScriptManifest;
-      const hit = findSegment(manifest, chapterId, segmentId);
-      if (!hit) throw new Error(`Segment not found: ${chapterId}/${segmentId}`);
-
-      const prev = hit.segment;
-      const updated: PromptSegment = rehashSegment({
-        ...prev,
-        content: newContent,
-        tokenCount: estimateTokens(newContent),
-        // 新写入的"原文"替换了旧的 derived（保持一致性，避免后续玩家读到老的 derived）
-        derivedContent: undefined,
-        useDerived: false,
-      });
-      manifest.chapters[hit.chapterIdx]!.segments[hit.segmentIdx] = updated;
-
-      const result = await scriptVersionService.create({
-        scriptId,
-        manifest,
-        label: versionLabel,
-        note: versionNote ?? `mcp: update segment ${chapterId}/${segmentId}`,
-        status: 'draft',
-      });
-      return textResult({
-        scriptId,
-        baseVersionId: base.id,
-        baseVersionNumber: base.versionNumber,
-        newVersionId: result.version.id,
-        newVersionNumber: result.version.versionNumber,
-        created: result.created,
-        segment: {
-          chapterId,
-          segmentId,
-          oldContentLength: prev.content.length,
-          newContentLength: newContent.length,
-          oldTokenCount: prev.tokenCount,
-          newTokenCount: updated.tokenCount,
-        },
-        note: result.created
-          ? '已生成新 draft 版本。预览 / 发布前请用 list_script_versions 或 get_script_overview 复核，' +
-            '然后 publish_script_version 发布。'
-          : '提交内容与最新版本完全一致，未新建版本（hash 去重）。',
-      });
-    },
-  },
-
-  {
-    name: 'replace_script_manifest',
-    description:
-      '用完整的 manifest JSON 覆盖剧本（创建新 draft 版本）。用于结构性修改（加章节 / 改 stateSchema / ' +
-      '改 memoryConfig 等）。传入的 manifest 必须是**完整的 ScriptManifest**，不是 partial patch。' +
-      '强烈建议：先用 get_full_manifest 拿到基线，在基础上改动后再调这个 tool，避免误删字段。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        scriptId: { type: 'string' },
-        manifest: { type: 'object', description: '完整的 ScriptManifest JSON' },
-        versionLabel: { type: 'string' },
-        versionNote: { type: 'string' },
-      },
-      required: ['scriptId', 'manifest'],
-      additionalProperties: false,
-    },
-    async handler(args) {
-      const scriptId = String(args.scriptId);
-      const manifest = args.manifest as ScriptManifest;
-      const versionLabel = args.versionLabel ? String(args.versionLabel) : undefined;
-      const versionNote = args.versionNote ? String(args.versionNote) : undefined;
-
-      // 最少结构校验（不做深度 zod validation —— Elysia 这层只做 shape 兜底，
-      // 真正的 validation 在 GameSession 跑起来那刻才有意义）
-      if (!manifest || typeof manifest !== 'object') throw new Error('manifest must be an object');
-      if (!Array.isArray(manifest.chapters)) throw new Error('manifest.chapters must be an array');
-      if (!manifest.stateSchema || !Array.isArray(manifest.stateSchema.variables)) {
-        throw new Error('manifest.stateSchema.variables must be an array');
-      }
-      if (!manifest.memoryConfig || typeof manifest.memoryConfig !== 'object') {
-        throw new Error('manifest.memoryConfig is required');
-      }
-
-      // 确保剧本存在
-      const script = await scriptService.getById(scriptId);
-      if (!script) throw new Error(`Script not found: ${scriptId}`);
-
-      const result = await scriptVersionService.create({
-        scriptId,
-        manifest,
-        label: versionLabel,
-        note: versionNote ?? 'mcp: replace manifest',
-        status: 'draft',
-      });
-      return textResult({
-        scriptId,
-        newVersionId: result.version.id,
-        newVersionNumber: result.version.versionNumber,
-        created: result.created,
-        note: result.created ? '已生成新 draft 版本。' : '与最新版本内容一致，未新建（hash 去重）。',
-      });
-    },
-  },
 
   // ------------------------------------------------------------------------
   // 资产上传（图片）—— list_script_assets 已迁到 op-kit
@@ -910,36 +773,7 @@ const tools: ToolDef[] = [
     handler: handleAddCharacterSprite,
   },
 
-  {
-    name: 'publish_script_version',
-    description:
-      '把一个 draft 版本发布为 published（会把该剧本之前的 published 版本自动 archive 掉）。' +
-      '**有玩家影响**：一旦 publish，该剧本所有新 playthrough 会走这个版本。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        versionId: { type: 'string', description: '要发布的 draft 版本 id（见 list_script_versions）' },
-      },
-      required: ['versionId'],
-      additionalProperties: false,
-    },
-    async handler(args) {
-      const versionId = String(args.versionId);
-      const target = await scriptVersionService.getById(versionId);
-      if (!target) throw new Error(`Version not found: ${versionId}`);
-      if (target.status !== 'draft') {
-        throw new Error(`Cannot publish: version is ${target.status}, only draft can be published`);
-      }
-      const ok = await scriptVersionService.publish(versionId);
-      if (!ok) throw new Error('Publish failed');
-      return textResult({
-        ok: true,
-        publishedVersionId: versionId,
-        scriptId: target.scriptId,
-        versionNumber: target.versionNumber,
-      });
-    },
-  },
+  // publish_script_version 已迁到 op-kit
 
   {
     name: 'delete_script',

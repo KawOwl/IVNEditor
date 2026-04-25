@@ -13,6 +13,9 @@ import { getOverviewOp } from '#internal/operations/script/get-overview';
 import { getSegmentOp } from '#internal/operations/script/get-segment';
 import { getFullManifestOp } from '#internal/operations/script/get-full-manifest';
 import { listAssetsOp } from '#internal/operations/script/list-assets';
+import { updateSegmentContentOp } from '#internal/operations/script/update-segment-content';
+import { replaceManifestOp } from '#internal/operations/script/replace-manifest';
+import { publishVersionOp } from '#internal/operations/script/publish-version';
 
 /** 全部 op 列表。新增 op 在这里登记。*/
 export const ALL_OPS = [
@@ -24,6 +27,10 @@ export const ALL_OPS = [
   getFullManifestOp,
   listAssetsOp,
   lintManifestOp,
+  // script.* —— 写
+  updateSegmentContentOp,
+  replaceManifestOp,
+  publishVersionOp,
 ] as const satisfies ReadonlyArray<AnyOp>;
 
 /** 按 category 分组（adapter / 文档生成器用）*/
