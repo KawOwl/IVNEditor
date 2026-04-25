@@ -20,6 +20,14 @@
 
 ## 最近完成
 
+**修复 signal_input choices 泄漏到 LLM 上下文（2026-04-26，本会话）**
+- 触发：用户报 trace `f6859a87`（session ece7e31d turn 5→6）。turn 5 LLM emit `signal_input_needed(choices=["我是路过的","我是被这根线拽过来的","你蹲在这里挺显眼","你应该问你自己是谁才对吧"])`，玩家走 freetext 答 `"哦，是人啊，还以为是哪里来的没见过的流浪猫呢..."`，turn 6 LLM 让夏荧说 `"你刚才不是说'被这根线拽过来的'吗"` —— 把 `choices[1]` 当成玩家发言。用户报"已经多次出现类似情况"。
+- 根因：[messages-builder.mts](packages/core/src/messages-builder.mts:214) 投影 `signal_input` entry 时把 `choices` 数组完整塞进 assistant `tool-call.input`。AI SDK 序列化到 chat-completions 后 LLM 在自己上轮的 `tool_calls.arguments` JSON 里看到全部 4 条候选，玩家 freetext 时易把"摆桌上没被选的某条"当成玩家说过的话。系统性 leak，不是偶发。
+- 修复：[messages-builder.mts](packages/core/src/messages-builder.mts:214) signal_input 分支的 `toolCallParts.input` 去掉 `choices`，只保留 `prompt_hint`（LLM 自己写的局面总结，不会被误读为玩家发言）。`readChoices` import 一并清理。persistence 层 / current-readback / UI restore / tracing 全不动 —— DB 里 `signal_input.payload.choices` 仍保留，只是不喂给 LLM 历史。
+- 守门：[messages-builder.test.mts:7b](packages/core/src/__tests__/messages-builder.test.mts) 加回归用例：用 trace ece7e31d 的真实 4 条候选构造 signal_input，断言 ① `tool-call.input` 不含 `choices` key（不是空数组，是不存在）② 只有 `{prompt_hint}` ③ 整段序列化后任何一条候选字面量都不出现（防其他键名再次泄漏）。test 4 / A1 两条原断言更新为 `prompt_hint` only。
+- 验证：`pnpm --filter @ivn/core test` 310/310 全绿（从 308 涨 2）；`pnpm typecheck` 4 个 package 全绿。
+- 决策：选最小侵入修复（strip choices，留 prompt_hint）。tradeoff：LLM 失去"我上轮提了哪 4 个选项"的记忆 —— 这不是叙事推进所需信息，留着只会污染。如果将来发现真要 LLM 记得，可改成只回放"被选中的那条 + selectedIndex"，目前没必要。
+
 **empty-narrative-turn 兜底 + prompt 硬规则（2026-04-26，本会话）**
 - 触发：langfuse trace `8fe54eea-a39d-44a4-80d8-f34ef98cc440` —— LLM 整轮只输出 `<scratch>`，玩家屏幕一片空白。`<scratch>` 是元叙述容器（V.x 设计），不渲染玩家可见，所以 sentences=0 → UI 空白。
 - 双层修复：
@@ -283,6 +291,7 @@
 | 2026-04-26 | `__npc__` 后缀禁代词 + parser 对代词后缀 emit `dialogue-pronoun-as-speaker`（**替代**而非追加 `dialogue-adhoc-speaker` 中性事件） | trace 复盘显示 LLM 把第二人称代词"你"套 NPC 显示名模式产出 `__npc__你`，UI 渲染出名叫"你"的 NPC 气泡。NPC few-shot 全是中文显示名 vs 玩家 reserved id `player` 是英文裸字符串，模式不对称促成误用；选"替代"是为了避免每个 dialogue 的 speaker 类信号在 trace 上双计数 | tag-schema 加 `PRONOUN_DISPLAY_NAMES` + `isPronounSpeaker`；reducer ad-hoc 分支分流；DegradeCode 加新值；v2 prompt `__npc__` 章节列禁词 + 反例 `__npc__你` vs `to="player"`。后续可能把 `player` 包成 `__player__` reserved id（双下划线对称）让 prompt 模式一致 |
 | 2026-04-26 | `<dialogue>` 正文边界教学只走 prompt，不做 parser 硬校验 | 引号检测启发式 false positive 高（中文 ""/英文 \"\" 混用 + 内心独白引号 + 角色嵌引语都常见），启发式信号噪比差；prompt 教学性价比明显更高 | engine-rules `<dialogue>` 容器解释加"正文只装直接引语，旁白动作走 `<narration>`"硬规则；反面示范段加用户 trace 截取的"俄罗斯？...大拇指..."三单元拆分案例 + LLM 自检启发（"用角色声音念这段会不会别扭"）。如果 trace 信号回来还是大量漏判，再考虑加软启发（例如 `<dialogue>` 正文里检测"他/她+动词"模式） |
 | 2026-04-26 | empty-narrative 整轮只输出 `<scratch>` 走双层兜底（prompt 硬规则 + llm-client follow-up），不在 game-session 层做 | prompt 不是 100% 可靠（reasoning 模型偶发"复盘完就停"），但又不想把"补一句叙事"硬塞到 game-session 让它知道 prompt 协议细节。llm-client 已经有续写 + signal 补刀两个 follow-up 模式，加第三个最对称、调用方无感 | llm-client.generate() 三 follow-up 串联 `续写 → empty-narrative → signal`；每个独立失败 warn/log 不冒异常；engine-rules.test.mts 加 prompt 守门测试避免硬规则被无意删除 |
+| 2026-04-26 | signal_input 历史回放给 LLM 时 strip `choices`，只留 `prompt_hint` | trace ece7e31d turn 5→6 实锤：玩家 freetext 答非选项时，LLM 把上轮 `tool_calls.arguments` 里的"未被选中候选"当成玩家说过的话写进了 NPC 引用台词。choices 是 UI 渲染参数不是叙事 ground truth；prompt_hint 是 LLM 自己写的局面总结不易被误读 | persistence 层 / current-readback / tracing 全不动，DB 仍保留 choices；LLM 失去"我上轮提了哪 4 个选项"的记忆，但这不是叙事推进所需信息。如果将来要 LLM 记得，可改成只回放"被选中的那条 + selectedIndex" |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |

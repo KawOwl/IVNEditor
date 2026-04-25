@@ -41,7 +41,6 @@ import {
   isSignalInputEntry,
   isToolCallEntry,
   isPlayerInputEntry,
-  readChoices,
   type NarrativeEntry,
 } from '#internal/persistence-entry';
 
@@ -212,14 +211,22 @@ function buildAssistantAndToolMessages(
         output: wrap(e.payload.output),
       });
     } else if (isSignalInputEntry(e)) {
-      // signal_input 作为 tool-call / tool-result 对也进消息链
+      // signal_input 作为 tool-call / tool-result 对也进消息链。
+      //
+      // **不回放 `choices`**：候选选项是 UI 的渲染参数，不是叙事 ground truth。
+      // 回放给 LLM 会让它在自己上一轮的 tool_calls.arguments 里看到"当时摆桌上
+      // 的 4 条候选"，玩家走 freetext / 改写措辞时 LLM 会把"未被选中的某条"
+      // 当成玩家说过的话（trace ece7e31d turn 5→6 实锤：玩家 freetext 后
+      // 夏荧引用了 choices[1] "我是被这根线拽过来的"作为玩家发言）。
+      // 玩家的实际选择由紧随其后的 user message 承担，LLM 不需要"我上轮提了
+      // 哪 4 个选项"的记忆来推进叙事。
+      // 保留 prompt_hint：它是 LLM 自己写的一句局面总结，不会被误读为玩家发言。
       toolCallParts.push({
         type: 'tool-call',
         toolCallId: e.id,
         toolName: 'signal_input_needed',
         input: {
           prompt_hint: e.content,
-          choices: readChoices(e),
         },
       });
       toolResultParts.push({

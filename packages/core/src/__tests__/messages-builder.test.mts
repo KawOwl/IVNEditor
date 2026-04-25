@@ -134,7 +134,10 @@ describe('buildMessagesFromEntries', () => {
     expect(parts[0]).toEqual({ type: 'text', text: '你站在岔路口。' });
     expect(parts[1].type).toBe('tool-call');
     expect(parts[1].toolName).toBe('signal_input_needed');
-    expect(parts[1].input).toEqual({ prompt_hint: '往哪走？', choices: ['向左', '向右'] });
+    // choices 不回放给 LLM —— 只保留 prompt_hint（LLM 自己写的局面总结）
+    // 见 messages-builder signal_input 分支的 trace ece7e31d 注释
+    expect(parts[1].input).toEqual({ prompt_hint: '往哪走？' });
+    expect(parts[1].input).not.toHaveProperty('choices');
 
     const t = msgs[1] as ToolModelMessage;
     expect(t.role).toBe('tool');
@@ -198,6 +201,34 @@ describe('buildMessagesFromEntries', () => {
     expect(parts).toHaveLength(1);
     expect(parts[0].type).toBe('tool-call');
     expect(parts[0].toolName).toBe('signal_input_needed');
+  });
+
+  // 回归测试：trace ece7e31d turn 5→6 的 LLM 把"未被选中的候选"当成玩家发言。
+  // 根因：messages-builder 把 signal_input.choices 回放进 tool-call.input，
+  // LLM 在自己上一轮的 tool_calls.arguments 里看到全部 4 条候选，玩家走 freetext 时
+  // 易把"摆桌上的某条"当成玩家说过的话。修复后 tool-call.input 不再含 choices。
+  it('7b. signal_input replay 不把 choices 暴露给 LLM（防 freetext 困惑）', () => {
+    const choices = [
+      '我是路过的，你没事吧？',
+      '我是被这根线拽过来的',
+      '你蹲在这里挺显眼的，建议换个地方',
+      '你应该问你自己是谁才对吧',
+    ];
+    const msgs = buildMessagesFromEntries([
+      signalInput('她瞪着你，满脸写着"你哪位"', choices, 'B1', 0),
+    ]);
+    const a = msgs[0] as AssistantModelMessage;
+    const toolCallPart = (a.content as any[])[0];
+    expect(toolCallPart.toolName).toBe('signal_input_needed');
+    // 关键断言：input 不含 choices key（不是空数组——是完全不存在）
+    expect(toolCallPart.input).not.toHaveProperty('choices');
+    // prompt_hint 保留：LLM 自己写的局面总结，不会被误读为玩家发言
+    expect(toolCallPart.input).toEqual({ prompt_hint: '她瞪着你，满脸写着"你哪位"' });
+    // 序列化后整段也不能出现任何一条候选选项的字面量（防止以其他键名再次泄漏）
+    const serialized = JSON.stringify(msgs);
+    for (const choice of choices) {
+      expect(serialized).not.toContain(choice);
+    }
   });
 
   it('8. 仅 tool_call，没有 narrative → assistant 只含 tool-call，无 text', () => {
@@ -375,7 +406,9 @@ describe('buildMessagesFromEntries', () => {
     expect(parts[0]).toEqual({ type: 'text', text: '你站在岔路口，夕阳斜照在石板上。' });
     expect(parts[1].type).toBe('tool-call');
     expect(parts[1].toolName).toBe('signal_input_needed');
-    expect(parts[1].input).toEqual({ prompt_hint: '你想做什么？', choices: ['向左', '向右'] });
+    // choices 不回放给 LLM —— 只保留 prompt_hint
+    expect(parts[1].input).toEqual({ prompt_hint: '你想做什么？' });
+    expect(parts[1].input).not.toHaveProperty('choices');
 
     // tool message 跟随
     const t = msgs[1] as ToolModelMessage;
