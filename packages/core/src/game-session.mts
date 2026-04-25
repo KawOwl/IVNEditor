@@ -4,8 +4,8 @@
  * 串联所有核心模块：
  *   StateStore, MemoryManager, ContextAssembler, ToolExecutor, LLMClient
  *
- * 通过 SessionEmitter 输出运行时事件，不直接依赖 WebSocket、Zustand 或 DOM。
- * 这使得 GameSession 可以被浏览器、后端服务或离线评测任务消费。
+ * 通过 CoreEvent 输出运行时事件，再投影到 SessionEmitter / WebSocket 等端口。
+ * 这使得 GameSession 可以被浏览器、后端服务、事件日志或离线评测任务消费。
  *
  * 核心循环：Generate + Receive
  *   1. Generate: 组装 context → 调用 LLM（agentic tool loop）→ 追加记忆 → 按需压缩
@@ -53,6 +53,7 @@ import {
   type GenerateTurnPendingSignal,
   type GenerateTurnRuntime,
 } from '#internal/game-session/generate-turn-runtime';
+import { createSessionEmitterProjection } from '#internal/game-session/session-emitter-projection';
 import type {
   GameSessionConfig,
   RestoreConfig,
@@ -93,6 +94,7 @@ export type { ProtocolVersion } from '#internal/types';
 
 export class GameSession {
   private emitter: SessionEmitter;
+  private coreEventProjection: CoreEventSink;
 
   private stateStore!: StateStore;
   private memory!: Memory;
@@ -171,6 +173,7 @@ export class GameSession {
 
   constructor(emitter: SessionEmitter) {
     this.emitter = emitter;
+    this.coreEventProjection = createSessionEmitterProjection(emitter);
   }
 
   /** 即时更新 LLM 配置（下一次 generate 生效，无需重启会话） */
@@ -180,9 +183,6 @@ export class GameSession {
 
   /** Initialize and start the game session */
   async start(config: GameSessionConfig): Promise<void> {
-    this.emitter.reset();
-    this.emitter.setStatus('loading');
-
     try {
       await this.initializeCore(config);
 
@@ -190,10 +190,7 @@ export class GameSession {
 
       // M3: 初始化 currentScene —— 用剧本 defaultScene，否则空
       this.currentScene = config.defaultScene ?? { background: null, sprites: [] };
-      this.emitter.emitSceneChange(this.currentScene);
 
-      // Sync initial debug/output state
-      await this.syncDebugState();
       this.publishCoreEvent({
         type: 'session-started',
         snapshot: await this.createSessionSnapshot(),
@@ -204,7 +201,6 @@ export class GameSession {
       await this.coreLoop();
     } catch (error) {
       if (this.active) {
-        this.emitter.setError(error instanceof Error ? error.message : String(error));
         this.publishCoreEvent({
           type: 'session-error',
           phase: 'start',
@@ -223,8 +219,6 @@ export class GameSession {
    *   - idle → 等玩家触发，进入完整 coreLoop
    */
   async restore(config: RestoreConfig): Promise<void> {
-    this.emitter.setStatus('loading');
-
     try {
       await this.initializeCore(config);
 
@@ -241,10 +235,7 @@ export class GameSession {
         config.currentScene ??
         config.defaultScene ??
         { background: null, sprites: [] };
-      this.emitter.emitSceneChange(this.currentScene);
 
-      // 同步调试输出
-      await this.syncDebugState();
       this.publishCoreEvent({
         type: 'session-restored',
         restoredFrom: normalizeRestoredFrom(config.status),
@@ -263,18 +254,11 @@ export class GameSession {
       // 消费端会看到只读的叙事历史。
       if (config.status === 'finished') {
         this.active = false;
-        this.emitter.setStatus('finished');
         return;
       }
 
       // 根据恢复时的状态决定进入点
       if (config.status === 'waiting-input') {
-        // 恢复输入请求状态（choices/hint）
-        if (config.inputHint) this.emitter.setInputHint(config.inputHint);
-        if (config.inputType === 'choice' && config.choices?.length) {
-          this.emitter.setInputType('choice', config.choices);
-        }
-        this.emitter.setStatus('waiting-input');
         this.publishCoreEvent({
           type: 'waiting-input-started',
           turnId: toTurnId(config.turn),
@@ -295,8 +279,6 @@ export class GameSession {
         if (inputText) {
           // restore 路径下玩家刚从 DB 恢复的 choices 里选 → 算 selectedIndex
           const payload = computeReceivePayload(inputText, config.choices ?? null);
-          this.emitter.appendEntry({ role: 'receive', content: inputText });
-          this.emitPlayerInputSentence(inputText, payload.selectedIndex);
           await this.memory.appendTurn({
             turn: config.turn,
             role: 'receive',
@@ -338,9 +320,6 @@ export class GameSession {
           });
         }
 
-        this.emitter.setInputHint(null);
-        this.emitter.setInputType('freetext');
-
         // 继续正常 coreLoop
         await this.coreLoop();
       } else {
@@ -349,7 +328,6 @@ export class GameSession {
       }
     } catch (error) {
       if (this.active) {
-        this.emitter.setError(error instanceof Error ? error.message : String(error));
         this.publishCoreEvent({
           type: 'session-error',
           phase: 'restore',
@@ -391,7 +369,6 @@ export class GameSession {
       this.inputResolve = null;
     }
 
-    this.emitter.setStatus('idle');
     this.publishCoreEvent({ type: 'session-stopped', reason: 'user' });
   }
 
@@ -444,7 +421,6 @@ export class GameSession {
       // 这里统一处理：持久化 finished 状态 + 退出外循环，不再进入 Receive 阶段。
       if (this.scenarioEnded && this.active) {
         this.active = false;
-        this.emitter.setStatus('finished');
         this.publishCoreEvent({
           type: 'session-finished',
           reason: this.scenarioEndReason,
@@ -473,7 +449,6 @@ export class GameSession {
   // ============================================================================
 
   private async beginGenerateTurn(): Promise<number> {
-    this.emitter.setStatus('generating');
     const turn = this.stateStore.getTurn() + 1;
     this.stateStore.setTurn(turn);
 
@@ -537,11 +512,6 @@ export class GameSession {
     const waitingInputType = waitingChoices ? 'choice' : 'freetext';
     const requestId = toInputRequestId(turn);
 
-    // 输入请求状态：hint + input-type（以及可选 choices）
-    this.emitter.setInputHint(waitingHint);
-    this.emitter.setInputType(waitingInputType, waitingChoices);
-    this.emitter.setStatus('waiting-input');
-
     // ③ 持久化：onWaitingInput 快照（signal / freetext 统一调一次）
     //    2026-04-24：stateVars 也在这一刻持久化 —— 本轮 LLM update_state
     //    改动的 state（比如 chapter 切换）必须立即入库，否则断线重连时
@@ -573,17 +543,11 @@ export class GameSession {
     const inputText = await this.waitForInput();
     if (!this.active) return;
 
-    // Clear error banner on new input
-    this.emitter.setError(null);
-
     if (inputText) {
       // 方案 B：pendingSignal 的 choices 拿来算 selectedIndex（命中 → choice）
       const payload = signal
         ? computeReceivePayload(inputText, signal.choices)
         : ({ inputType: 'freetext' as const });
-
-      this.emitter.appendEntry({ role: 'receive', content: inputText });
-      this.emitPlayerInputSentence(inputText, payload.selectedIndex);
 
       await this.memory.appendTurn({
         turn,
@@ -630,8 +594,6 @@ export class GameSession {
 
     // 清状态：下一 iteration 从全新 generate 开始
     this.pendingSignal = null;
-    this.emitter.setInputHint(null);
-    this.emitter.setInputType('freetext');
   }
 
   /**
@@ -664,51 +626,14 @@ export class GameSession {
     ].filter((part): part is string => !!part).join('. ');
   }
 
-  /**
-   * 把玩家输入 emit 成一条 `player_input` Sentence，让 VN / ivn-xml 消费端
-   * 能投影出"玩家的回复气泡"。
-   *
-   * 在 signal 挂起路径和外循环 Receive 路径下都要调，保持叙事流里玩家和 GM
-   * 一问一答的顺序。restore 路径也会为 `role='receive'` entries 合成同样的 Sentence
-   * （在 ws-client-emitter 的 'restored' 分支里做）。
-   *
-   * index 用 Date.now()：player_input 不在 generate 内部的 turnSentenceIndex
-   * 序列里，只需要全局单调即可（消费端按 appendSentence 顺序推进，index 字段
-   * 主要是诊断标识）。
-   */
-  private emitPlayerInputSentence(text: string, selectedIndex?: number): void {
-    this.emitter.appendSentence({
-      kind: 'player_input',
-      text,
-      ...(selectedIndex !== undefined ? { selectedIndex } : {}),
-      sceneRef: { ...this.currentScene },
-      turnNumber: this.stateStore.getTurn(),
-      index: Date.now(),
-    });
-  }
-
   private waitForInput(): Promise<string> {
     return new Promise<string>((resolve) => {
       this.inputResolve = resolve;
     });
   }
 
-  private async syncDebugState(): Promise<void> {
-    // memoryEntryCount / memorySummaryCount 纯诊断用，从 snapshot 拆。
-    // Legacy 下 snapshot 同步完成；mem0 下是网络请求但数值不是热路径，
-    // 可接受。如果后续发现压力就改为 adapter 暴露一个 stats() 轻量方法。
-    const memSnap = await this.memory.snapshot();
-    const entries = (memSnap.entries as unknown[] | undefined) ?? [];
-    const summaries = (memSnap.summaries as string[] | undefined) ?? [];
-    this.emitter.updateDebug({
-      stateVars: this.stateStore.getAll(),
-      totalTurns: this.stateStore.getTurn(),
-      memoryEntryCount: entries.length,
-      memorySummaryCount: summaries.length,
-    });
-  }
-
   private publishCoreEvent(event: Parameters<CoreEventSink['publish']>[0]): void {
+    this.coreEventProjection.publish(event);
     this.coreEventSink?.publish(event);
   }
 
