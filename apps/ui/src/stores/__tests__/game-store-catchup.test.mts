@@ -113,7 +113,7 @@ describe('game-store · 推进行为（自动前进已关）', () => {
 /**
  * V.4（RFC §11 V.4 前端消费更新）：appendSentence 从 Sentence 派生 currentScene。
  *
- * v2 声明式 IR 下 scenePatchEmitter=null，不再 emit mid-session scene-change WS。
+ * v2 声明式 IR 下不再走 legacy scene-change WS。
  * 所以 store 的 currentScene 必须靠 Sentence 自己带的 sceneRef 推起来。
  * 这套 test 覆盖：narration / dialogue / signal_input / player_input / scene_change
  * 都能正确让 store.currentScene 对齐 Sentence。

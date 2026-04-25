@@ -110,6 +110,36 @@ describe('GenerateTurnRuntime', () => {
     ]);
   });
 
+  it('does not expose legacy visual tools in the current runtime', async () => {
+    const stateStore = new StateStore(emptyStateSchema);
+    const memory = createMemoryDouble();
+    const recording = createRecordingSessionOutputSink();
+    const llmClient = createLLMDouble(async (options) => {
+      expect(options.tools['change_scene']).toBeUndefined();
+      expect(options.tools['change_sprite']).toBeUndefined();
+      expect(options.tools['clear_stage']).toBeUndefined();
+      return { text: '', toolCalls: [], finishReason: 'stop' };
+    });
+
+    await createGenerateTurnRuntime({
+      turn: 1,
+      stateStore,
+      memory,
+      llmClient,
+      segments: [],
+      enabledTools: ['change_scene', 'change_sprite', 'clear_stage'],
+      tokenBudget: 12000,
+      coreEventSink: recording,
+      ...runtimeProtocolConfig(),
+      characters: [],
+      backgrounds: [],
+      currentScene: { background: null, sprites: [] },
+      buildRetrievalQuery: async () => '',
+      isActive: () => true,
+      onScenarioEnd: () => {},
+    }).run();
+  });
+
   it('does not start LLM streaming when the session stops during preparation', async () => {
     const stateStore = new StateStore(emptyStateSchema);
     const memory = createMemoryDouble();

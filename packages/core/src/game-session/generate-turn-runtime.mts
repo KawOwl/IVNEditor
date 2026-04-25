@@ -9,7 +9,6 @@
 import type {
   BackgroundAsset,
   CharacterAsset,
-  ParticipationFrame,
   PromptSegment,
   ProtocolVersion,
   SceneState,
@@ -22,9 +21,9 @@ import { estimateTokens } from '#internal/tokens';
 import { assembleContext } from '#internal/context-assembler';
 import { computeFocus } from '#internal/focus';
 import { createTools, getEnabledTools } from '#internal/tool-executor';
-import type { ScenePatch, SignalInputOptions } from '#internal/tool-executor';
+import type { SignalInputOptions } from '#internal/tool-executor';
 import type { GenerateOptions, GenerateResult, LLMClient, StepInfo } from '#internal/llm-client';
-import { NarrativeParser, extractPlainText } from '#internal/narrative-parser';
+import { extractPlainText } from '#internal/narrative-parser';
 import {
   createParser as createParserV2,
   type DegradeEvent as DegradeEventV2,
@@ -32,8 +31,6 @@ import {
   type ParserManifest,
 } from '#internal/narrative-parser-v2';
 import { serializeMessagesForDebug } from '#internal/messages-builder';
-import { createNarrationAccumulator } from '#internal/game-session/narration';
-import { applyScenePatchToState } from '#internal/game-session/scene-state';
 import { resolveRuntimeProtocolVersion } from '#internal/protocol-version';
 import type { CoreEventSink, RuntimeSentence, StepId, TurnId } from '#internal/game-session/core-events';
 import {
@@ -48,7 +45,6 @@ import type {
   ToolCallTraceHandle,
 } from '#internal/game-session/types';
 
-type SceneTransition = 'fade' | 'cut' | 'dissolve';
 type PrepareStepSystem = NonNullable<GenerateOptions['prepareStepSystem']>;
 
 type StepStartInfo = {
@@ -59,11 +55,6 @@ type StepStartInfo = {
 
 type TraceStepRecord = Parameters<GenerateTraceHandle['recordStep']>[0];
 
-type GeneratedSentenceDraft =
-  | { kind: 'narration'; text: string }
-  | { kind: 'dialogue'; text: string; pf: ParticipationFrame; truncated?: boolean }
-  | { kind: 'scene_change'; scene: SceneState; transition?: SceneTransition };
-
 type NarrativeBatch = {
   readonly sentences: ReadonlyArray<Sentence>;
   readonly scratches: ReadonlyArray<ScratchBlock>;
@@ -73,7 +64,6 @@ type NarrativeBatch = {
 interface NarrativeRuntime {
   feedTextChunk(chunk: string): void;
   finalizeParser(): void;
-  flushPendingNarration(): void;
 }
 
 interface GenerateTurnPrepared {
@@ -143,6 +133,8 @@ const TRACE_STEP_FIELDS = [
   'isFollowup',
 ] as const satisfies ReadonlyArray<keyof StepInfo & keyof TraceStepRecord>;
 
+const LEGACY_VISUAL_TOOLS = new Set(['change_scene', 'change_sprite', 'clear_stage']);
+
 export function createGenerateTurnRuntime(deps: GenerateTurnRuntimeDeps): GenerateTurnRuntime {
   const protocolVersion = resolveRuntimeProtocolVersion(deps.protocolVersion);
   if (!deps.parserManifest) {
@@ -165,10 +157,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   private currentStepBatchId: string | null = null;
   private currentStepId: StepId | null = null;
   private pendingSignal: GenerateTurnPendingSignal | null = null;
-  private scenePatchEmitter:
-    | ((transition?: SceneTransition) => void)
-    | null = null;
-  private pendingNarrationFlusher: (() => void) | null = null;
   private abortController: AbortController | null = null;
 
   constructor(private readonly deps: GenerateTurnRuntimeDeps) {
@@ -208,8 +196,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     } finally {
       this.currentStepBatchId = null;
       this.currentStepId = null;
-      this.scenePatchEmitter = null;
-      this.pendingNarrationFlusher = null;
       this.abortController = null;
     }
 
@@ -227,7 +213,10 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     this.currentStepBatchId = null;
 
     const allTools = this.createTurnTools();
-    const tools = getEnabledTools(allTools, [...this.deps.enabledTools]);
+    const tools = getEnabledTools(
+      allTools,
+      this.deps.enabledTools.filter((toolName) => !LEGACY_VISUAL_TOOLS.has(toolName)),
+    );
     const runAssemble = async (focus: ReturnType<typeof computeFocus>) =>
       assembleContext({
         segments: [...this.deps.segments],
@@ -282,7 +271,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     this.publish({ type: 'assistant-message-started', turnId: this.turnId });
 
     const narrativeRuntime = this.createNarrativeRuntime(traceHandle);
-    this.pendingNarrationFlusher = narrativeRuntime.flushPendingNarration;
 
     return { ...prepared, narrativeRuntime };
   }
@@ -379,9 +367,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     result: GenerateResult,
   ): void {
     prepared.narrativeRuntime.finalizeParser();
-    prepared.narrativeRuntime.flushPendingNarration();
-    this.scenePatchEmitter = null;
-    this.pendingNarrationFlusher = null;
     this.publish({
       type: 'assistant-message-finalized',
       turnId: this.turnId,
@@ -552,21 +537,10 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       onScenarioEnd: (reason) => {
         this.deps.onScenarioEnd(reason);
       },
-      onSceneChange: (patch) => {
-        this.applyScenePatch(patch);
-      },
     });
   }
 
   private createNarrativeRuntime(
-    traceHandle: GenerateTraceHandle | undefined,
-  ): NarrativeRuntime {
-    return this.deps.protocolVersion === 'v2-declarative-visual'
-      ? this.createDeclarativeNarrativeRuntime(traceHandle)
-      : this.createToolDrivenNarrativeRuntime(traceHandle);
-  }
-
-  private createDeclarativeNarrativeRuntime(
     traceHandle: GenerateTraceHandle | undefined,
   ): NarrativeRuntime {
     const parserV2: NarrativeParserV2 = createParserV2({
@@ -632,110 +606,9 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       }
     };
 
-    this.scenePatchEmitter = null;
     return {
       feedTextChunk: (chunk) => drainBatch(parserV2.feed(chunk)),
       finalizeParser: () => drainBatch(parserV2.finalize()),
-      flushPendingNarration: () => {},
-    };
-  }
-
-  private createToolDrivenNarrativeRuntime(
-    traceHandle: GenerateTraceHandle | undefined,
-  ): NarrativeRuntime {
-    let turnSentenceIndex = 0;
-    const emitSentence = (draft: GeneratedSentenceDraft) => {
-      const sentence = this.createGeneratedSentence(draft, turnSentenceIndex);
-      if (sentence.kind !== 'scene_change') {
-        this.publish({
-          type: 'narrative-batch-emitted',
-          turnId: this.turnId,
-          batchId: toBatchId(this.currentStepBatchId),
-          sentences: [copyRuntimeSentence(sentence)],
-          scratches: [],
-          degrades: [],
-          sceneAfter: copyScene(this.currentScene),
-        });
-      }
-      turnSentenceIndex += 1;
-      return sentence;
-    };
-
-    const narrationAcc = createNarrationAccumulator((para) =>
-      emitSentence({ kind: 'narration', text: para }),
-    );
-    const flushPendingNarration = () => narrationAcc.flush();
-
-    const narrativeParser = new NarrativeParser({
-      onNarrationChunk: (text) => narrationAcc.push(text),
-      onDialogueStart: () => {
-        flushPendingNarration();
-      },
-      onDialogueEnd: (pf, fullText, truncated) => {
-        emitSentence({ kind: 'dialogue', text: fullText, pf, truncated });
-        if (truncated) {
-          this.traceNarrativeTruncation(traceHandle, {
-            kind: 'dialogue',
-            speaker: pf.speaker,
-            partialLength: fullText.length,
-          });
-        }
-      },
-    });
-
-    this.scenePatchEmitter = (transition) => {
-      flushPendingNarration();
-      const sentence = emitSentence({ kind: 'scene_change', scene: copyScene(this.currentScene), transition });
-      if (sentence.kind === 'scene_change') {
-        this.publish({
-          type: 'scene-changed',
-          turnId: this.turnId,
-          batchId: toBatchId(this.currentStepBatchId),
-          scene: copyScene(this.currentScene),
-          ...(transition !== undefined ? { transition } : {}),
-          sentence,
-        });
-      }
-      traceHandle?.event(
-        'scene-change',
-        { scene: this.currentScene, transition },
-        { turn: this.deps.turn },
-      );
-    };
-
-    return {
-      feedTextChunk: (chunk) => narrativeParser.push(chunk),
-      finalizeParser: () => narrativeParser.finalize(),
-      flushPendingNarration,
-    };
-  }
-
-  private createGeneratedSentence(
-    draft: GeneratedSentenceDraft,
-    index: number,
-  ): Sentence {
-    const base = { turnNumber: this.deps.turn, index };
-
-    if (draft.kind === 'narration') {
-      return { kind: 'narration', text: draft.text, sceneRef: copyScene(this.currentScene), ...base };
-    }
-
-    if (draft.kind === 'dialogue') {
-      return {
-        kind: 'dialogue',
-        text: draft.text,
-        pf: draft.pf,
-        sceneRef: copyScene(this.currentScene),
-        ...base,
-        ...(draft.truncated !== undefined ? { truncated: draft.truncated } : {}),
-      };
-    }
-
-    return {
-      kind: 'scene_change',
-      scene: draft.scene,
-      ...(draft.transition !== undefined ? { transition: draft.transition } : {}),
-      ...base,
     };
   }
 
@@ -827,8 +700,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     const hint = options.hint ?? '';
     const choices = options.choices ?? [];
 
-    this.pendingNarrationFlusher?.();
-
     if (this.currentNarrativeBuffer) {
       const buffered = this.currentNarrativeBuffer;
       this.currentNarrativeBuffer = '';
@@ -888,12 +759,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       sentence,
       sceneAfter: copyScene(this.currentScene),
     });
-  }
-
-  private applyScenePatch(patch: ScenePatch): void {
-    const { scene, transition } = applyScenePatchToState(this.currentScene, patch);
-    this.currentScene = scene;
-    this.scenePatchEmitter?.(transition);
   }
 
   private snapshotResult(stopped: boolean): GenerateTurnResult {

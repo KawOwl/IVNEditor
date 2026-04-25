@@ -40,23 +40,13 @@ export interface AssembledContext {
    * 工具、拿到什么结果（in-context learning 的教材），而不是只看到光秃秃
    * 的 narration。
    *
-   * 2026-04-24 之前这里是本地 `ChatMessage { role, content: string }`，
+   * 2026-04-24 之前这里是本地 `{ role, content: string }`，
    * 装不下 tool-call parts —— legacy adapter 把 tool_call / signal_input
    * entries 过滤掉了，LLM 每一 turn 看到的历史都像从没开过工具。切成
    * ModelMessage 后，messages-builder 能正确投影 tool history 到消息流。
    */
   messages: ModelMessage[];
   tokenBreakdown: TokenBreakdown;
-}
-
-/**
- * @deprecated 老类型，为了让旧消费者（debug 面板序列化等）不炸，保留字符串视图。
- *   新代码应该直接用 ModelMessage。内部生命周期：core 用 ModelMessage → 过 emitter
- *   时 flatten 成 ChatMessage 给 UI 调试面板 / Langfuse input 展示用。
- */
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
 }
 
 // Re-export so消费者 `import type { ModelMessage } from '…/context-assembler'` 也 work
@@ -376,7 +366,7 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
 
   // --- 5. Recent history (always after system prompt, as messages) ---
   // role 翻译 + budget cap 的职责从这里挪进 Memory adapter 内部，
-  // assembler 一行调用拿到 ChatMessage[]。
+  // assembler 一行调用拿到 ModelMessage[]。
   const budgetRemaining = availableBudget - usedTokens;
   const { messages: historyMessages, tokensUsed: historyTokens } =
     await memory.getRecentAsMessages({ budget: budgetRemaining });

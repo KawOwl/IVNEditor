@@ -26,6 +26,7 @@
 import { z } from 'zod/v4';
 
 import type { ScriptManifest, BackgroundAsset, CharacterAsset, PromptSegment } from '@ivn/core/types';
+import { CURRENT_PROTOCOL_VERSION } from '@ivn/core/protocol-version';
 import { defineOp } from '#internal/operations/op-kit';
 import { OpError } from '#internal/operations/errors';
 import { scriptService } from '#internal/services/script-service';
@@ -210,7 +211,7 @@ function lintManifest(manifest: ScriptManifest): {
   backgroundsReferenced: Set<string>;
   charactersReferenced: Set<string>;
 } {
-  const protocolVersion = manifest.protocolVersion ?? 'v1-tool-call';
+  const protocolVersion = manifest.protocolVersion ?? CURRENT_PROTOCOL_VERSION;
   const definedBackgrounds = new Set<string>(
     (manifest.backgrounds ?? []).map((b: BackgroundAsset) => b.id),
   );
@@ -372,7 +373,7 @@ export const lintManifestOp = defineOp({
       }
     }
 
-    const protocolVersion = version.manifest.protocolVersion ?? 'v1-tool-call';
+    const protocolVersion = version.manifest.protocolVersion ?? CURRENT_PROTOCOL_VERSION;
     const { findings, backgroundsReferenced, charactersReferenced } = lintManifest(version.manifest);
 
     const errorCount = findings.filter((f) => f.severity === 'error').length;

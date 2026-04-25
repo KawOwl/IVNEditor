@@ -8,6 +8,7 @@ import type {
   ScriptManifest,
   StateSchema,
 } from '@ivn/core/types';
+import { CURRENT_PROTOCOL_VERSION } from '@ivn/core/protocol-version';
 import type { StateVarInfo } from '@/lib/editor/completion-sources';
 import {
   createEmptyEditorDocument,
@@ -124,7 +125,7 @@ export function useEditorDraftState() {
     setScriptLabel(record.label);
     setScriptDescription(record.description);
     setScriptTags(manifest.tags ?? []);
-    setProtocolVersion(manifest.protocolVersion ?? 'v1-tool-call');
+    setProtocolVersion(manifest.protocolVersion ?? CURRENT_PROTOCOL_VERSION);
     setIsPublished(!!record.published);
     setPromptAssemblyOrder(manifest.promptAssemblyOrder);
     setDisabledAssemblySections(manifest.disabledAssemblySections ?? []);

@@ -399,7 +399,8 @@ export interface SpriteState {
 }
 
 /**
- * 一帧场景的快照。由 change_scene / change_sprite / clear_stage 工具演进。
+ * 一帧场景的快照。当前运行协议由声明式视觉标签演进；历史 V1 读档仍可
+ * 从 change_scene / change_sprite / clear_stage 工具记录重建。
  * 每个 Sentence 都 carry 一个 sceneRef 快照，backlog 回看时能正确还原视觉。
  */
 export interface SceneState {

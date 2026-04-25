@@ -51,7 +51,7 @@ export interface MemoryRetrieval {
  *
  * `messages` 是 AI SDK 原生 ModelMessage —— assistant 可能带 ToolCallPart[]，
  * 一条 tool-role 消息可能紧跟其后带 ToolResultPart[]（见 messages-builder）。
- * 2026-04-24 前是本地 ChatMessage（string content only），adapter 把 tool_call
+ * 2026-04-24 前是本地 string-only message，adapter 把 tool_call
  * / signal_input entries 过滤掉，导致 LLM 看不到自己的工具调用历史。
  */
 export interface RecentMessagesResult {
@@ -140,7 +140,7 @@ export interface Memory {
    * 产出 messages[] 通道的 recent history，附带 budget cap。
    *
    * 职责从 context-assembler 挪进来：role 翻译 + budget break 封在 adapter 内，
-   * assembler 一行调用即可拿到 ChatMessage[]。
+   * assembler 一行调用即可拿到 ModelMessage[]。
    */
   getRecentAsMessages(opts: { budget: number }): Promise<RecentMessagesResult>;
 

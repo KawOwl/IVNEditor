@@ -55,7 +55,7 @@ export interface GameState {
   // --- VN Narrative & Scene (M3) ---
   /** Parser 产出的结构化 Sentence 序列（M1 VN UI 消费）。按产生顺序追加，不删除。 */
   parsedSentences: Sentence[];
-  /** 当前 VN 场景快照（change_scene/change_sprite/clear_stage 工具演进）。 */
+  /** 当前 VN 场景快照（当前协议从 Sentence.sceneRef 派生）。 */
   currentScene: SceneState;
   /** M1 Step 1.5：最近一次 scene-change 的过渡类型；SceneBackground 组件据此选动效 */
   lastSceneTransition: 'fade' | 'cut' | 'dissolve';

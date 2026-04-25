@@ -269,7 +269,7 @@ export const playthroughs = pgTable('playthroughs', {
    */
   memorySnapshot: jsonb('memory_snapshot').$type<Record<string, unknown>>(),
   /**
-   * VN 模式当前场景快照（M3）。由 change_scene / change_sprite 工具演进，
+   * VN 模式当前场景快照。当前运行协议由声明式视觉标签演进，
    * 结构为 { background: string | null, sprites: SpriteState[] }。
    * 断线重连时前端用此恢复视觉状态。
    */

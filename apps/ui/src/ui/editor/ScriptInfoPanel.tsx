@@ -44,7 +44,7 @@ export interface ScriptInfoPanelProps {
    * RFC §11 V.7：叙事协议版本。
    *   - 'v1-tool-call'         老 XML-lite `<d>` + change_scene/change_sprite/clear_stage 工具
    *   - 'v2-declarative-visual' 声明式嵌套 XML IR（`<dialogue>/<narration>/<scratch>` + `<background/>/<sprite/>/<stage/>`）
-   * 新建剧本默认 v2；载入老剧本保持 v1（不触发自动迁移）。
+   * 新建剧本默认 v2；只有 manifest 显式标记为 v1 时才作为历史协议显示。
    */
   protocolVersion: ProtocolVersion;
   // M2：VN 视觉资产
