@@ -10,8 +10,12 @@
  * - published 状态列表（玩家首页）通过 ScriptVersionService.listPublishedScripts 走
  */
 
-import { eq, sql, desc } from 'drizzle-orm';
+import { eq, sql, desc, and, isNull } from 'drizzle-orm';
 import { db, schema } from '#internal/db';
+
+// 软删除约定：所有 read 默认过滤 deleted_at IS NULL。
+// 想看包括软删的（admin 工具/未来 restore）→ 显式传 includeDeleted=true。
+const activeOnly = isNull(schema.scripts.deletedAt);
 
 // ============================================================================
 // Types
@@ -45,6 +49,7 @@ export interface ScriptRow {
   productionLlmConfigId: string | null;
   createdAt: Date;
   updatedAt: Date;
+  deletedAt: Date | null;
 }
 
 // ============================================================================
@@ -80,6 +85,8 @@ export class ScriptService {
             ? { productionLlmConfigId: input.productionLlmConfigId }
             : {}),
           updatedAt: now,
+          // upsert 撞软删 id：自动 undelete（"重新创建同 id 剧本"语义）
+          deletedAt: null,
         },
       });
 
@@ -96,33 +103,36 @@ export class ScriptService {
   }
 
   /**
-   * 按 id 查。跨作者都能查到；权限检查由调用方做
-   * （列表和删除接口会加 authorUserId 过滤）。
+   * 按 id 查。默认隐藏软删；显式恢复 / admin 工具传 includeDeleted=true 才看得到。
+   * 跨作者都能查到；权限检查由调用方做（列表和删除接口会加 authorUserId 过滤）。
    */
-  async getById(id: string): Promise<ScriptRow | null> {
-    const rows = await db
-      .select()
-      .from(schema.scripts)
-      .where(eq(schema.scripts.id, id))
-      .limit(1);
+  async getById(
+    id: string,
+    opts: { includeDeleted?: boolean } = {},
+  ): Promise<ScriptRow | null> {
+    const where = opts.includeDeleted
+      ? eq(schema.scripts.id, id)
+      : and(eq(schema.scripts.id, id), activeOnly);
+    const rows = await db.select().from(schema.scripts).where(where).limit(1);
     return (rows[0] as ScriptRow | undefined) ?? null;
   }
 
-  /** 列出所有剧本（按 updatedAt desc）—— 当前所有 admin 都能看所有剧本 */
+  /** 列出所有剧本（按 updatedAt desc）—— 默认隐藏软删 */
   async listAll(): Promise<ScriptRow[]> {
     const rows = await db
       .select()
       .from(schema.scripts)
+      .where(activeOnly)
       .orderBy(desc(schema.scripts.updatedAt));
     return rows as ScriptRow[];
   }
 
-  /** 列出某作者的所有剧本（保留用于"按作者过滤"场景） */
+  /** 列出某作者的所有剧本（保留用于"按作者过滤"场景）—— 默认隐藏软删 */
   async listByAuthor(authorUserId: string): Promise<ScriptRow[]> {
     const rows = await db
       .select()
       .from(schema.scripts)
-      .where(eq(schema.scripts.authorUserId, authorUserId))
+      .where(and(eq(schema.scripts.authorUserId, authorUserId), activeOnly))
       .orderBy(desc(schema.scripts.updatedAt));
     return rows as ScriptRow[];
   }
@@ -145,24 +155,30 @@ export class ScriptService {
       patch.productionLlmConfigId = input.productionLlmConfigId;
     }
 
+    // update 不能改到软删的 row（编辑已删剧本无意义；要 restore 走单独路径）
     const result = await db
       .update(schema.scripts)
       .set(patch)
-      .where(eq(schema.scripts.id, id))
+      .where(and(eq(schema.scripts.id, id), activeOnly))
       .returning({ id: schema.scripts.id });
 
     return result.length > 0;
   }
 
   /**
-   * 删除剧本（级联删除 script_versions 和相关 playthroughs）。
+   * 软删除剧本：设置 deleted_at = NOW()。不真物理删 row，因此：
+   *   - script_versions / playthroughs / script_assets / OSS 资产全部保留
+   *   - playthroughs.script_version_id 的 no-action FK 不被触发
+   *   - 误删后 SQL `UPDATE scripts SET deleted_at = NULL WHERE id = ...` 可恢复
    *
-   * 同 update：不做 ownership，由路由层把关。
+   * 同 update：不做 ownership，由路由/op 层把关。已经软删的再调一次 → 返回 false
+   * （不再覆盖 deleted_at 时间戳，防止重复点击擦掉首次删除时刻）。
    */
-  async delete(id: string): Promise<boolean> {
+  async softDelete(id: string): Promise<boolean> {
     const result = await db
-      .delete(schema.scripts)
-      .where(eq(schema.scripts.id, id))
+      .update(schema.scripts)
+      .set({ deletedAt: sql`NOW()`, updatedAt: sql`NOW()` })
+      .where(and(eq(schema.scripts.id, id), activeOnly))
       .returning({ id: schema.scripts.id });
 
     return result.length > 0;
@@ -170,13 +186,13 @@ export class ScriptService {
 
   /**
    * 取剧本的 ownership（仍然保留：将来若需要按作者过滤的接口可以用）
-   * 返回 authorUserId 或 null（不存在）
+   * 返回 authorUserId 或 null（不存在 / 已软删）
    */
   async getOwnerId(id: string): Promise<string | null> {
     const rows = await db
       .select({ authorUserId: schema.scripts.authorUserId })
       .from(schema.scripts)
-      .where(eq(schema.scripts.id, id))
+      .where(and(eq(schema.scripts.id, id), activeOnly))
       .limit(1);
     return rows[0]?.authorUserId ?? null;
   }

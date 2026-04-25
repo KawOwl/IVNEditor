@@ -249,15 +249,17 @@ export const scriptRoutes = new Elysia({ prefix: '/api/scripts' })
   })
 
   // ============================================================================
-  // DELETE /:id — 删除剧本（级联删 script_versions 和相关 playthroughs）
+  // DELETE /:id — 软删除剧本（不真删 row，set deleted_at = NOW()）
   // ============================================================================
   //
   // Admin only。当前所有 admin 都能删任意剧本。
+  // 软删后底层 script_versions / playthroughs / OSS 资产保留不动；
+  // 列表/试玩入口对软删的 script 表现为不存在。误删恢复需 admin SQL。
   .delete('/:id', async ({ params, request }) => {
     const auth = await requireAdmin(request);
     if (isResponse(auth)) return auth;
 
-    const deleted = await scriptService.delete(params.id);
+    const deleted = await scriptService.softDelete(params.id);
     if (!deleted) {
       return new Response(
         JSON.stringify({ error: 'Script not found' }),

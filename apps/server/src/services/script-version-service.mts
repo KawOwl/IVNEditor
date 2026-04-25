@@ -15,7 +15,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, isNull } from 'drizzle-orm';
 import { db, schema } from '#internal/db';
 import type { ScriptManifest } from '@ivn/core/types';
 
@@ -324,7 +324,13 @@ export class ScriptVersionService {
         schema.scripts,
         eq(schema.scriptVersions.scriptId, schema.scripts.id),
       )
-      .where(eq(schema.scriptVersions.status, 'published'))
+      .where(
+        and(
+          eq(schema.scriptVersions.status, 'published'),
+          // 软删除的 script 即使有 published 版本也不进玩家 catalog
+          isNull(schema.scripts.deletedAt),
+        ),
+      )
       .orderBy(desc(schema.scriptVersions.publishedAt));
 
     return rows.map(toPublishedCatalogEntry);
