@@ -654,11 +654,46 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   ): void {
     this.rememberMainStepBatch(step);
     traceHandle?.recordStep(toTraceStepRecord(step));
+    this.persistToolOnlyStepReasoning(step);
   }
 
   private rememberMainStepBatch(step: Pick<StepInfo, 'batchId' | 'isFollowup'>): void {
     if (!step.isFollowup) {
       this.currentStepBatchId = step.batchId ?? null;
+    }
+  }
+
+  private persistToolOnlyStepReasoning(step: StepInfo): void {
+    if (
+      step.isFollowup ||
+      !step.batchId ||
+      !step.reasoning ||
+      step.partKinds.includes('text') ||
+      !this.deps.persistence
+    ) {
+      return;
+    }
+
+    const stepReasoning = step.reasoning;
+    void this.deps.persistence
+      .onNarrativeSegmentFinalized({
+        entry: {
+          role: 'generate',
+          content: '',
+          reasoning: stepReasoning,
+          finishReason: String(step.finishReason),
+        },
+        batchId: step.batchId,
+      })
+      .catch((err) =>
+        console.error('[Persistence] tool-only step reasoning stub failed:', err),
+      );
+
+    if (this.currentReasoningBuffer.endsWith(stepReasoning)) {
+      this.currentReasoningBuffer = this.currentReasoningBuffer.slice(
+        0,
+        this.currentReasoningBuffer.length - stepReasoning.length,
+      );
     }
   }
 

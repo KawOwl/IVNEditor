@@ -86,6 +86,41 @@ const pgSslSchema = z.preprocess((value) => {
   return typeof normalized === 'string' ? normalized.toLowerCase() : normalized;
 }, z.enum(['off', 'false', 'disable', 'require', 'prefer', 'verify', 'verify-ca', 'verify-full']).optional());
 
+/**
+ * `LLM_THINKING_ENABLED` —— DeepSeek V4 thinking 模式开关。三态：
+ *   未设 / 空串 → undefined（seed 写 null：不覆盖模型默认）
+ *   true/yes/on/1   → true（seed 写 true：transformRequestBody 注入 thinking:{type:'enabled'}）
+ *   false/no/off/0  → false（seed 写 false：注入 thinking:{type:'disabled'}）
+ *
+ * 不复用 booleanFromEnv：那个 helper 必须给 default，强制返回 boolean；
+ * 这里需要"未设"和"显式 false"两种状态可区分，前者代表"不写 DB 字段"。
+ */
+const optionalThinkingBoolean = z.preprocess((value) => {
+  const normalized = emptyToUndefined(value);
+  if (normalized === undefined) return undefined;
+  if (typeof normalized === 'boolean') return normalized;
+  if (typeof normalized !== 'string') return normalized;
+  switch (normalized.toLowerCase()) {
+    case '1':
+    case 'true':
+    case 'yes':
+    case 'on':
+      return true;
+    case '0':
+    case 'false':
+    case 'no':
+    case 'off':
+      return false;
+    default:
+      return normalized;
+  }
+}, z.boolean().optional());
+
+const optionalReasoningEffort = z.preprocess((value) => {
+  const normalized = emptyToUndefined(value);
+  return typeof normalized === 'string' ? normalized.toLowerCase() : normalized;
+}, z.enum(['high', 'max']).optional());
+
 function parseAdminUsers(raw: string | undefined): AdminUserEnv[] {
   if (!raw) return [];
   return raw
@@ -135,6 +170,8 @@ export const ServerEnvSchema = z.object({
   LLM_API_KEY: optionalEnvString,
   LLM_MODEL: z.preprocess(emptyToUndefined, z.string().min(1).default('deepseek-chat')),
   LLM_NAME: z.preprocess(emptyToUndefined, z.string().min(1).default('default')),
+  LLM_THINKING_ENABLED: optionalThinkingBoolean,
+  LLM_REASONING_EFFORT: optionalReasoningEffort,
 
   MEM0_API_KEY: optionalEnvString,
 
@@ -171,6 +208,13 @@ export interface LlmConfigSeedEnv {
   apiKey: string;
   model: string;
   name: string;
+  /**
+   * DeepSeek V4 thinking 开关。null = 不写 DB 字段（沿用模型默认）。
+   * `LLMClient.getModel()` 仅当此字段非 null 时才把 thinking:{type:...} 注入 body。
+   */
+  thinkingEnabled: boolean | null;
+  /** reasoning_effort 强度。null = 不传。仅 thinking 模式生效。 */
+  reasoningEffort: 'high' | 'max' | null;
 }
 
 function formatZodError(error: z.ZodError): string {
@@ -210,5 +254,7 @@ export function createLlmConfigSeedFromEnv(env: ServerEnv): LlmConfigSeedEnv | n
     apiKey: env.LLM_API_KEY,
     model: env.LLM_MODEL,
     name: env.LLM_NAME,
+    thinkingEnabled: env.LLM_THINKING_ENABLED ?? null,
+    reasoningEffort: env.LLM_REASONING_EFFORT ?? null,
   };
 }

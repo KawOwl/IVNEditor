@@ -504,6 +504,116 @@ describe('buildMessagesFromEntries', () => {
     expect(parts[0]).toEqual({ type: 'reasoning', text: '我的思考' });
     expect(parts[1]).toEqual({ type: 'text', text: '叙事正文' });
   });
+
+  // ─── tool-only step stub（DeepSeek V4 thinking replay 修复，2026-04-25）─────
+  // 见 game-session.mts persistToolOnlyStepReasoning 注释 + scripts/verify-deepseek-reasoning.mts case 6。
+  // 修复落地后，tool-only step 会写 stub `narrative` entry：content='' + reasoning=非空 + 同 batch 的 tool_calls。
+  // messages-builder 必须把这种组合投影成 `[ReasoningPart, ToolCallPart...]`（**不**带空 TextPart）。
+
+  it('stub narrative (content="" + reasoning) + tool_calls 同 batch → parts 是 [reasoning, tool-call...]，无 text part', () => {
+    const entries = [
+      mkEntry({
+        kind: 'narrative',
+        role: 'generate',
+        content: '',
+        reasoning: '玩家进屋了，需要切场景再更新 chapter 计数',
+        batchId: 'b1',
+        orderIdx: 0,
+      }),
+      mkEntry({
+        kind: 'tool_call',
+        role: 'system',
+        content: 'change_scene',
+        payload: { input: { background: 'room' }, output: { ok: true } },
+        batchId: 'b1',
+        orderIdx: 1,
+      }),
+      mkEntry({
+        kind: 'tool_call',
+        role: 'system',
+        content: 'update_state',
+        payload: { input: { chapter: 2 }, output: { ok: true } },
+        batchId: 'b1',
+        orderIdx: 2,
+      }),
+    ];
+    const msgs = buildMessagesFromEntries(entries);
+    expect(msgs).toHaveLength(2); // assistant + tool
+    const asst = msgs[0] as AssistantModelMessage;
+    expect(asst.role).toBe('assistant');
+    const parts = asst.content as any[];
+    expect(Array.isArray(parts)).toBe(true);
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toEqual({
+      type: 'reasoning',
+      text: '玩家进屋了，需要切场景再更新 chapter 计数',
+    });
+    expect(parts[1].type).toBe('tool-call');
+    expect(parts[1].toolName).toBe('change_scene');
+    expect(parts[2].type).toBe('tool-call');
+    expect(parts[2].toolName).toBe('update_state');
+    // 关键：不该插一个空 TextPart 进来——DeepSeek 对空 content 不挑剔，
+    // 但白白多一个 part 会污染日志阅读
+    expect(parts.find((p) => p.type === 'text')).toBeUndefined();
+  });
+
+  it('两 batch：tool-only stub batch + narrative batch → 各自 assistant 都带 reasoning_content', () => {
+    // 模拟一次 generate() 内：step 1 tool-only（用 stub 落 reasoning）+ step 2 narrative
+    const entries = [
+      // batch b1: tool-only step 的 stub + 工具调用
+      mkEntry({
+        kind: 'narrative',
+        role: 'generate',
+        content: '',
+        reasoning: 'step1 思考：先切场景',
+        batchId: 'b1',
+        orderIdx: 0,
+      }),
+      mkEntry({
+        kind: 'tool_call',
+        role: 'system',
+        content: 'change_scene',
+        payload: { input: { background: 'room' }, output: { ok: true } },
+        batchId: 'b1',
+        orderIdx: 1,
+      }),
+      // batch b2: 正常 narrative step
+      mkEntry({
+        kind: 'narrative',
+        role: 'generate',
+        content: '你走进屋子。',
+        reasoning: 'step2 思考：描绘进屋的画面',
+        batchId: 'b2',
+        orderIdx: 2,
+      }),
+      mkEntry({
+        kind: 'signal_input',
+        role: 'system',
+        content: '接下来呢？',
+        payload: { choices: ['坐下', '环顾'] },
+        batchId: 'b2',
+        orderIdx: 3,
+      }),
+    ];
+    const msgs = buildMessagesFromEntries(entries);
+    // 期望：assistant(b1) + tool(b1) + assistant(b2) + tool(b2) = 4 条
+    expect(msgs).toHaveLength(4);
+
+    const asst1 = msgs[0] as AssistantModelMessage;
+    const asst1Parts = asst1.content as any[];
+    expect(asst1Parts[0]).toEqual({ type: 'reasoning', text: 'step1 思考：先切场景' });
+    expect(asst1Parts.find((p) => p.type === 'text')).toBeUndefined();
+    expect(asst1Parts.filter((p) => p.type === 'tool-call')).toHaveLength(1);
+
+    const asst2 = msgs[2] as AssistantModelMessage;
+    const asst2Parts = asst2.content as any[];
+    expect(asst2Parts[0]).toEqual({
+      type: 'reasoning',
+      text: 'step2 思考：描绘进屋的画面',
+    });
+    expect(asst2Parts[1]).toEqual({ type: 'text', text: '你走进屋子。' });
+    expect(asst2Parts.filter((p) => p.type === 'tool-call')).toHaveLength(1);
+  });
 });
 
 // ============================================================================

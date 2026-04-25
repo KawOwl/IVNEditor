@@ -122,6 +122,58 @@ describe('GenerateTurnRuntime', () => {
     expect(generateCalled).toBe(false);
     expect(recording.getSnapshot().streamingEntries).toEqual([]);
   });
+
+  it('persists reasoning stubs for tool-only main steps', async () => {
+    const stateStore = new StateStore(emptyStateSchema);
+    const memory = createMemoryDouble();
+    const persistence = createPersistenceDouble();
+    const recording = createRecordingSessionEmitter();
+    const llmClient = createLLMDouble(async (options) => {
+      options.onStepStart?.({ stepNumber: 0, batchId: 'batch-tool', isFollowup: false });
+      options.onReasoningChunk?.('先切场景再写状态');
+      options.onStep?.(stepInfo({
+        batchId: 'batch-tool',
+        text: '',
+        reasoning: '先切场景再写状态',
+        finishReason: 'tool-calls',
+        partKinds: ['reasoning', 'tool-call'],
+        toolCalls: [{ name: 'update_state', args: { chapter: 2 } }],
+      }));
+      return { text: '', toolCalls: [], finishReason: 'tool-calls' };
+    });
+
+    await createGenerateTurnRuntime({
+      turn: 1,
+      emitter: recording.emitter,
+      stateStore,
+      memory,
+      llmClient,
+      segments: [],
+      enabledTools: [],
+      tokenBudget: 12000,
+      persistence,
+      protocolVersion: 'v1-tool-call',
+      characters: [],
+      backgrounds: [],
+      currentScene: { background: null, sprites: [] },
+      buildRetrievalQuery: async () => '',
+      isActive: () => true,
+      onScenarioEnd: () => {},
+    }).run();
+
+    expect(persistence.narrativeEntries).toEqual([
+      {
+        entry: {
+          role: 'generate',
+          content: '',
+          reasoning: '先切场景再写状态',
+          finishReason: 'tool-calls',
+        },
+        batchId: 'batch-tool',
+      },
+    ]);
+    expect(memory.appendedTurns).toEqual([]);
+  });
 });
 
 const emptyStateSchema: StateSchema = { variables: [] };
@@ -207,14 +259,17 @@ function createLLMDouble(
   return { generate };
 }
 
-function stepInfo(patch: Pick<StepInfo, 'batchId' | 'text'>): StepInfo {
+function stepInfo(
+  patch: Pick<StepInfo, 'batchId' | 'text'> & Partial<StepInfo>,
+): StepInfo {
   return {
     stepNumber: 0,
     text: patch.text,
-    finishReason: 'stop',
-    toolCalls: [],
-    partKinds: ['text'],
+    finishReason: patch.finishReason ?? 'stop',
+    toolCalls: patch.toolCalls ?? [],
+    partKinds: patch.partKinds ?? ['text'],
     batchId: patch.batchId,
-    isFollowup: false,
+    isFollowup: patch.isFollowup ?? false,
+    ...(patch.reasoning !== undefined ? { reasoning: patch.reasoning } : {}),
   };
 }

@@ -23,10 +23,16 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
 
     /**
      * 每段叙事 finalize 前调用（signal_input_needed 挂起前 / generate 返回后）
-     * 每次调用都新增一条 narrative_entry 记录 + 更新 preview
+     * 每次调用都新增一条 narrative_entry 记录 + 更新 preview。
+     *
+     * 接受 content='' 但 reasoning 非空 的"stub" 入参 —— game-session 给
+     * tool-only step 写 reasoning 占位 entry 用（DeepSeek V4 thinking replay
+     * 修复，详见 game-session.mts persistToolOnlyStepReasoning 注释）。
+     * 真正空段（content+reasoning 都空）才提前返回。
+     * preview 仅在 content 非空时更新——stub entry 不该把 preview 清空。
      */
     async onNarrativeSegmentFinalized(data): Promise<void> {
-      if (!data.entry.content) return;
+      if (!data.entry.content && !data.entry.reasoning) return;
 
       await playthroughService.appendNarrativeEntry({
         playthroughId,
@@ -41,11 +47,13 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
       // 更新 preview 为最新的这段（走 parser 提取纯文本，避免在 UI 的
       // playthrough 列表里显示 XML-lite 裸标签：
       // `你目光落在那扇... <d s="jenkins" to="...` → `你目光落在那扇... 你说完了我们就离开吧...`）
-      const preview = extractPlainText(data.entry.content)
-        .slice(0, 80)
-        .replace(/\n/g, ' ')
-        .trim();
-      await playthroughService.updateState(playthroughId, { preview });
+      if (data.entry.content) {
+        const preview = extractPlainText(data.entry.content)
+          .slice(0, 80)
+          .replace(/\n/g, ' ')
+          .trim();
+        await playthroughService.updateState(playthroughId, { preview });
+      }
     },
 
     /**

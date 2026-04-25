@@ -458,7 +458,7 @@
     "type": "e2e",
     "ref": "src/core/llm-client.ts + src/core/game-session.ts + server/src/routes/playthroughs.ts + server/src/services/playthrough-service.ts + src/stores/ws-client-emitter.ts + server/src/tracing.ts",
     "verify": "bun tsc --noEmit（前端 + 后端）无新 error；cd server && bun test 141/141 全绿；cd server && bun start 正常启动 + Langfuse/DB 连接 + 监听 3001；v29 staging rollout 后跑 E2E：开新游玩 ≥ 55 条 entry → 断开重连 → 完整历史回放（不再 50 截断）+ history 顺序正确（没有选项跳到对应旁白之前）+ Langfuse trace 的 llm-step 在 narrative 出现前就有正确的 batchId 标记",
-    "note": "三个 bug 由 save-load 后的 history display 问题（用户反馈"少了一段"+"历史是乱的"）定位收敛到根因：A 是 DB 写入时序、B 是 step 生命周期钩子、C 是 WS restore 的 hardcoded limit。修法选择：A 直接 flush（只追加成本一次 memory.appendTurn）；B 暴露新回调而不是改 onStep 语义避免 breaking change；C 用客户端分页而非服务端一次塞满（限服务端内存 + 长 session 可增量 UI 显示）"
+    "note": "三个 bug 由 save-load 后的 history display 问题（用户反馈\"少了一段\"+\"历史是乱的\"）定位收敛到根因：A 是 DB 写入时序、B 是 step 生命周期钩子、C 是 WS restore 的 hardcoded limit。修法选择：A 直接 flush（只追加成本一次 memory.appendTurn）；B 暴露新回调而不是改 onStep 语义避免 breaking change；C 用客户端分页而非服务端一次塞满（限服务端内存 + 长 session 可增量 UI 显示）"
   },
   {
     "id": "V.1",
@@ -529,5 +529,95 @@
     "ref": "RFC-声明式视觉IR_2026-04-24.md#§11 Step V.7 + src/ui/editor/ScriptInfoPanel.tsx + src/ui/editor/EditorPage.tsx",
     "verify": "bunx tsc --noEmit 前端干净；cd server && bun test 141/141 全绿；bun test src/core src/stores 248/248 全绿。UI 目检：新建剧本 ScriptInfoPanel dropdown 默认显示 v2；选 v1 后看到琥珀色提示；保存后重新载入 roundtrip 一致（v2 剧本 manifest 有 protocolVersion 字段、v1 剧本无该字段）",
     "note": "老剧本兼容策略：新 state 默认 v2 仅影响'新建'；handleLoadScript 从 manifest.protocolVersion ?? 'v1-tool-call' 回填，老剧本依旧以 v1 呈现。保存策略不改：v1 剧本 manifest 保持无 protocolVersion 字段（兼容 M2 空值策略）。Follow-up：v2 下禁止编辑 change_scene/change_sprite/clear_stage 相关工具开关（当前 ScriptInfoPanel 工具列表无保护）；协议版本切换时 prompt preview 实时反映（V.3 的 buildAllSections 已接入 protocolVersion 参数，自动生效）。"
+  },
+  {
+    "id": "OP.0",
+    "title": "op-kit 单源 Operation 定义 + 第一例 script.lint_manifest",
+    "description": "建 apps/server/src/operations/ 单源 Operation 层：op-kit.mts（Op<I,O> + defineOp + runOp + 8 条防腐契约）+ errors.mts（OpError + 8 种 code）+ context.mts（框架无关 OpContext）+ adapters/{http.mts,mcp.mts}（HTTP 路由 / MCP tool 都从同一个 op 定义派生，不复制）。第一个落地 op：script.lint_manifest（检查段落正文与 manifest 引用一致性，覆盖 undefined-bg/char/emotion + orphan + mixed-protocol，severity error/warning 二级）。",
+    "status": "done",
+    "type": "logic",
+    "ref": "docs/refactor/negentropy-2026-04-25-op-kit-bootstrap.md + docs/refactor/op-kit-roadmap.md",
+    "verify": "apps/server bun test 全绿（25 个 op-kit.test.mts 形状测试 + 14 个 lint-manifest.test.mts 含 trace b45a0df9 根因复现）；bunx tsc --noEmit 干净；起 server smoke：MCP tools/list 出现 lint_manifest，HTTP POST /api/ops/script.lint_manifest 返回正常 envelope；JSON-RPC error code 与 OpError 1:1 映射",
+    "note": "防腐契约 8 条贴在 op-kit.mts 顶部：op-kit 不依赖 web 框架；exec 用 OpContext 不用 framework Identity；错误用 OpError 不用 raw Error；Zod schema 命名 export；ops 不依赖 routes/；exec 不返回 Response/Headers；不在 exec 里做 cookie/session；dry-run/undo/progress 这类元能力做 OpMiddleware（v0.1 占位未实现）。OpMeta.mcpName 字段做 MCP 名 backward compat（旧客户端配置不用改）。op canonical name 用 <category>.<verb_object>，category 必须等于 name 第一段。commit f843d61。"
+  },
+  {
+    "id": "OP.1",
+    "title": "op-kit Batch 1：6 个 read MCP tool 迁移",
+    "description": "把 routes/mcp.mts 里 6 个只读 MCP tool 迁移到 op-kit：list_scripts → script.list_scripts；list_script_versions → script.list_versions（mcpName backward compat）；get_script_overview → script.get_overview（mcpName）；get_segment → script.get_segment；get_full_manifest → script.get_full_manifest；list_script_assets → script.list_assets（mcpName）。共用 helper 提到 operations/script/_shared.mts（resolveTargetVersion / findSegment / cloneManifest）。effect: 'safe' / auth: 'admin'（与 lint_manifest 一致）。",
+    "status": "done",
+    "type": "logic",
+    "ref": "docs/refactor/negentropy-2026-04-25-mcp-tool-migration.md",
+    "verify": "apps/server bun test 全绿（无新增单测，复用既有 mcp-route 集成测试覆盖）；MCP tools/list 6 个 read tool 名称与迁移前完全一致；HTTP /api/ops 有对应 entry；mcp.mts 行数 1378 → 1119（−259）",
+    "note": "MCP 名通过 OpMeta.mcpName backward compat：op canonical name 干净（不含冗余 script_ 前缀），但 MCP 对外名保持原样（list_script_versions / get_script_overview / list_script_assets），旧 MCP 客户端配置完全无需改。commit eb60eaa。"
+  },
+  {
+    "id": "OP.2",
+    "title": "op-kit Batch 2：3 个 write MCP tool 迁移",
+    "description": "迁移段落 / 版本写类 MCP tool：update_segment_content → script.update_segment_content；replace_script_manifest → script.replace_manifest（mcpName）；publish_script_version → script.publish_version（mcpName）。effect: 'mutating' / auth: 'admin'。getBaselineVersion helper（写操作专用：总取最新版本、不接受 versionId 参数）补充到 _shared.mts。",
+    "status": "done",
+    "type": "logic",
+    "ref": "docs/refactor/negentropy-2026-04-25-mcp-tool-migration.md",
+    "verify": "apps/server bun test 全绿；MCP tools/list 3 个 write tool 名称与迁移前一致；HTTP /api/ops 有对应 effect=mutating entry；mcp.mts 行数 1119 → 950（−169）",
+    "note": "write op 与 read op 的语义差别：write 默认在'最新版本'之上叠 patch 生成 draft（getBaselineVersion）；read 可指定 versionId 看历史（resolveTargetVersion，published 优先 fallback 最新）。commit 65bfb20。"
+  },
+  {
+    "id": "OP.3",
+    "title": "op-kit Batch 3：3 个 asset write MCP tool 迁移",
+    "description": "迁移资产上传类 MCP tool：upload_script_asset → script.upload_asset（mcpName）；add_background_to_script → script.add_background（mcpName）；add_character_sprite → script.add_character_sprite。effect: 'mutating' / auth: 'admin'。共用图片字节解析 + S3 upload + manifest patch helper 提到 _asset-helpers.mts（uploadImageBytes、upsertBackground、upsertCharacterSprite）。",
+    "status": "done",
+    "type": "logic",
+    "ref": "docs/refactor/negentropy-2026-04-25-mcp-tool-migration.md",
+    "verify": "apps/server bun test 全绿；MCP tools/list asset tool 行为与迁移前一致（10MB 上限 / MIME 白名单 / data: URL prefix 容忍 / 上传在前 manifest 改动在后）；mcp.mts 行数 950 → 386（−564，本批最大瘦身因为大量 helper 一并搬走）",
+    "note": "迁移期识别两个 input-rich exec hotspot（add-character-sprite::exec 读取 20 个字段 / add-background::exec 读取 15 个字段）—— op input 多字段是必然，不算真问题，可选缓解：exec 顶部统一 const {...} = input; 一次性解构。commit 338ae1a。"
+  },
+  {
+    "id": "OP.4",
+    "title": "op-kit Batch 4：destructive delete_script 迁移 + 14 个 op 全部完成",
+    "description": "迁移最后一个、也是唯一的 destructive op：delete_script → script.delete_script。effect: 'destructive' / auth: 'admin'。沿用原 MCP 工具的两阶段确认（dry-run 默认 + confirm:true + scriptIdConfirm 校验）但保持手写在 exec 里——单 op 抽 withConfirm middleware 是过早抽象，等到第 2-3 个 destructive op 出现再抽（防腐契约 #8 占位符已在 op-kit.mts 顶部留 OpMiddleware 类型）。本 batch 完成后 routes/mcp.mts 仅剩 281 行（纯 JSON-RPC 协议层），加新 MCP tool 不再需要碰这个文件。",
+    "status": "done",
+    "type": "logic",
+    "ref": "docs/refactor/negentropy-2026-04-25-mcp-tool-migration.md",
+    "verify": "apps/server bun test 181/181 全绿（474 expect 调用）；packages/core bun test 248/248 全绿；bunx tsc --noEmit 干净；起 server 端到端 smoke：MCP tools/list 返回 14 tool（迁移前同名同形）；HTTP GET /api/ops 列出 14 op 含 effect: 'destructive' 标记；delete_script dry-run 正确返回 wouldDelete preview，confirm 校验严格",
+    "note": "第二批 destructive op 出现时（候选：bulk_delete_versions / restore_archived_version 等）抽 withConfirm middleware，签名草稿在 negentropy-2026-04-25-mcp-tool-migration.md。mcp.mts 剩余 281 行全是协议层（JSON-RPC 2.0 dispatcher + ToolDef interface + Elysia route 挂载 + auth + CORS preflight），不再有业务定义。commit 91aa9ce。"
+  },
+  {
+    "id": "OP.5",
+    "title": "P0 lint 套件 A：script.extract_referenced_ids（纯抽取剧本引用 ID）",
+    "description": "从剧本所有段落正文里抽取 background id / character id / (character, mood) 二元组（去重 + 字典序）。是 script.lint_manifest 的子集——纯抽取，不做 manifest 白名单 diff。给修复型 agent 当上游数据：'剧本实际用了什么'是 propose_manifest_alignment 的纯函数依赖。effect: 'safe' / auth: 'admin'。复用 lint-manifest.mts 的 _internal.extractFromSegment（已 export），核心逻辑拆纯函数 extractAllRefs(manifest) 从 _internal export 便于单测。",
+    "status": "pending",
+    "type": "logic",
+    "ref": "docs/refactor/op-a-extract-referenced-ids-plan.md",
+    "verify": "apps/server bun test 单文件 extract-referenced-ids.test.mts 全绿（7 条：v2/v1 协议、string dedup、tuple dedup、不同 char 同名 mood 不去重、跨 chapter 累积、空边界）；全套 181 → 188 不退化；bunx tsc --noEmit 干净；起 server smoke：MCP tools/list 出现 extract_referenced_ids，happy path shape 正确，不存在 scriptId 走 NOT_FOUND OpError；negentropy --top 5 基线 hotspot 不变",
+    "note": "未开工。plan 完整写在 docs/refactor/op-a-extract-referenced-ids-plan.md，含 schemas / 文件改动清单 / 实现要点 / 单测列表 / 恢复指令模板（顶部'恢复上下文指令'段直接 copy 给新会话即可开工）。下一步先做 A 的原因：B / C 都依赖'知道剧本引用了什么'这个原始数据。"
+  },
+  {
+    "id": "OP.6",
+    "title": "P0 lint 套件 B：script.list_recent_degrades（Langfuse 聚合）",
+    "description": "接 Langfuse public API 拉最近 N 小时的 ir-degrade:* 事件，按 (code, detail) 聚合。直接命中'运行时 degrade → 编辑回路'的反馈链：作者 / 修复 agent 知道'最近哪些剧本有问题、问题分布'。input: { scriptId?, hours?, limit? }（默认 hours=24, limit=200），output: { windowHours, traceCount, totalDegrades, byCode: [{ code, detail, count, sampleTraceIds }] }。effect: 'safe' / auth: 'admin'。",
+    "status": "pending",
+    "type": "logic",
+    "ref": "docs/refactor/op-kit-roadmap.md (待写 op-b-list-recent-degrades-plan.md)",
+    "verify": "apps/server bun test 单文件全绿（mock Langfuse client 验聚合逻辑）；起 server smoke：MCP tools/list 出现，真实 Langfuse 数据查询返回 byCode 含 trace b45a0df9 那批 bg-unknown-scene/city_street_morning 样本；env 缺时返回 OpError UPSTREAM_UNAVAILABLE 不崩",
+    "note": "未开工。先确定 Langfuse trace metadata 上 scriptId 挂载形式（curl 一个真实 trace 看），是 metadata.scriptId 还是 trace.userId(playthroughId) join scripts。Langfuse SDK 当前只用来上报 trace，本 op 用 fetch 直接调 ${LANGFUSE_HOST}/api/public/observations + Basic auth。要在 OP.5 之后做。开工前单独写 op-b-list-recent-degrades-plan.md。"
+  },
+  {
+    "id": "OP.7",
+    "title": "P0 lint 套件 C：script.propose_manifest_alignment（自动 patch dry-run）",
+    "description": "基于 script.lint_manifest findings 自动给出 manifest patch dry-run。input: { scriptId, versionId?, applyMode? }（默认 'dry-run'，传 'apply' 真生成 draft 版本）。dry-run 输出：完整 patched manifest（在原 manifest 上新增缺失的 backgrounds/characters/emotions 占位项，assetUrl 留空待上传）+ 人读 summary。apply 输出：调用 replaceManifestOp.exec 落 draft 返回新 versionId。effect: 'safe' for dry-run / 'mutating' for apply（实现方式待定，可能拆两个 op 或 effect 字段动态由 input 决定）。本质是 lint-manifest findings → manifest patch 的纯函数映射，逻辑放 _shared.mts 可测纯函数里。",
+    "status": "pending",
+    "type": "logic",
+    "ref": "docs/refactor/op-kit-roadmap.md (待写 op-c-propose-manifest-alignment-plan.md)",
+    "verify": "apps/server bun test 单文件全绿（pure function alignmentPatch(manifest, findings) 验补 background/character/emotion 占位、不重复添加已有项、不删除 orphan）；dry-run vs apply 两 path 都覆盖；起 server smoke：MCP tools/list 出现，dry-run 不写 DB，apply 生成 draft 版本可在 list_versions 看到",
+    "note": "未开工。这是 P0 lint 套件最复杂的 op，先做 OP.5 / OP.6 探清模式。设计选择待确认：单 op + applyMode 字段 vs 两 op（propose + apply）；前者更简洁，后者 effect 字段更准确。开工前单独写 op-c-propose-manifest-alignment-plan.md。"
+  },
+  {
+    "id": "EUX.1",
+    "title": "编辑器试玩 tab 接入存档列表（list ↔ play 切换）",
+    "description": "镜像玩家流 PlayPage 的两阶段模式，把编辑器右侧'试玩'tab 重做成'存档列表 ↔ PlayPanel'切换：默认渲染 PlaythroughList(kind='playtest', scriptId=loadedScriptId)，admin 看到自己跑过的所有试玩存档；选某条 → PlayPanel 自动 reconnect 恢复；点'+ 开始新游戏'→ PlayPanel autoStart 创建新试玩；进 game 视图后顶部出现'← 返回列表'按钮回 list。新建未保存剧本（loadedScriptId=null）显示占位文案'保存剧本后即可创建 / 查看试玩存档'。改动三处：(1) PlaythroughList 加 kind?: 'production'|'playtest' prop，缺省 'production' 保留玩家流原行为；(2) PlayPanel handleStart 重写 targetPtId 决议——显式 playthroughId（非 'new'）两种模式都尊重，editorMode 只控制'缺省时'是否新建（原代码强制 null 让编辑器永远不能恢复指定 playthrough）；(3) 抽 EditorPlayTab.tsx 封装 list/play 状态机，EditorRightPanel.tsx 替换原 'play' tab 内嵌 PlayPanel。",
+    "status": "done",
+    "type": "ui",
+    "ref": "apps/ui/src/ui/editor/EditorPlayTab.tsx + apps/ui/src/ui/editor/EditorRightPanel.tsx + apps/ui/src/ui/play/PlayPanel.tsx + apps/ui/src/ui/play/PlaythroughList.tsx",
+    "verify": "bun run typecheck（apps/ui tsgo --noEmit）干净；packages/core bun test 248/248 全绿；浏览器端到端：编辑器进试玩 tab，未加载剧本 → 显示'保存剧本后即可...'占位；加载已有剧本 → PlaythroughList 出现 + '+ 开始新游戏'按钮 + 空态'还没有游玩记录'；点 '+ 开始新游戏' → PlayPanel autoStart 跑通且 LLM 真生成（创建 kind=playtest playthrough）；点 '← 返回列表' 回 list 看到刚跑的那条游玩 #1（带 v2 版本号 + preview 文本）；点'继续' → reconnect 成功，状态切'等待输入'，恢复 sprite + choices",
+    "note": "用户原话：'在编剧的界面把存档列表也加上，让大家可以读取存档'。设计上把 list 直接放进现有 '试玩' tab 而不是加新 tab，是因为玩家流 PlayPage 也是 list-first，编辑器 admin 心智一致；LLM dropdown 仍在顶部 header（控制下一次 NEW playthrough 选哪套 LLM；恢复老 playthrough 时 LLM 已固化，dropdown 不影响）。PlayPanel editorMode targetPtId 决议改动是这次的关键 bug 修复——之前显式 playthroughId 在 editorMode 下被无脑置 null，'载入历史试玩'整条路径不通。"
   }
 ]

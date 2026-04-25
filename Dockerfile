@@ -49,7 +49,7 @@ COPY --from=backend-deps /app/packages/specification/node_modules ./packages/spe
 
 COPY apps/server/package.json ./apps/server/package.json
 COPY apps/server/tsconfig.json ./apps/server/tsconfig.json
-COPY apps/server/drizzle.config.ts ./apps/server/drizzle.config.ts
+COPY apps/server/drizzle.config.mts ./apps/server/drizzle.config.mts
 COPY apps/server/drizzle ./apps/server/drizzle
 COPY apps/server/scripts ./apps/server/scripts
 COPY apps/server/src ./apps/server/src
@@ -73,4 +73,4 @@ USER bun
 
 ENTRYPOINT ["/sbin/tini", "--"]
 WORKDIR /app/apps/server
-CMD ["bun", "run", "src/index.ts"]
+CMD ["bun", "run", "src/index.mts"]

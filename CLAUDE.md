@@ -84,6 +84,18 @@ Claude/Codex 共用规则统一维护在 `AGENTS.md`；本文件只保留 Claude
 
 ## 三、每次会话的工作流
 
+### 新 worktree 第一次开工
+
+新 git worktree / fresh checkout 起手两步：
+
+```bash
+pnpm install
+pnpm setup:env   # 把 ~/.config/ivn-editor/{.env,.env.test} 软链到 apps/server/
+```
+
+`setup:env` 幂等可反复跑。源文件不存在会 skip 并提示；`apps/server/.env*` 已是
+真实文件（非 symlink）会 warn 跳过，不覆盖。详见 `scripts/link-env.sh`。
+
 ### 会话启动仪式
 
 每次新会话（包括 context reset 后），按以下顺序恢复上下文：

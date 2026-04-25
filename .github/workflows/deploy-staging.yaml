@@ -1,0 +1,83 @@
+name: deploy-staging
+
+# 仅手动触发：等价于"approval gate"。
+#
+# 历史：原本走 push to main → environment protection (required reviewer)
+# 卡 approval。但 GitHub Free 个人账号的 private repo 不支持 environment
+# protection rules，approval 会被静默跳过。所以拆成 build-staging.yaml
+# (push 自动 build) + 这个 workflow（手动触发 deploy），让你点击就是
+# approval。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要 deploy 的 image tag（去 build-staging workflow 最近一次 run 的 summary 复制）'
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: rollout to staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # environment 字段必须保留：它是 environment-scoped secret
+    # （KUBECONFIG_STAGING_CI 当前在 staging environment 下）的注入条件。
+    # 即使 GitHub Free private repo 不生效 protection rules，environment
+    # scope 本身仍工作。
+    environment:
+      name: staging
+      url: http://39.108.85.114:30001/
+    steps:
+      - name: 安装 kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+
+      - name: 写 kubeconfig
+        env:
+          KUBECONFIG_RAW: ${{ secrets.KUBECONFIG_STAGING_CI }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          printf '%s' "$KUBECONFIG_RAW" > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+          # smoke test
+          kubectl -n ivn get deploy ivn-engine -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+
+      - name: kubectl set image
+        env:
+          PULL_IMAGE: memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com/ivn/engine:${{ inputs.tag }}
+        run: |
+          echo "::notice::deploying $PULL_IMAGE"
+          kubectl -n ivn set image deploy/ivn-engine "server=$PULL_IMAGE"
+
+      - name: rollout status
+        run: kubectl -n ivn rollout status deploy/ivn-engine --timeout=180s
+
+      - name: 当前 pod 状态
+        if: always()
+        run: kubectl -n ivn get pods -l app=ivn-engine -o wide
+
+      - name: /health 三连
+        run: |
+          for i in 1 2 3; do
+            if curl -sf --max-time 5 http://39.108.85.114:30001/health > /dev/null; then
+              echo "/health #$i OK"
+            else
+              echo "::error::/health #$i FAIL"
+              exit 1
+            fi
+          done
+
+      - name: summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## staging rollout
+
+          **tag:** \`${{ inputs.tag }}\`
+          **公网:** http://39.108.85.114:30001/
+          EOF

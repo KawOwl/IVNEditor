@@ -130,15 +130,32 @@ Choose verification proportional to the change:
 - UI changes: run the UI and inspect the relevant flow in the browser
 
 For commits in this refactor line, run negentropy before committing and include
-a report under `docs/refactor/`:
+a report under `docs/refactor/`. The CLI is installed system-wide as
+`negentropy`:
 
 ```bash
-cargo run --quiet --manifest-path /Users/kawowl/project/negentropy-labs/negentropy/Cargo.toml -- analyze . --format json --fail-on none --output /tmp/ivn-negentropy.json
+negentropy analyze . --format json --fail-on none --output /tmp/ivn-negentropy.json
 ```
 
-Summarize useful repository improvement notes in the report. Existing high
+Common variants (pick one based on what you want to see):
+
+- Full machine-readable JSON for diff/archive (recommended for the report):
+  `negentropy analyze . --format json --fail-on none --output /tmp/ivn-negentropy.json`
+- Quick top-N hotspot table while iterating:
+  `negentropy analyze . --format table --fail-on none --top 10`
+- Both at once (terminal table + JSON file): drop `--output` and use
+  `--format both`.
+
+Flags worth knowing: `--top N` (default 3) for hotspot count;
+`--extensions .ts,.tsx,.mts` to scope the scan; `--fail-on
+none|medium|high` to control whether the run exits non-zero. Existing high
 negentropy risk does not block a commit when the scan is run with
 `--fail-on none`, but new hotspots should be investigated.
+
+Historical reports under `docs/refactor/` may show the older
+`cargo run --manifest-path /Users/kawowl/project/negentropy-labs/...` form;
+that's a record of how the scan was run at the time and stays as-is. New
+reports should use the `negentropy` command directly.
 
 ---
 

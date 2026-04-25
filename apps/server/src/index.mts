@@ -98,6 +98,8 @@ async function bootstrapDefaultLlmConfig() {
     apiKey: string;
     model: string;
     name: string;
+    thinkingEnabled: boolean | null;
+    reasoningEffort: 'high' | 'max' | null;
   } | null = null;
 
   if (existsSync(legacyPath)) {
@@ -105,12 +107,19 @@ async function bootstrapDefaultLlmConfig() {
       const raw = readFileSync(legacyPath, 'utf-8');
       const parsed = JSON.parse(raw);
       if (parsed.apiKey) {
+        const thinkingEnabledRaw = parsed.thinkingEnabled;
+        const reasoningEffortRaw = parsed.reasoningEffort;
         seed = {
           provider: parsed.provider ?? 'openai-compatible',
           baseUrl: parsed.baseUrl ?? 'https://api.deepseek.com/v1',
           apiKey: parsed.apiKey,
           model: parsed.model ?? 'deepseek-chat',
           name: parsed.name ?? 'default',
+          thinkingEnabled: typeof thinkingEnabledRaw === 'boolean' ? thinkingEnabledRaw : null,
+          reasoningEffort:
+            reasoningEffortRaw === 'high' || reasoningEffortRaw === 'max'
+              ? reasoningEffortRaw
+              : null,
         };
       }
     } catch (err) {

@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "dev",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@ivn/ui", "dev", "--port", "5174"],
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": ["-c", "cd apps/ui && exec bun run vite --port 5174"],
       "port": 5174
     },
     {

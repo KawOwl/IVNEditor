@@ -1,0 +1,67 @@
+name: build-staging
+
+# push 到 main 自动跑：只 build + push 镜像到 ACR，不动 staging。
+# 完成后把 image tag 写到 workflow summary，让你去 deploy-staging
+# 手动触发时复制粘贴。
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: build-staging
+  cancel-in-progress: false
+
+jobs:
+  build-push:
+    name: build + push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 计算 tag
+        id: tag
+        run: |
+          TAG="$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "::notice::tag=$TAG"
+
+      - name: docker login ACR
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: |
+          echo "$ACR_PASSWORD" | docker login \
+            memoryx-registry-registry.cn-shenzhen.cr.aliyuncs.com \
+            -u "$ACR_USERNAME" \
+            --password-stdin
+
+      - name: docker build
+        env:
+          DOCKER_BUILDKIT: "1"
+          PUSH_IMAGE: memoryx-registry-registry.cn-shenzhen.cr.aliyuncs.com/ivn/engine:${{ steps.tag.outputs.tag }}
+        run: docker build --tag "$PUSH_IMAGE" --platform linux/amd64 --progress=plain .
+
+      - name: docker push
+        env:
+          PUSH_IMAGE: memoryx-registry-registry.cn-shenzhen.cr.aliyuncs.com/ivn/engine:${{ steps.tag.outputs.tag }}
+        run: docker push "$PUSH_IMAGE"
+
+      - name: 写 summary（含可复制的 tag + 跳转链接）
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## ✅ build + push 成功
+
+          **image tag:**
+
+          \`\`\`
+          ${{ steps.tag.outputs.tag }}
+          \`\`\`
+
+          ### 下一步：手动 deploy
+          1. 复制上面的 tag
+          2. 打开 [deploy-staging workflow](https://github.com/${{ github.repository }}/actions/workflows/deploy-staging.yaml)
+          3. 点右上角 **Run workflow**，把 tag 粘进 \`tag\` 输入框，点 **Run workflow** 提交
+          EOF
