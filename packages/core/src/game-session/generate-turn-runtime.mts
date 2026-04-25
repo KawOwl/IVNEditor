@@ -19,7 +19,7 @@ import type { StateStore } from '#internal/state-store';
 import type { Memory } from '#internal/memory/types';
 import { estimateTokens } from '#internal/tokens';
 import { assembleContext, evaluateCondition } from '#internal/context-assembler';
-import { computeFocus } from '#internal/focus';
+import { computeFocus, focusEquals } from '#internal/focus';
 import { createTools, getEnabledTools } from '#internal/tool-executor';
 import type { SignalInputOptions } from '#internal/tool-executor';
 import type { GenerateOptions, GenerateResult, LLMClient, StepInfo } from '#internal/llm-client';
@@ -476,30 +476,31 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     runAssemble: (focus: ReturnType<typeof computeFocus>) => Promise<Awaited<ReturnType<typeof assembleContext>>>,
     traceHandle: GenerateTraceHandle | undefined,
   ): PrepareStepSystem {
-    const focusKey = (focus: ReturnType<typeof computeFocus>) =>
-      JSON.stringify({ scene: focus.scene, characters: focus.characters, stage: focus.stage });
-    let cachedFocusKey = focusKey(computeFocus(this.deps.stateStore.getAll()));
+    let cachedFocus = computeFocus(this.deps.stateStore.getAll());
     let cachedSystemPrompt = context.systemPrompt;
+    let everRefreshed = false;
 
     return async ({ stepNumber }) => {
       if (stepNumber === 0) return undefined;
 
       const curFocus = computeFocus(this.deps.stateStore.getAll());
-      const curKey = focusKey(curFocus);
-      if (curKey === cachedFocusKey) {
-        return cachedSystemPrompt === context.systemPrompt ? undefined : cachedSystemPrompt;
+      if (focusEquals(curFocus, cachedFocus)) {
+        // focus 未变。第一次进入（everRefreshed=false）→ 沿用外层 system，
+        // 让 AI SDK 走原始 systemPrompt；refresh 过后 → 喂回缓存的覆盖值，
+        // 否则会从 step N>0 跳回 step 0 的 prompt。
+        return everRefreshed ? cachedSystemPrompt : undefined;
       }
 
-      const prevFocus = JSON.parse(cachedFocusKey) as unknown;
       const newCtx = await runAssemble(curFocus);
-      cachedFocusKey = curKey;
-      cachedSystemPrompt = newCtx.systemPrompt;
       traceHandle?.event(
         'focus-refresh',
-        { from: prevFocus, to: curFocus },
+        { from: cachedFocus, to: curFocus },
         { stepNumber },
       );
-      return newCtx.systemPrompt;
+      cachedFocus = curFocus;
+      cachedSystemPrompt = newCtx.systemPrompt;
+      everRefreshed = true;
+      return cachedSystemPrompt;
     };
   }
 

@@ -60,6 +60,25 @@ export function scoreSegment(seg: PromptSegment, focus: FocusState): number {
 }
 
 /**
+ * 结构相等：两个 FocusState 在 scene / stage / characters 三个维度都相同。
+ *
+ * characters 按位置序比较 —— FocusState 的字符列表是 computeFocus 从 state 推
+ * 导出的稳定序，不存在"同集合不同序"的语义上等价的情形。如果未来 focus 来源
+ * 变成集合，这里要切成集合相等。
+ *
+ * 用于 per-step prompt 缓存：focusEquals 命中 → 复用上次组装的 system prompt
+ * 走 provider 端 prompt cache；不命中 → 重组装并标记 'focus-refresh' tracing 事件。
+ */
+export function focusEquals(a: FocusState, b: FocusState): boolean {
+  if (a.scene !== b.scene || a.stage !== b.stage) return false;
+  const ac = a.characters;
+  const bc = b.characters;
+  if (ac === bc) return true;
+  if (!ac || !bc || ac.length !== bc.length) return false;
+  return ac.every((v, i) => v === bc[i]);
+}
+
+/**
  * 对一组 segments 按 focus 打分、降序排列、取 top N。
  * 仅返回 score > 0 的 segment（无标签或不匹配的不出现）。
  */
