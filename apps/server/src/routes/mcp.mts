@@ -56,6 +56,8 @@ import { scriptVersionService } from '#internal/services/script-version-service'
 import { assetService, type AssetKind } from '#internal/services/asset-service';
 import { getAssetStorage } from '#internal/services/asset-storage';
 import { requireAdmin, isResponse, type Identity } from '#internal/auth-identity';
+import { ALL_OPS } from '#internal/operations/registry';
+import { opsToMcpTools } from '#internal/operations/adapters/mcp';
 
 // ============================================================================
 // JSON-RPC 2.0 types
@@ -1260,6 +1262,10 @@ const tools: ToolDef[] = [
     },
   },
 ];
+
+// 把 op-kit 注册的 ops（v0.1：lint_manifest）派生为 MCP tool 追加到尾部。
+// 旧 tool 后续会逐个迁移到 op-kit；过渡期两边并存。
+tools.push(...opsToMcpTools(ALL_OPS));
 
 const toolByName = new Map(tools.map((t) => [t.name, t]));
 

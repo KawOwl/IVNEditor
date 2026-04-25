@@ -32,6 +32,7 @@
     "@ivn/specification": "workspace:*",
     "@sinclair/typebox": "^0.34.49",
     "bcryptjs": "^3.0.3",
+    "zod": "^4.3.6",
     "drizzle-orm": "^0.45.2",
     "elysia": "^1.2.25",
     "langfuse": "^3.38.20",
