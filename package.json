@@ -11,6 +11,7 @@
     "build": "pnpm --filter @ivn/ui build",
     "check:esm": "node scripts/check-esm.mjs",
     "check": "pnpm check:esm && pnpm typecheck",
+    "setup:env": "bash scripts/link-env.sh",
     "preview": "pnpm --filter @ivn/ui preview",
     "typecheck": "pnpm --filter @ivn/specification typecheck && pnpm --filter @ivn/core typecheck && pnpm --filter @ivn/ui typecheck && pnpm --filter @ivn/server typecheck",
     "typecheck:tsc": "pnpm --filter @ivn/specification typecheck:tsc && pnpm --filter @ivn/core typecheck:tsc && pnpm --filter @ivn/ui typecheck:tsc && pnpm --filter @ivn/server typecheck:tsc",
