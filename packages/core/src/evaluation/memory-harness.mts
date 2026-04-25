@@ -10,12 +10,26 @@
 import { computeFocus } from '#internal/focus';
 import { createGenerateTurnRuntime } from '#internal/game-session/generate-turn-runtime';
 import { computeReceivePayload } from '#internal/game-session/input-payload';
+import type {
+  BatchId,
+  CoreEvent,
+  CoreEventEnvelope,
+  CoreEventSink,
+} from '#internal/game-session/core-events';
+import {
+  batchId as toBatchId,
+  createInputRequest,
+  inputRequestId as toInputRequestId,
+  turnId as toTurnId,
+} from '#internal/game-session/core-events';
+import { validateCoreEventSequence, type CoreEventProtocolReport } from '#internal/game-session/core-event-protocol';
+import { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
 import {
   createRecordingSessionEmitter,
   type RecordedSessionOutput,
 } from '#internal/game-session/recording-emitter';
 import type { SessionPersistence } from '#internal/game-session/types';
-import type { GenerateOptions, GenerateResult, LLMClient, StepInfo } from '#internal/llm-client';
+import { LLMClient, type GenerateOptions, type GenerateResult, type LLMConfig, type StepInfo } from '#internal/llm-client';
 import { createMemory } from '#internal/memory/factory';
 import type {
   CreateMemoryOptions,
@@ -105,6 +119,14 @@ export interface MemoryEvaluationOptions {
   readonly compression?: ScriptedCompressionFixture;
 }
 
+export interface LiveMemoryEvaluationOptions {
+  readonly scenario: MemoryEvaluationScenario;
+  readonly variants: ReadonlyArray<MemoryEvaluationVariant>;
+  readonly llmConfig: LLMConfig;
+  readonly inputs: ReadonlyArray<ScriptedInput>;
+  readonly maxTurns?: number;
+}
+
 export interface MemoryEvaluationPersistenceSnapshot {
   readonly entries: ReadonlyArray<NarrativeEntry>;
   readonly generateStarts: ReadonlyArray<number>;
@@ -134,6 +156,9 @@ export interface MemoryEvaluationRun {
   readonly recording: RecordedSessionOutput;
   readonly persistence: MemoryEvaluationPersistenceSnapshot;
   readonly llmCalls: ReadonlyArray<ScriptedLLMCall>;
+  readonly coreEvents: ReadonlyArray<CoreEvent>;
+  readonly coreEventEnvelopes: ReadonlyArray<CoreEventEnvelope>;
+  readonly coreEventProtocol: CoreEventProtocolReport;
 }
 
 export interface MemoryEvaluationComparison {
@@ -185,6 +210,7 @@ export async function runMemoryEvaluationCase(options: {
   const { scenario, variant, script } = options;
   const playthroughId = scenario.playthroughId ?? `memory-eval-${scenario.id}-${variant.id}`;
   const recording = createRecordingSessionEmitter();
+  const coreRecorder = createRecordingCoreEventSink({ playthroughId });
   const journal = createInMemoryEvaluationJournal(playthroughId);
   const llmClient = createScriptedEvaluationLLM({
     turns: script.map((turn) => turn.generate),
@@ -210,6 +236,10 @@ export async function runMemoryEvaluationCase(options: {
   recording.emitter.setStatus('loading');
   recording.emitter.emitSceneChange(currentScene);
   await syncHarnessDebug(recording.emitter, memory, stateStore);
+  coreRecorder.publish({
+    type: 'session-started',
+    snapshot: await createHarnessSnapshot(memory, stateStore, currentScene),
+  });
 
   for (const turnSpec of script) {
     recording.emitter.setStatus('generating');
@@ -231,6 +261,7 @@ export async function runMemoryEvaluationCase(options: {
       assemblyOrder: scenario.assemblyOrder,
       disabledSections: scenario.disabledSections,
       persistence: journal.persistence,
+      coreEventSink: coreRecorder,
       protocolVersion: scenario.protocolVersion ?? 'v1-tool-call',
       parserManifest: scenario.parserManifest,
       characters: scenario.characters ?? [],
@@ -264,6 +295,7 @@ export async function runMemoryEvaluationCase(options: {
       emitter: recording.emitter,
       memory,
       persistence: journal.persistence,
+      coreEventSink: coreRecorder,
       stateStore,
       currentScene,
       pendingSignal: result.pendingSignal,
@@ -279,6 +311,7 @@ export async function runMemoryEvaluationCase(options: {
       emitter: recording.emitter,
       memory,
       persistence: journal.persistence,
+      coreEventSink: coreRecorder,
       stateStore,
       currentScene,
       pendingSignal: result.pendingSignal,
@@ -287,6 +320,7 @@ export async function runMemoryEvaluationCase(options: {
   }
 
   const memorySnapshot = await memory.snapshot();
+  const coreEvents = coreRecorder.getEvents();
   return {
     variantId: variant.id,
     memoryKind: memory.kind,
@@ -298,6 +332,179 @@ export async function runMemoryEvaluationCase(options: {
     recording: recording.getSnapshot(),
     persistence: journal.getSnapshot(),
     llmCalls: llmClient.getCalls(),
+    coreEvents,
+    coreEventEnvelopes: coreRecorder.getEnvelopes(),
+    coreEventProtocol: validateCoreEventSequence(coreEvents),
+  };
+}
+
+export async function runLiveMemoryEvaluationSuite(
+  options: LiveMemoryEvaluationOptions,
+): Promise<MemoryEvaluationReport> {
+  const runs = [];
+  for (const variant of options.variants) {
+    runs.push(await runLiveMemoryEvaluationCase({
+      scenario: options.scenario,
+      variant,
+      llmConfig: createNoThinkingLLMConfig(options.llmConfig),
+      inputs: options.inputs,
+      maxTurns: options.maxTurns,
+    }));
+  }
+
+  return {
+    scenarioId: options.scenario.id,
+    runs,
+    comparisons: runs.map(createComparison),
+  };
+}
+
+export async function runLiveMemoryEvaluationCase(options: {
+  readonly scenario: MemoryEvaluationScenario;
+  readonly variant: MemoryEvaluationVariant;
+  readonly llmConfig: LLMConfig;
+  readonly inputs: ReadonlyArray<ScriptedInput>;
+  readonly maxTurns?: number;
+}): Promise<MemoryEvaluationRun> {
+  const { scenario, variant } = options;
+  const playthroughId = scenario.playthroughId ?? `memory-live-${scenario.id}-${variant.id}`;
+  const recording = createRecordingSessionEmitter();
+  const coreRecorder = createRecordingCoreEventSink({ playthroughId });
+  const journal = createInMemoryEvaluationJournal(playthroughId);
+  const llmClient = createRecordingEvaluationLLM(new LLMClient(createNoThinkingLLMConfig(options.llmConfig)));
+  const stateStore = new StateStore(scenario.stateSchema);
+  const memory = await createVariantMemory({
+    scenario,
+    variant,
+    playthroughId,
+    reader: journal.reader,
+    llmClient,
+  });
+
+  let currentScene = copyScene(scenario.defaultScene ?? { background: null, sprites: [] });
+  let lastPlayerInput = '';
+  let scenarioEnded = false;
+  let scenarioEndReason: string | undefined;
+  let stopReason: MemoryEvaluationStopReason = 'completed-script';
+  let turnsRun = 0;
+  const maxTurns = options.maxTurns ?? Math.max(1, options.inputs.length + 1);
+
+  recording.emitter.reset();
+  recording.emitter.setStatus('loading');
+  recording.emitter.emitSceneChange(currentScene);
+  await syncHarnessDebug(recording.emitter, memory, stateStore);
+  coreRecorder.publish({
+    type: 'session-started',
+    snapshot: await createHarnessSnapshot(memory, stateStore, currentScene),
+  });
+
+  for (let turnIndex = 0; turnIndex < maxTurns; turnIndex += 1) {
+    recording.emitter.setStatus('generating');
+    const turn = stateStore.getTurn() + 1;
+    stateStore.setTurn(turn);
+    turnsRun += 1;
+    await journal.persistence.onGenerateStart(turn);
+
+    const runtime = createGenerateTurnRuntime({
+      turn,
+      emitter: recording.emitter,
+      stateStore,
+      memory,
+      llmClient,
+      segments: scenario.segments,
+      enabledTools: scenario.enabledTools ?? [],
+      tokenBudget: scenario.tokenBudget ?? 120000,
+      initialPrompt: scenario.initialPrompt,
+      assemblyOrder: scenario.assemblyOrder,
+      disabledSections: scenario.disabledSections,
+      persistence: journal.persistence,
+      coreEventSink: coreRecorder,
+      protocolVersion: scenario.protocolVersion ?? 'v1-tool-call',
+      parserManifest: scenario.parserManifest,
+      characters: scenario.characters ?? [],
+      backgrounds: scenario.backgrounds ?? [],
+      currentScene,
+      buildRetrievalQuery: async () =>
+        buildRetrievalQuery(stateStore.getAll(), lastPlayerInput),
+      isActive: () => true,
+      onScenarioEnd: (reason) => {
+        scenarioEnded = true;
+        scenarioEndReason = reason;
+      },
+    });
+
+    const result = await runtime.run();
+    currentScene = result.currentScene;
+    if (result.stopped) {
+      stopReason = 'stopped';
+      break;
+    }
+
+    if (scenarioEnded) {
+      recording.emitter.setStatus('finished');
+      await journal.persistence.onScenarioFinished?.({ reason: scenarioEndReason });
+      coreRecorder.publish({
+        type: 'session-finished',
+        reason: scenarioEndReason,
+        snapshot: await createHarnessSnapshot(memory, stateStore, currentScene),
+      });
+      stopReason = 'scenario-finished';
+      break;
+    }
+
+    await requestInput({
+      emitter: recording.emitter,
+      memory,
+      persistence: journal.persistence,
+      coreEventSink: coreRecorder,
+      stateStore,
+      currentScene,
+      pendingSignal: result.pendingSignal,
+    });
+
+    const inputText = getScriptedInput(options.inputs[turnIndex]);
+    if (inputText === null) {
+      stopReason = 'waiting-for-unscripted-input';
+      break;
+    }
+
+    lastPlayerInput = inputText;
+    await receiveInput({
+      emitter: recording.emitter,
+      memory,
+      persistence: journal.persistence,
+      coreEventSink: coreRecorder,
+      stateStore,
+      currentScene,
+      pendingSignal: result.pendingSignal,
+      inputText,
+    });
+  }
+
+  const memorySnapshot = await memory.snapshot();
+  const coreEvents = coreRecorder.getEvents();
+  return {
+    variantId: variant.id,
+    memoryKind: memory.kind,
+    turnsRun,
+    stopReason,
+    stateVars: stateStore.getAll(),
+    currentScene,
+    memorySnapshot,
+    recording: recording.getSnapshot(),
+    persistence: journal.getSnapshot(),
+    llmCalls: llmClient.getCalls(),
+    coreEvents,
+    coreEventEnvelopes: coreRecorder.getEnvelopes(),
+    coreEventProtocol: validateCoreEventSequence(coreEvents),
+  };
+}
+
+export function createNoThinkingLLMConfig(config: LLMConfig): LLMConfig {
+  return {
+    ...config,
+    thinkingEnabled: false,
+    reasoningEffort: null,
   };
 }
 
@@ -335,17 +542,20 @@ async function requestInput(options: {
   readonly emitter: SessionEmitter;
   readonly memory: Memory;
   readonly persistence: SessionPersistence;
+  readonly coreEventSink?: CoreEventSink;
   readonly stateStore: StateStore;
   readonly currentScene: SceneState;
   readonly pendingSignal: {
     readonly hint: string;
     readonly choices: ReadonlyArray<string>;
+    readonly batchId?: string | null;
   } | null;
 }): Promise<void> {
   const signal = options.pendingSignal;
   const choices = signal?.choices && signal.choices.length > 0 ? [...signal.choices] : null;
   const inputType = choices ? 'choice' : 'freetext';
   const hint = signal?.hint ?? null;
+  const turn = options.stateStore.getTurn();
 
   options.emitter.setInputHint(hint);
   options.emitter.setInputType(inputType, choices);
@@ -359,16 +569,27 @@ async function requestInput(options: {
     currentScene: copyScene(options.currentScene),
     stateVars: options.stateStore.getAll(),
   });
+  options.coreEventSink?.publish({
+    type: 'waiting-input-started',
+    turnId: toTurnId(turn),
+    requestId: toInputRequestId(turn),
+    source: signal ? 'signal' : 'fallback',
+    causedByBatchId: toBatchId(signal?.batchId),
+    request: createInputRequest(hint, choices),
+    snapshot: await createHarnessSnapshot(options.memory, options.stateStore, options.currentScene),
+  });
 }
 
 async function receiveInput(options: {
   readonly emitter: SessionEmitter;
   readonly memory: Memory;
   readonly persistence: SessionPersistence;
+  readonly coreEventSink?: CoreEventSink;
   readonly stateStore: StateStore;
   readonly currentScene: SceneState;
   readonly pendingSignal: {
     readonly choices: ReadonlyArray<string>;
+    readonly batchId?: string | null;
   } | null;
   readonly inputText: string;
 }): Promise<void> {
@@ -379,14 +600,15 @@ async function receiveInput(options: {
 
   options.emitter.setError(null);
   options.emitter.appendEntry({ role: 'receive', content: options.inputText });
-  options.emitter.appendSentence({
+  const sentence = {
     kind: 'player_input',
     text: options.inputText,
     ...(payload.selectedIndex !== undefined ? { selectedIndex: payload.selectedIndex } : {}),
     sceneRef: copyScene(options.currentScene),
     turnNumber: turn,
     index: turn * 1000,
-  });
+  } as const;
+  options.emitter.appendSentence(sentence);
 
   await options.memory.appendTurn({
     turn,
@@ -395,13 +617,30 @@ async function receiveInput(options: {
     tokenCount: estimateTokens(options.inputText),
   });
 
+  const receiveBatchId = `memory-eval-receive-${turn}` as BatchId;
+  const memorySnapshot = await options.memory.snapshot();
   await options.persistence.onReceiveComplete({
     entry: { role: 'receive', content: options.inputText },
     stateVars: options.stateStore.getAll(),
     turn,
-    memorySnapshot: await options.memory.snapshot(),
+    memorySnapshot,
     payload,
-    batchId: `memory-eval-receive-${turn}`,
+    batchId: receiveBatchId,
+  });
+  options.coreEventSink?.publish({
+    type: 'player-input-recorded',
+    turnId: toTurnId(turn),
+    requestId: toInputRequestId(turn),
+    batchId: receiveBatchId,
+    text: options.inputText,
+    payload,
+    sentence,
+    snapshot: {
+      turn,
+      stateVars: options.stateStore.getAll(),
+      memorySnapshot,
+      currentScene: copyScene(options.currentScene),
+    },
   });
 
   options.emitter.setInputHint(null);
@@ -422,8 +661,51 @@ async function syncHarnessDebug(
   });
 }
 
+async function createHarnessSnapshot(
+  memory: Memory,
+  stateStore: StateStore,
+  currentScene: SceneState,
+): Promise<{
+  readonly turn: number;
+  readonly stateVars: Record<string, unknown>;
+  readonly memorySnapshot: Record<string, unknown>;
+  readonly currentScene: SceneState;
+}> {
+  return {
+    turn: stateStore.getTurn(),
+    stateVars: stateStore.getAll(),
+    memorySnapshot: await memory.snapshot(),
+    currentScene: copyScene(currentScene),
+  };
+}
+
 interface ScriptedEvaluationLLM extends Pick<LLMClient, 'generate'> {
   getCalls(): ReadonlyArray<ScriptedLLMCall>;
+}
+
+function createRecordingEvaluationLLM(
+  client: Pick<LLMClient, 'generate'>,
+): ScriptedEvaluationLLM {
+  let index = 0;
+  const calls: ScriptedLLMCall[] = [];
+
+  return {
+    async generate(options) {
+      const result = await client.generate(options);
+      index += 1;
+      calls.push(createLLMCall(
+        Object.keys(options.tools).length === 0 ? 'compress' : 'generate',
+        index,
+        options,
+        result.text,
+      ));
+      return result;
+    },
+
+    getCalls() {
+      return calls.map(copyLLMCall);
+    },
+  };
 }
 
 function createScriptedEvaluationLLM(options: {

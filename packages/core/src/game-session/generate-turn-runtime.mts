@@ -35,6 +35,13 @@ import {
 import { serializeMessagesForDebug } from '#internal/messages-builder';
 import { createNarrationAccumulator } from '#internal/game-session/narration';
 import { applyScenePatchToState } from '#internal/game-session/scene-state';
+import type { CoreEventSink, RuntimeSentence, StepId, TurnId } from '#internal/game-session/core-events';
+import {
+  batchId as toBatchId,
+  createInputRequest,
+  stepId as toStepId,
+  turnId as toTurnId,
+} from '#internal/game-session/core-events';
 import type {
   GenerateTraceHandle,
   SessionPersistence,
@@ -46,6 +53,7 @@ type SceneTransition = 'fade' | 'cut' | 'dissolve';
 type PrepareStepSystem = NonNullable<GenerateOptions['prepareStepSystem']>;
 
 type StepStartInfo = {
+  stepNumber: number;
   batchId: string;
   isFollowup: boolean;
 };
@@ -116,6 +124,7 @@ export interface GenerateTurnRuntimeDeps {
   readonly characters: ReadonlyArray<CharacterAsset>;
   readonly backgrounds: ReadonlyArray<BackgroundAsset>;
   readonly currentScene: SceneState;
+  readonly coreEventSink?: CoreEventSink;
   buildRetrievalQuery(): Promise<string>;
   isActive(): boolean;
   onScenarioEnd(reason?: string): void;
@@ -148,10 +157,12 @@ function toTraceStepRecord(step: StepInfo): TraceStepRecord {
 }
 
 class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
+  private readonly turnId: TurnId;
   private currentScene: SceneState;
   private currentNarrativeBuffer = '';
   private currentReasoningBuffer = '';
   private currentStepBatchId: string | null = null;
+  private currentStepId: StepId | null = null;
   private pendingSignal: GenerateTurnPendingSignal | null = null;
   private scenePatchEmitter:
     | ((transition?: SceneTransition) => void)
@@ -160,12 +171,18 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   private abortController: AbortController | null = null;
 
   constructor(private readonly deps: GenerateTurnRuntimeDeps) {
+    this.turnId = toTurnId(deps.turn);
     this.currentScene = copyScene(deps.currentScene);
   }
 
   async run(): Promise<GenerateTurnResult> {
     const traceHandle = this.deps.tracing?.startGenerateTrace(this.deps.turn);
     const toolCallStack = new Map<string, ToolCallTraceHandle[]>();
+    this.publish({
+      type: 'generate-turn-started',
+      turn: this.deps.turn,
+      turnId: this.turnId,
+    });
 
     try {
       const prepared = await this.prepareGenerateTurn(traceHandle);
@@ -183,6 +200,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       this.failGenerateTurn(error, traceHandle);
     } finally {
       this.currentStepBatchId = null;
+      this.currentStepId = null;
       this.scenePatchEmitter = null;
       this.pendingNarrationFlusher = null;
       this.abortController = null;
@@ -239,6 +257,16 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         activeSegmentIds,
       },
     });
+    this.publish({
+      type: 'context-assembled',
+      turnId: this.turnId,
+      promptSnapshot: {
+        systemPrompt: context.systemPrompt,
+        messages: debugMessages,
+        tokenBreakdown: context.tokenBreakdown,
+        activeSegmentIds,
+      },
+    });
 
     traceHandle?.setInput({
       systemPrompt: context.systemPrompt,
@@ -260,6 +288,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     this.currentNarrativeBuffer = '';
     this.currentReasoningBuffer = '';
     this.deps.emitter.beginStreamingEntry();
+    this.publish({ type: 'assistant-message-started', turnId: this.turnId });
 
     const narrativeRuntime = this.createNarrativeRuntime(traceHandle);
     this.pendingNarrationFlusher = narrativeRuntime.flushPendingNarration;
@@ -283,15 +312,37 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       onTextChunk: (chunk) => {
         this.currentNarrativeBuffer += chunk;
         this.deps.emitter.appendToStreamingEntry(chunk);
+        this.publish({
+          type: 'assistant-text-delta',
+          turnId: this.turnId,
+          stepId: this.currentStepId,
+          batchId: toBatchId(this.currentStepBatchId),
+          text: chunk,
+        });
         prepared.narrativeRuntime.feedTextChunk(chunk);
       },
       onReasoningChunk: (chunk) => {
         this.currentReasoningBuffer += chunk;
         this.deps.emitter.appendReasoningToStreamingEntry(chunk);
+        this.publish({
+          type: 'assistant-reasoning-delta',
+          turnId: this.turnId,
+          stepId: this.currentStepId,
+          batchId: toBatchId(this.currentStepBatchId),
+          text: chunk,
+        });
       },
       onToolCall: (name, args) => {
         this.deps.emitter.addToolCall({ name, args, result: undefined });
         this.deps.emitter.addPendingToolCall({ name, args, result: undefined });
+        this.publish({
+          type: 'tool-call-started',
+          turnId: this.turnId,
+          stepId: this.currentStepId,
+          batchId: toBatchId(this.currentStepBatchId),
+          toolName: name,
+          input: args,
+        });
         const handle = traceHandle?.startToolCall(name, args);
         if (handle) {
           const stack = toolCallStack.get(name) ?? [];
@@ -302,6 +353,14 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       onToolResult: (name, toolResult) => {
         this.deps.emitter.updateToolResult(name, toolResult);
         this.deps.emitter.updatePendingToolResult(name, toolResult);
+        this.publish({
+          type: 'tool-call-finished',
+          turnId: this.turnId,
+          stepId: this.currentStepId,
+          batchId: toBatchId(this.currentStepBatchId),
+          toolName: name,
+          output: toolResult,
+        });
         const stack = toolCallStack.get(name);
         if (stack && stack.length > 0) {
           stack.shift()?.end(toolResult);
@@ -344,6 +403,11 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     this.pendingNarrationFlusher = null;
     this.deps.emitter.stagePendingDebug({ finishReason: result.finishReason });
     this.deps.emitter.finalizeStreamingEntry();
+    this.publish({
+      type: 'assistant-message-finalized',
+      turnId: this.turnId,
+      finishReason: result.finishReason,
+    });
   }
 
   private async persistGenerateResult(result: GenerateResult): Promise<void> {
@@ -366,6 +430,20 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         },
         batchId: this.currentStepBatchId,
       }).catch((e) => console.error('[Persistence] onNarrativeSegmentFinalized (final) failed:', e));
+      this.publish({
+        type: 'narrative-segment-finalized',
+        turnId: this.turnId,
+        stepId: this.currentStepId,
+        batchId: toBatchId(this.currentStepBatchId),
+        reason: 'generate-complete',
+        entry: {
+          role: 'generate',
+          content: this.currentNarrativeBuffer,
+          reasoning: this.currentReasoningBuffer || undefined,
+          finishReason: result.finishReason,
+        },
+        sceneAfter: copyScene(this.currentScene),
+      });
       this.currentNarrativeBuffer = '';
       this.currentReasoningBuffer = '';
     }
@@ -378,11 +456,36 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         : null,
       currentScene: this.currentScene,
     }).catch((e) => console.error('[Persistence] onGenerateComplete failed:', e));
+    this.publish({
+      type: 'generate-turn-completed',
+      turnId: this.turnId,
+      finishReason: result.finishReason,
+      preview: result.text
+        ? extractPlainText(result.text).slice(0, 80).replace(/\n/g, ' ').trim()
+        : null,
+      snapshot: {
+        turn: this.deps.turn,
+        stateVars: this.deps.stateStore.getAll(),
+        memorySnapshot: memSnapGen,
+        currentScene: copyScene(this.currentScene),
+      },
+    });
   }
 
   private async compactMemoryIfNeeded(): Promise<void> {
     this.deps.emitter.setStatus('compressing');
+    this.publish({ type: 'memory-compaction-started', turnId: this.turnId });
     await this.deps.memory.maybeCompact();
+    this.publish({
+      type: 'memory-compaction-completed',
+      turnId: this.turnId,
+      snapshot: {
+        turn: this.deps.turn,
+        stateVars: this.deps.stateStore.getAll(),
+        memorySnapshot: await this.deps.memory.snapshot(),
+        currentScene: copyScene(this.currentScene),
+      },
+    });
   }
 
   private async syncGenerateDebugState(): Promise<void> {
@@ -394,6 +497,15 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       totalTurns: this.deps.stateStore.getTurn(),
       memoryEntryCount: entries.length,
       memorySummaryCount: summaries.length,
+    });
+    this.publish({
+      type: 'diagnostics-updated',
+      diagnostics: {
+        stateVars: this.deps.stateStore.getAll(),
+        totalTurns: this.deps.stateStore.getTurn(),
+        memoryEntryCount: entries.length,
+        memorySummaryCount: summaries.length,
+      },
     });
   }
 
@@ -539,6 +651,22 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
           { turn: this.deps.turn },
         );
       }
+
+      if (
+        batch.sentences.length > 0 ||
+        batch.scratches.length > 0 ||
+        batch.degrades.length > 0
+      ) {
+        this.publish({
+          type: 'narrative-batch-emitted',
+          turnId: this.turnId,
+          batchId: toBatchId(this.currentStepBatchId),
+          sentences: batch.sentences.filter(isRuntimeSentence).map(copyRuntimeSentence),
+          scratches: batch.scratches.map((scratch) => ({ ...scratch })),
+          degrades: batch.degrades.map((degrade) => ({ ...degrade })),
+          sceneAfter: copyScene(this.currentScene),
+        });
+      }
     };
 
     this.scenePatchEmitter = null;
@@ -645,7 +773,15 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   }
 
   private handleStepStart(info: StepStartInfo): void {
+    this.currentStepId = toStepId(this.deps.turn, info.stepNumber);
     this.rememberMainStepBatch(info);
+    this.publish({
+      type: 'llm-step-started',
+      turnId: this.turnId,
+      stepId: this.currentStepId,
+      batchId: toBatchId(info.batchId)!,
+      isFollowup: info.isFollowup,
+    });
   }
 
   private handleStepFinished(
@@ -688,6 +824,20 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       .catch((err) =>
         console.error('[Persistence] tool-only step reasoning stub failed:', err),
       );
+    this.publish({
+      type: 'narrative-segment-finalized',
+      turnId: this.turnId,
+      stepId: this.currentStepId,
+      batchId: toBatchId(step.batchId),
+      reason: 'tool-only-step-reasoning',
+      entry: {
+        role: 'generate',
+        content: '',
+        reasoning: stepReasoning,
+        finishReason: String(step.finishReason),
+      },
+      sceneAfter: copyScene(this.currentScene),
+    });
 
     if (this.currentReasoningBuffer.endsWith(stepReasoning)) {
       this.currentReasoningBuffer = this.currentReasoningBuffer.slice(
@@ -733,6 +883,20 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       } catch (e) {
         console.error('[recordPendingSignal] onNarrativeSegmentFinalized failed:', e);
       }
+      this.publish({
+        type: 'narrative-segment-finalized',
+        turnId: this.turnId,
+        stepId: this.currentStepId,
+        batchId: toBatchId(this.currentStepBatchId),
+        reason: 'signal-input-preflush',
+        entry: {
+          role: 'generate',
+          content: buffered,
+          reasoning: bufferedReasoning || undefined,
+          finishReason: 'signal-input-preflush',
+        },
+        sceneAfter: copyScene(this.currentScene),
+      });
     }
 
     this.pendingSignal = {
@@ -752,13 +916,22 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   }
 
   private emitSignalInputSentence(hint: string, choices: string[]): void {
-    this.deps.emitter.appendSentence({
+    const sentence = {
       kind: 'signal_input',
       hint,
       choices,
       sceneRef: copyScene(this.currentScene),
       turnNumber: this.deps.turn,
       index: Date.now(),
+    } as const;
+    this.deps.emitter.appendSentence(sentence);
+    this.publish({
+      type: 'signal-input-recorded',
+      turnId: this.turnId,
+      batchId: toBatchId(this.currentStepBatchId),
+      request: createInputRequest(hint, choices),
+      sentence,
+      sceneAfter: copyScene(this.currentScene),
     });
   }
 
@@ -781,9 +954,34 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       stopped,
     };
   }
+
+  private publish(event: Parameters<CoreEventSink['publish']>[0]): void {
+    this.deps.coreEventSink?.publish(event);
+  }
 }
 
 const copyScene = (scene: SceneState): SceneState => ({
   background: scene.background,
   sprites: scene.sprites.map((sprite) => ({ ...sprite })),
 });
+
+function isRuntimeSentence(sentence: Sentence): sentence is RuntimeSentence {
+  return sentence.kind !== 'scene_change';
+}
+
+function copyRuntimeSentence(sentence: RuntimeSentence): RuntimeSentence {
+  if (sentence.kind === 'dialogue') {
+    return {
+      ...sentence,
+      pf: {
+        speaker: sentence.pf.speaker,
+        ...(sentence.pf.addressee ? { addressee: [...sentence.pf.addressee] } : {}),
+        ...(sentence.pf.overhearers ? { overhearers: [...sentence.pf.overhearers] } : {}),
+        ...(sentence.pf.eavesdroppers ? { eavesdroppers: [...sentence.pf.eavesdroppers] } : {}),
+      },
+      sceneRef: copyScene(sentence.sceneRef),
+    };
+  }
+
+  return { ...sentence, sceneRef: copyScene(sentence.sceneRef) };
+}

@@ -92,6 +92,9 @@ describe('memory evaluation harness', () => {
     ]);
 
     const [legacyRun, llmRun] = report.runs;
+    expect(report.runs.every((run) => run.coreEventProtocol.ok)).toBe(true);
+    expect(legacyRun?.coreEvents.map((event) => event.type)).toContain('waiting-input-started');
+    expect(legacyRun?.coreEvents.map((event) => event.type)).toContain('player-input-recorded');
     expect(legacyRun?.recording.inputRequests).toEqual([
       {
         hint: '要收下银钥匙吗？',

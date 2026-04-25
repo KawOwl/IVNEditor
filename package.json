@@ -17,6 +17,7 @@
     "typecheck:tsc": "pnpm --filter @ivn/specification typecheck:tsc && pnpm --filter @ivn/core typecheck:tsc && pnpm --filter @ivn/ui typecheck:tsc && pnpm --filter @ivn/server typecheck:tsc",
     "test:core": "pnpm --filter @ivn/core test",
     "test:server": "pnpm --filter @ivn/server test",
+    "eval:memory:live": "pnpm --filter @ivn/core eval:memory:live",
     "start": "pnpm build && pnpm --filter @ivn/server start"
   },
   "keywords": [],

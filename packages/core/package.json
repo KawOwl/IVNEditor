@@ -26,6 +26,11 @@
       "import": "./src/narrative-parser-v2/*.mts",
       "default": "./src/narrative-parser-v2/*.mts"
     },
+    "./evaluation/*": {
+      "types": "./src/evaluation/*.mts",
+      "import": "./src/evaluation/*.mts",
+      "default": "./src/evaluation/*.mts"
+    },
     "./*": {
       "types": "./src/*.mts",
       "import": "./src/*.mts",
@@ -35,7 +40,8 @@
   "scripts": {
     "typecheck": "tsgo --noEmit",
     "typecheck:tsc": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "eval:memory:live": "bun --env-file ../../apps/server/.env scripts/memory-live-eval.mts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.71",

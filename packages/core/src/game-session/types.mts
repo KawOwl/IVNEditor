@@ -10,6 +10,7 @@ import type {
 import type { LLMConfig } from '#internal/llm-client';
 import type { NarrativeHistoryReader } from '#internal/memory/narrative-reader';
 import type { ParserManifest } from '#internal/narrative-parser-v2';
+import type { CoreEventSink } from '#internal/game-session/core-events';
 
 /**
  * SessionPersistence — 可选的持久化回调接口
@@ -122,6 +123,7 @@ export interface RestoreConfig {
   disabledSections?: string[];
   persistence?: SessionPersistence;
   tracing?: SessionTracing;
+  coreEventSink?: CoreEventSink;
 
   stateVars: Record<string, unknown>;
   turn: number;
@@ -156,6 +158,7 @@ export interface GameSessionConfig {
   disabledSections?: string[];
   persistence?: SessionPersistence;
   tracing?: SessionTracing;
+  coreEventSink?: CoreEventSink;
   defaultScene?: SceneState;
   mem0ApiKey?: string;
   narrativeReader?: NarrativeHistoryReader;

@@ -37,6 +37,17 @@ import type { LLMConfig } from '#internal/llm-client';
 import type { SessionEmitter } from '#internal/session-emitter';
 import type { ParserManifest } from '#internal/narrative-parser-v2';
 import { computeReceivePayload } from '#internal/game-session/input-payload';
+import type {
+  BatchId,
+  CoreEventSink,
+  SessionSnapshot,
+} from '#internal/game-session/core-events';
+import {
+  batchId as toBatchId,
+  createInputRequest,
+  inputRequestId as toInputRequestId,
+  turnId as toTurnId,
+} from '#internal/game-session/core-events';
 import {
   createGenerateTurnRuntime,
   type GenerateTurnPendingSignal,
@@ -59,6 +70,9 @@ export { computeReceivePayload } from '#internal/game-session/input-payload';
 export { applyScenePatchToState } from '#internal/game-session/scene-state';
 export { createRecordingSessionEmitter } from '#internal/game-session/recording-emitter';
 export type { RecordedSessionOutput, RecordingSessionEmitter } from '#internal/game-session/recording-emitter';
+export * from '#internal/game-session/core-events';
+export { validateCoreEventSequence } from '#internal/game-session/core-event-protocol';
+export { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
 export type {
   GameSessionConfig,
   GenerateTraceHandle,
@@ -95,6 +109,7 @@ export class GameSession {
   private disabledSections?: string[];
   private persistence?: SessionPersistence;
   private tracing?: SessionTracing;
+  private coreEventSink?: CoreEventSink;
   // Session lifecycle
   private active = false;
 
@@ -175,6 +190,10 @@ export class GameSession {
 
       // Sync initial debug/output state
       await this.syncDebugState();
+      this.publishCoreEvent({
+        type: 'session-started',
+        snapshot: await this.createSessionSnapshot(),
+      });
 
       // Start core loop
       this.active = true;
@@ -182,6 +201,11 @@ export class GameSession {
     } catch (error) {
       if (this.active) {
         this.emitter.setError(error instanceof Error ? error.message : String(error));
+        this.publishCoreEvent({
+          type: 'session-error',
+          phase: 'start',
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
@@ -217,6 +241,11 @@ export class GameSession {
 
       // 同步调试输出
       await this.syncDebugState();
+      this.publishCoreEvent({
+        type: 'session-restored',
+        restoredFrom: normalizeRestoredFrom(config.status),
+        snapshot: await this.createSessionSnapshot(),
+      });
 
       // 可观测性：恢复标记，方便 Langfuse UI 中识别"断点"
       this.tracing?.markSessionRestored(config.turn, {
@@ -242,6 +271,18 @@ export class GameSession {
           this.emitter.setInputType('choice', config.choices);
         }
         this.emitter.setStatus('waiting-input');
+        this.publishCoreEvent({
+          type: 'waiting-input-started',
+          turnId: toTurnId(config.turn),
+          requestId: toInputRequestId(config.turn),
+          source: 'restore',
+          causedByBatchId: null,
+          request: createInputRequest(
+            config.inputHint ?? null,
+            config.inputType === 'choice' ? config.choices ?? null : null,
+          ),
+          snapshot: await this.createSessionSnapshot(),
+        });
 
         // 等玩家输入，然后进入 coreLoop
         const inputText = await this.waitForInput();
@@ -259,6 +300,7 @@ export class GameSession {
             tokenCount: estimateTokens(inputText),
           });
           const memSnap = await this.memory.snapshot();
+          const receiveBatchId = crypto.randomUUID() as BatchId;
           await this.persistence?.onReceiveComplete({
             entry: { role: 'receive', content: inputText },
             stateVars: this.stateStore.getAll(),
@@ -266,8 +308,30 @@ export class GameSession {
             memorySnapshot: memSnap,
             payload,
             // migration 0011：玩家一次提交独立 batchId（未来多模态一次提交多 entry 共享）
-            batchId: crypto.randomUUID(),
+            batchId: receiveBatchId,
           }).catch((e) => console.error('[Persistence] onReceiveComplete (restore) failed:', e));
+          this.publishCoreEvent({
+            type: 'player-input-recorded',
+            turnId: toTurnId(config.turn),
+            requestId: toInputRequestId(config.turn),
+            batchId: receiveBatchId,
+            text: inputText,
+            payload,
+            sentence: {
+              kind: 'player_input',
+              text: inputText,
+              ...(payload.selectedIndex !== undefined ? { selectedIndex: payload.selectedIndex } : {}),
+              sceneRef: copyScene(this.currentScene),
+              turnNumber: config.turn,
+              index: Date.now(),
+            },
+            snapshot: {
+              turn: config.turn,
+              stateVars: this.stateStore.getAll(),
+              memorySnapshot: memSnap,
+              currentScene: copyScene(this.currentScene),
+            },
+          });
         }
 
         this.emitter.setInputHint(null);
@@ -282,6 +346,11 @@ export class GameSession {
     } catch (error) {
       if (this.active) {
         this.emitter.setError(error instanceof Error ? error.message : String(error));
+        this.publishCoreEvent({
+          type: 'session-error',
+          phase: 'restore',
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
@@ -319,6 +388,7 @@ export class GameSession {
     }
 
     this.emitter.setStatus('idle');
+    this.publishCoreEvent({ type: 'session-stopped', reason: 'user' });
   }
 
   private async initializeCore(config: GameSessionConfig | RestoreConfig): Promise<void> {
@@ -344,6 +414,7 @@ export class GameSession {
     this.disabledSections = config.disabledSections;
     this.persistence = config.persistence;
     this.tracing = config.tracing;
+    this.coreEventSink = config.coreEventSink;
     this.protocolVersion = config.protocolVersion ?? 'v1-tool-call';
     this.parserManifest = config.parserManifest;
     this.characters = config.characters ?? [];
@@ -370,6 +441,11 @@ export class GameSession {
       if (this.scenarioEnded && this.active) {
         this.active = false;
         this.emitter.setStatus('finished');
+        this.publishCoreEvent({
+          type: 'session-finished',
+          reason: this.scenarioEndReason,
+          snapshot: await this.createSessionSnapshot(),
+        });
         await this.persistence?.onScenarioFinished?.({
           reason: this.scenarioEndReason,
         }).catch((e) => console.error('[Persistence] onScenarioFinished failed:', e));
@@ -419,6 +495,7 @@ export class GameSession {
       disabledSections: this.disabledSections,
       persistence: this.persistence,
       tracing: this.tracing,
+      coreEventSink: this.coreEventSink,
       protocolVersion: this.protocolVersion,
       parserManifest: this.parserManifest,
       characters: this.characters,
@@ -454,6 +531,7 @@ export class GameSession {
     const waitingHint = signal?.hint ?? null;
     const waitingChoices = signal?.choices && signal.choices.length > 0 ? signal.choices : null;
     const waitingInputType = waitingChoices ? 'choice' : 'freetext';
+    const requestId = toInputRequestId(turn);
 
     // 输入请求状态：hint + input-type（以及可选 choices）
     this.emitter.setInputHint(waitingHint);
@@ -473,6 +551,20 @@ export class GameSession {
       currentScene: this.currentScene,
       stateVars: this.stateStore.getAll(),
     }).catch((e) => console.error('[Persistence] onWaitingInput failed:', e));
+    this.publishCoreEvent({
+      type: 'waiting-input-started',
+      turnId: toTurnId(turn),
+      requestId,
+      source: signal ? 'signal' : 'fallback',
+      causedByBatchId: toBatchId(signal?.batchId),
+      request: createInputRequest(waitingHint, waitingChoices),
+      snapshot: {
+        turn,
+        stateVars: this.stateStore.getAll(),
+        memorySnapshot: memSnapWait,
+        currentScene: copyScene(this.currentScene),
+      },
+    });
 
     const inputText = await this.waitForInput();
     if (!this.active) return;
@@ -498,6 +590,7 @@ export class GameSession {
 
       // ④ 持久化：receive 完成
       const memSnapRx = await this.memory.snapshot();
+      const receiveBatchId = crypto.randomUUID() as BatchId;
       await this.persistence?.onReceiveComplete({
         entry: { role: 'receive', content: inputText },
         stateVars: this.stateStore.getAll(),
@@ -505,8 +598,30 @@ export class GameSession {
         memorySnapshot: memSnapRx,
         payload,
         // migration 0011：玩家一次提交独立 batchId（未来多模态一次提交多 entry 共享）
-        batchId: crypto.randomUUID(),
+        batchId: receiveBatchId,
       }).catch((e) => console.error('[Persistence] onReceiveComplete failed:', e));
+      this.publishCoreEvent({
+        type: 'player-input-recorded',
+        turnId: toTurnId(turn),
+        requestId,
+        batchId: receiveBatchId,
+        text: inputText,
+        payload,
+        sentence: {
+          kind: 'player_input',
+          text: inputText,
+          ...(payload.selectedIndex !== undefined ? { selectedIndex: payload.selectedIndex } : {}),
+          sceneRef: copyScene(this.currentScene),
+          turnNumber: turn,
+          index: Date.now(),
+        },
+        snapshot: {
+          turn,
+          stateVars: this.stateStore.getAll(),
+          memorySnapshot: memSnapRx,
+          currentScene: copyScene(this.currentScene),
+        },
+      });
     }
 
     // 清状态：下一 iteration 从全新 generate 开始
@@ -589,4 +704,32 @@ export class GameSession {
     });
   }
 
+  private publishCoreEvent(event: Parameters<CoreEventSink['publish']>[0]): void {
+    this.coreEventSink?.publish(event);
+  }
+
+  private async createSessionSnapshot(): Promise<SessionSnapshot> {
+    return {
+      turn: this.stateStore.getTurn(),
+      stateVars: this.stateStore.getAll(),
+      memorySnapshot: await this.memory.snapshot(),
+      currentScene: copyScene(this.currentScene),
+    };
+  }
+
+}
+
+function normalizeRestoredFrom(status: string): 'idle' | 'generating' | 'waiting-input' | 'finished' {
+  return status === 'generating' ||
+    status === 'waiting-input' ||
+    status === 'finished'
+    ? status
+    : 'idle';
+}
+
+function copyScene(scene: SceneState): SceneState {
+  return {
+    background: scene.background,
+    sprites: scene.sprites.map((sprite) => ({ ...sprite })),
+  };
 }
