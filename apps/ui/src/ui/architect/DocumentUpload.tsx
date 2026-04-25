@@ -59,18 +59,20 @@ export function DocumentUpload({ onClassify, onConfirm }: DocumentUploadProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFiles = useCallback(async (files: FileList) => {
-    const newDocs: UploadedDocument[] = [];
-    for (const file of Array.from(files)) {
-      if (!file.name.endsWith('.md') && !file.name.endsWith('.txt')) continue;
-      const content = await file.text();
-      newDocs.push({
-        id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        filename: file.name,
-        content,
-        role: 'other',
-        tokenCount: estimateTokens(content),
-      });
-    }
+    const newDocs: UploadedDocument[] = await Promise.all(
+      Array.from(files)
+        .filter((file) => file.name.endsWith('.md') || file.name.endsWith('.txt'))
+        .map(async (file): Promise<UploadedDocument> => {
+          const content = await file.text();
+          return {
+            id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            filename: file.name,
+            content,
+            role: 'other',
+            tokenCount: estimateTokens(content),
+          };
+        }),
+    );
     if (newDocs.length > 0) {
       addDocuments(newDocs);
     }

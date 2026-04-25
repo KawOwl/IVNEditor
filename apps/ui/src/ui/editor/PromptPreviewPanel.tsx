@@ -104,15 +104,12 @@ function buildAllSections(
   characters: ReadonlyArray<CharacterAsset> = [],
   backgrounds: ReadonlyArray<BackgroundAsset> = [],
 ): PreviewSection[] {
-  const vars: Record<string, unknown> = {};
-  for (const v of stateSchema.variables) {
-    vars[v.name] = v.initial;
-  }
-
-  const sections: PreviewSection[] = [];
+  const vars = Object.fromEntries(
+    stateSchema.variables.map((v) => [v.name, v.initial]),
+  ) as Record<string, unknown>;
 
   // --- User segments ---
-  for (const seg of segments) {
+  const userSections = segments.map((seg): PreviewSection => {
     let injected = true;
     let reason: string | undefined;
 
@@ -126,7 +123,7 @@ function buildAllSections(
       }
     }
 
-    sections.push({
+    return {
       id: seg.id,
       label: seg.label,
       source: seg.sourceDoc,
@@ -137,99 +134,93 @@ function buildAllSections(
       reason,
       priority: seg.priority,
       stability: 'stable',
-    });
-  }
+    };
+  });
 
   // --- Virtual: State YAML ---
   // 用 core/context-assembler 的 buildStateSection 保证和运行时 section 完全一致
   const stateContent = buildStateSection(vars);
-  sections.push({
-    id: VIRTUAL_IDS.STATE,
-    label: 'State YAML',
-    source: '引擎自动生成 · 每轮更新',
-    role: 'engine',
-    content: stateContent,
-    tokenCount: estimateTokens(stateContent),
-    injected: true,
-    virtual: true,
-    stability: 'dynamic',
-  });
-
-  // --- Virtual: Scene Context（Focus Injection，MVP）---
-  sections.push({
-    id: VIRTUAL_IDS.SCENE_CONTEXT,
-    label: 'Scene Context (Focus)',
-    source: '引擎自动生成 · 按 current_scene 动态排序',
-    role: 'engine',
-    content: '[Current Focus scene + 相关 segment 列表 — 运行时动态填充]',
-    tokenCount: 0,
-    injected: true,
-    virtual: true,
-    stability: 'dynamic',
-  });
-
-  // --- Virtual: Memory Summaries ---
-  sections.push({
-    id: VIRTUAL_IDS.MEMORY,
-    label: 'Memory Summaries',
-    source: '引擎自动生成 · 压缩后变化',
-    role: 'engine',
-    content: '[Memory summaries / inherited summary — 运行时动态填充]',
-    tokenCount: 0,
-    injected: true,
-    virtual: true,
-    stability: 'dynamic',
-  });
-
-  // --- Virtual: Recent History ---
-  sections.push({
-    id: VIRTUAL_IDS.HISTORY,
-    label: 'Recent History',
-    source: '引擎自动生成 · 每轮增长',
-    role: 'engine',
-    content: '[Recent conversation history as messages — 运行时动态填充]',
-    tokenCount: 0,
-    injected: true,
-    virtual: true,
-    stability: 'dynamic',
-  });
-
-  // --- Virtual: ENGINE RULES ---
-  // 从 core/engine-rules 读真源，和运行时 context-assembler 共用同一份文本。
-  // V.3：按 protocolVersion 分叉；v2 规则体含白名单插值 + few-shot，和运行时一致。
   const engineRulesContent = buildEngineRules({
     protocolVersion,
     characters,
     backgrounds,
   });
-  sections.push({
-    id: VIRTUAL_IDS.RULES,
-    label: 'ENGINE RULES (tail reminder)',
-    source: '引擎自动生成 · 固定',
-    role: 'engine',
-    content: engineRulesContent,
-    tokenCount: estimateTokens(engineRulesContent),
-    injected: true,
-    virtual: true,
-    stability: 'stable',
-  });
 
-  // --- Virtual: Initial User Message ---
-  if (initialPrompt) {
-    sections.push({
-      id: VIRTUAL_IDS.INITIAL_PROMPT,
-      label: 'Initial User Message',
-      source: 'manifest.initialPrompt · 首轮',
+  const virtualSections: PreviewSection[] = [
+    {
+      id: VIRTUAL_IDS.STATE,
+      label: 'State YAML',
+      source: '引擎自动生成 · 每轮更新',
       role: 'engine',
-      content: initialPrompt,
-      tokenCount: estimateTokens(initialPrompt),
+      content: stateContent,
+      tokenCount: estimateTokens(stateContent),
+      injected: true,
+      virtual: true,
+      stability: 'dynamic',
+    },
+    {
+      id: VIRTUAL_IDS.SCENE_CONTEXT,
+      label: 'Scene Context (Focus)',
+      source: '引擎自动生成 · 按 current_scene 动态排序',
+      role: 'engine',
+      content: '[Current Focus scene + 相关 segment 列表 — 运行时动态填充]',
+      tokenCount: 0,
+      injected: true,
+      virtual: true,
+      stability: 'dynamic',
+    },
+    {
+      id: VIRTUAL_IDS.MEMORY,
+      label: 'Memory Summaries',
+      source: '引擎自动生成 · 压缩后变化',
+      role: 'engine',
+      content: '[Memory summaries / inherited summary — 运行时动态填充]',
+      tokenCount: 0,
+      injected: true,
+      virtual: true,
+      stability: 'dynamic',
+    },
+    {
+      id: VIRTUAL_IDS.HISTORY,
+      label: 'Recent History',
+      source: '引擎自动生成 · 每轮增长',
+      role: 'engine',
+      content: '[Recent conversation history as messages — 运行时动态填充]',
+      tokenCount: 0,
+      injected: true,
+      virtual: true,
+      stability: 'dynamic',
+    },
+    {
+      id: VIRTUAL_IDS.RULES,
+      label: 'ENGINE RULES (tail reminder)',
+      source: '引擎自动生成 · 固定',
+      role: 'engine',
+      content: engineRulesContent,
+      tokenCount: estimateTokens(engineRulesContent),
       injected: true,
       virtual: true,
       stability: 'stable',
-    });
-  }
+    },
+  ];
 
-  return sections;
+  const initialPromptSection: PreviewSection[] = initialPrompt
+    ? [
+        {
+          id: VIRTUAL_IDS.INITIAL_PROMPT,
+          label: 'Initial User Message',
+          source: 'manifest.initialPrompt · 首轮',
+          role: 'engine',
+          content: initialPrompt,
+          tokenCount: estimateTokens(initialPrompt),
+          injected: true,
+          virtual: true,
+          stability: 'stable',
+        },
+      ]
+    : [];
+
+  return [...userSections, ...virtualSections, ...initialPromptSection];
 }
 
 // ============================================================================
@@ -329,21 +320,16 @@ export function PromptPreviewPanel({
 
   const allSections = useMemo(
     () => {
-      const sections = buildAllSections(
+      return buildAllSections(
         segments,
         stateSchema,
         initialPrompt,
         protocolVersion,
         characters,
         backgrounds,
-      );
-      // Mark disabled sections
-      for (const sec of sections) {
-        if (disabledSet.has(sec.id)) {
-          sec.disabled = true;
-        }
-      }
-      return sections;
+      ).map((section) => (
+        disabledSet.has(section.id) ? { ...section, disabled: true } : section
+      ));
     },
     [segments, stateSchema, initialPrompt, disabledSet, protocolVersion, characters, backgrounds],
   );
@@ -353,8 +339,9 @@ export function PromptPreviewPanel({
     if (assemblyOrder && assemblyOrder.length > 0) {
       // Merge: keep saved order, append any new sections not in the order
       const existing = new Set(assemblyOrder);
+      const sectionIds = new Set(allSections.map((s) => s.id));
       const newIds = allSections.filter((s) => s.injected && !existing.has(s.id)).map((s) => s.id);
-      return [...assemblyOrder.filter((id) => allSections.some((s) => s.id === id)), ...newIds];
+      return [...assemblyOrder.filter((id) => sectionIds.has(id)), ...newIds];
     }
     return getDefaultOrder(allSections);
   }, [assemblyOrder, allSections]);
@@ -419,9 +406,12 @@ export function PromptPreviewPanel({
     const toIdx = injectedIds.indexOf(targetId);
     if (fromIdx === -1 || toIdx === -1) return;
 
-    const newOrder = [...injectedIds];
-    newOrder.splice(fromIdx, 1);
-    newOrder.splice(toIdx, 0, dragId);
+    const reorderedIds = injectedIds.filter((id) => id !== dragId);
+    const newOrder = [
+      ...reorderedIds.slice(0, toIdx),
+      dragId,
+      ...reorderedIds.slice(toIdx),
+    ];
 
     onOrderChange?.(newOrder);
     setDragId(null);

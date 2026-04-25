@@ -223,22 +223,23 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
 
   // --- 2. Build named section content map ---
   // Each user segment gets its own ID; virtual sections use VIRTUAL_IDS
-  const sectionContent = new Map<string, string>();
-  const sectionTokens = new Map<string, number>();
-
   // User segments (use derivedContent if useDerived)
   //
   // 每段用 `--- [${label}] ---\n<body>` 包裹，作为 Focus Injection 的 ID
   // 锚点 —— `_engine_scene_context` 里提到的 segment ID/label 能让 LLM 找到
   // 对应段落。label 为空时 fallback 到 id。
-  for (const seg of activeSegments) {
+  const segmentSections = activeSegments.map((seg) => {
     const body = (seg.useDerived && seg.derivedContent) ? seg.derivedContent : seg.content;
     const labelHeader = `--- [${seg.label || seg.id}] ---`;
     const content = `${labelHeader}\n${body}`;
-    const tokens = estimateTokens(content);
-    sectionContent.set(seg.id, content);
-    sectionTokens.set(seg.id, tokens);
-  }
+    return { id: seg.id, content, tokens: estimateTokens(content) };
+  });
+  const sectionContent = new Map<string, string>(
+    segmentSections.map((section) => [section.id, section.content] as const),
+  );
+  const sectionTokens = new Map<string, number>(
+    segmentSections.map((section) => [section.id, section.tokens] as const),
+  );
 
   // State YAML (can be disabled)
   if (!disabledSet.has(VIRTUAL_IDS.STATE)) {
@@ -259,15 +260,16 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
   // 生成条件：focus 有效（至少一维有值）即生成。即使无 segment 匹配当前 focus，
   // 也输出 focus 头（scene: xxx），让 LLM 明确知道"在某个场景，但没专属内容"。
   if (!disabledSet.has(VIRTUAL_IDS.SCENE_CONTEXT) && focus) {
-    const focusLines: string[] = [];
-    if (focus.scene) focusLines.push(`scene: ${focus.scene}`);
+    const focusLines = [
+      focus.scene ? `scene: ${focus.scene}` : undefined,
+    ].filter((line): line is string => line !== undefined);
     // v2: characters / stage
     if (focusLines.length > 0) {
       const ranked = rankSegments(activeSegments, focus, 5);
-      const lines = ['[Current Focus]', ...focusLines];
-      if (ranked.length > 0) {
-        lines.push('', 'Most relevant segments:', ...ranked.map((s) => ` - ${s.label || s.id}`));
-      }
+      const relevantLines = ranked.length > 0
+        ? ['', 'Most relevant segments:', ...ranked.map((s) => ` - ${s.label || s.id}`)]
+        : [];
+      const lines = ['[Current Focus]', ...focusLines, ...relevantLines];
       const content = `---\n${lines.join('\n')}\n---`;
       sectionContent.set(VIRTUAL_IDS.SCENE_CONTEXT, content);
       sectionTokens.set(VIRTUAL_IDS.SCENE_CONTEXT, estimateTokens(content));
@@ -303,12 +305,15 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
   let orderedIds: string[];
   if (assemblyOrder && assemblyOrder.length > 0) {
     // Use custom order, filtering to only existing sections
-    const existing = new Set(sectionContent.keys());
-    orderedIds = assemblyOrder.filter((id) => existing.has(id));
+    const existingIds = Array.from(sectionContent.keys());
+    const existing = new Set(existingIds);
+    const customOrder = assemblyOrder.filter((id) => existing.has(id));
+    const customOrderSet = new Set(customOrder);
     // Append any new sections not in custom order
-    for (const id of sectionContent.keys()) {
-      if (!orderedIds.includes(id)) orderedIds.push(id);
-    }
+    orderedIds = [
+      ...customOrder,
+      ...existingIds.filter((id) => !customOrderSet.has(id)),
+    ];
   } else {
     // Default order: system segs → state → memory → context segs → rules
     const systemSegs = activeSegments
@@ -377,16 +382,16 @@ export async function assembleContext(options: AssembleOptions): Promise<Assembl
 
   // AI SDK requires at least one message — use initialPrompt or fallback
   // 这是对 AI SDK "messages 不能为空" 约束的兜底，不归 Memory 接口管。
-  if (historyMessages.length === 0) {
-    historyMessages.push({
-      role: 'user',
-      content: options.initialPrompt ?? '[Game session started. Begin narration.]',
-    });
-  }
+  const messages: ModelMessage[] = historyMessages.length > 0
+    ? historyMessages
+    : [{
+        role: 'user',
+        content: options.initialPrompt ?? '[Game session started. Begin narration.]',
+      }];
 
   return {
     systemPrompt,
-    messages: historyMessages,
+    messages,
     tokenBreakdown: {
       system: systemTokens,
       state: stateTokensFinal,

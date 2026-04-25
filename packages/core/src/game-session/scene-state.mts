@@ -56,11 +56,7 @@ function applySingleSpritePatch(
 
 function upsertSprite(sprites: SpriteState[], sprite: SpriteState): SpriteState[] {
   const existing = sprites.findIndex(({ id }) => id === sprite.id);
-  const nextSprites = [...sprites];
-  if (existing >= 0) {
-    nextSprites[existing] = sprite;
-  } else {
-    nextSprites.push(sprite);
-  }
-  return nextSprites;
+  return existing >= 0
+    ? sprites.map((current) => current.id === sprite.id ? sprite : current)
+    : [...sprites, sprite];
 }

@@ -46,51 +46,49 @@ export function detectVersionChanges(
 ): VersionDiff {
   const currentMap = new Map(currentSegments.map((s) => [s.id, s]));
   const savedIdSet = new Set(savedSegmentIds);
-  const changes: SegmentChange[] = [];
-  const addedSegments: PromptSegment[] = [];
-  const removedIds: string[] = [];
-  const modifiedSegments: PromptSegment[] = [];
 
   // Check for removed segments
-  for (const savedId of savedSegmentIds) {
-    if (!currentMap.has(savedId)) {
-      changes.push({
-        segmentId: savedId,
-        label: savedId,
-        type: 'content',    // We don't know the type of removed segments
-        changeType: 'removed',
-        oldHash: savedSegmentHashes.get(savedId),
-      });
-      removedIds.push(savedId);
-    }
-  }
+  const removedChanges = savedSegmentIds
+    .filter((savedId) => !currentMap.has(savedId))
+    .map((savedId): SegmentChange => ({
+      segmentId: savedId,
+      label: savedId,
+      type: 'content',    // We don't know the type of removed segments
+      changeType: 'removed',
+      oldHash: savedSegmentHashes.get(savedId),
+    }));
+  const removedIds = removedChanges.map((change) => change.segmentId);
 
   // Check for added and modified segments
-  for (const segment of currentSegments) {
+  const currentChanges = currentSegments.flatMap((segment): SegmentChange[] => {
     if (!savedIdSet.has(segment.id)) {
-      changes.push({
+      return [{
         segmentId: segment.id,
         label: segment.label,
         type: segment.type,
         changeType: 'added',
         newHash: segment.contentHash,
-      });
-      addedSegments.push(segment);
-    } else {
-      const savedHash = savedSegmentHashes.get(segment.id);
-      if (savedHash && savedHash !== segment.contentHash) {
-        changes.push({
+      }];
+    }
+
+    const savedHash = savedSegmentHashes.get(segment.id);
+    return savedHash && savedHash !== segment.contentHash
+      ? [{
           segmentId: segment.id,
           label: segment.label,
           type: segment.type,
           changeType: 'modified',
           oldHash: savedHash,
           newHash: segment.contentHash,
-        });
-        modifiedSegments.push(segment);
-      }
-    }
-  }
+        }]
+      : [];
+  });
+  const changes = [...removedChanges, ...currentChanges];
+  const addedSegments = currentSegments.filter((segment) => !savedIdSet.has(segment.id));
+  const modifiedSegments = currentSegments.filter((segment) => {
+    const savedHash = savedSegmentHashes.get(segment.id);
+    return !!savedHash && savedHash !== segment.contentHash;
+  });
 
   const hasChanges = changes.length > 0;
   const hasLogicChanges = changes.some(

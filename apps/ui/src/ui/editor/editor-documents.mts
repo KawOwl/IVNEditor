@@ -87,12 +87,11 @@ export function createEditorDocumentFromFile(filename: string, content: string):
 }
 
 export async function readEditorDocumentsFromFiles(files: FileList): Promise<EditorDocument[]> {
-  const docs: EditorDocument[] = [];
-  for (const file of Array.from(files)) {
-    if (!file.name.endsWith('.md') && !file.name.endsWith('.txt')) continue;
-    docs.push(createEditorDocumentFromFile(file.name, await file.text()));
-  }
-  return docs;
+  return Promise.all(
+    Array.from(files)
+      .filter((file) => file.name.endsWith('.md') || file.name.endsWith('.txt'))
+      .map(async (file) => createEditorDocumentFromFile(file.name, await file.text())),
+  );
 }
 
 function simpleHash(text: string): string {
@@ -146,27 +145,36 @@ function buildFocusTags(scene: string): PromptSegment['focusTags'] {
 }
 
 export function manifestToDocuments(manifest: ScriptManifest): EditorDocument[] {
-  const seen = new Set<string>();
-  const docs: EditorDocument[] = [];
-  for (const chapter of manifest.chapters) {
-    for (const seg of chapter.segments) {
-      if (seen.has(seg.id)) continue;
-      seen.add(seg.id);
-      docs.push({
-        id: seg.id,
-        filename: seg.sourceDoc || seg.label,
-        content: seg.content,
-        role: seg.role,
-        priority: seg.priority,
-        injectionCondition: seg.injectionRule?.condition ?? '',
-        injectionDescription: seg.injectionRule?.description ?? '',
-        focusScene: seg.focusTags?.scene ?? '',
-        derivedContent: seg.derivedContent,
-        useDerived: seg.useDerived,
-      });
-    }
-  }
-  return docs;
+  const segments = manifest.chapters.flatMap((chapter) => chapter.segments);
+  return segments
+    .filter((seg, index) => segments.findIndex((candidate) => candidate.id === seg.id) === index)
+    .map(segmentToDocument);
+}
+
+function segmentToDocument({
+  id,
+  sourceDoc,
+  label,
+  content,
+  role,
+  priority,
+  injectionRule,
+  focusTags,
+  derivedContent,
+  useDerived,
+}: PromptSegment): EditorDocument {
+  return {
+    id,
+    filename: sourceDoc || label,
+    content,
+    role,
+    priority,
+    injectionCondition: injectionRule?.condition ?? '',
+    injectionDescription: injectionRule?.description ?? '',
+    focusScene: focusTags?.scene ?? '',
+    derivedContent,
+    useDerived,
+  };
 }
 
 export const defaultStateSchema: StateSchema = {

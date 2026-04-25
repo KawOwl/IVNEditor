@@ -155,21 +155,12 @@ function formatParticipationFrame({
   overhearers,
   eavesdroppers,
 }: DialogueSentence['pf']): string {
-  const parts = [speaker];
-
-  if (addressee) {
-    parts.push(`-> ${addressee.join(', ')}`);
-  }
-
-  if (overhearers) {
-    parts.push(`+${overhearers.join(',')}`);
-  }
-
-  if (eavesdroppers) {
-    parts.push(`?${eavesdroppers.join(',')}`);
-  }
-
-  return parts.join(' ');
+  return [
+    speaker,
+    addressee ? `-> ${addressee.join(', ')}` : undefined,
+    overhearers ? `+${overhearers.join(',')}` : undefined,
+    eavesdroppers ? `?${eavesdroppers.join(',')}` : undefined,
+  ].filter((part): part is string => part !== undefined).join(' ');
 }
 
 function formatChoices(choices: string[]): string {

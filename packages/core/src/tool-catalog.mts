@@ -207,22 +207,13 @@ export function buildToolCatalogMd(filter?: ListToolsFilter): string {
   const required = tools.filter((t) => t.required);
   const optional = tools.filter((t) => !t.required);
 
-  const parts: string[] = [];
+  const renderSection = (title: string, sectionTools: ToolMetadata[]) =>
+    sectionTools.length > 0
+      ? [title, ...sectionTools.map((t) => `- \`${t.name}\` — ${t.description}`)].join('\n')
+      : '';
 
-  if (required.length > 0) {
-    parts.push('### 必选工具（引擎默认注入，始终可用）');
-    for (const t of required) {
-      parts.push(`- \`${t.name}\` — ${t.description}`);
-    }
-  }
-
-  if (optional.length > 0) {
-    if (parts.length > 0) parts.push('');
-    parts.push('### 可选工具（按剧本启用）');
-    for (const t of optional) {
-      parts.push(`- \`${t.name}\` — ${t.description}`);
-    }
-  }
-
-  return parts.join('\n');
+  return [
+    renderSection('### 必选工具（引擎默认注入，始终可用）', required),
+    renderSection('### 可选工具（按剧本启用）', optional),
+  ].filter(Boolean).join('\n\n');
 }
