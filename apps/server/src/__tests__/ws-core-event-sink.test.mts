@@ -19,11 +19,17 @@ describe('createWebSocketCoreEventSink', () => {
       sink.publish(event);
     }
 
-    expect(sent.map((message) => JSON.parse(message) as { type: string })).toMatchObject([
+    expect(parseMessages(sent)).toEqual([
       { type: 'reset' },
       { type: 'status', status: 'loading' },
       { type: 'scene-change', scene: emptyScene },
-      { type: 'update-debug', totalTurns: 0 },
+      {
+        type: 'update-debug',
+        stateVars: {},
+        totalTurns: 0,
+        memoryEntryCount: 0,
+        memorySummaryCount: 0,
+      },
       { type: 'status', status: 'generating' },
       { type: 'input-hint', hint: '下一步？' },
       { type: 'input-type', inputType: 'choice', choices: ['继续'] },
@@ -59,13 +65,17 @@ describe('createWebSocketCoreEventSink', () => {
       diagnostics: { assembledSystemPrompt: 'secret system prompt' },
     });
 
-    expect(sent.map((message) => JSON.parse(message) as { type: string })).toMatchObject([
+    expect(parseMessages(sent)).toEqual([
       { type: 'reset' },
       { type: 'status', status: 'loading' },
       { type: 'scene-change', scene: emptyScene },
     ]);
   });
 });
+
+function parseMessages(sent: readonly string[]): Array<Record<string, unknown>> {
+  return sent.map((message) => JSON.parse(message) as Record<string, unknown>);
+}
 
 const emptyScene = { background: null, sprites: [] };
 
