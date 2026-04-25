@@ -42,15 +42,21 @@ import {
 import { computeReceivePayload } from '#internal/game-session/input-payload';
 import type {
   BatchId,
+  CoreEvent,
   CoreEventSink,
   SessionSnapshot,
 } from '#internal/game-session/core-events';
 import {
   batchId as toBatchId,
+  createDurableFirstCoreEventSink,
   createInputRequest,
   inputRequestId as toInputRequestId,
   turnId as toTurnId,
 } from '#internal/game-session/core-events';
+import {
+  createSessionPersistenceCoreEventSink,
+  isSessionPersistenceCoreEvent,
+} from '#internal/game-session/persistence-core-event-sink';
 import {
   createGenerateTurnRuntime,
   type GenerateTurnPendingSignal,
@@ -59,7 +65,6 @@ import {
 import type {
   GameSessionConfig,
   RestoreConfig,
-  SessionPersistence,
   SessionTracing,
 } from '#internal/game-session/types';
 
@@ -75,6 +80,11 @@ export { createRecordingSessionEmitter } from '#internal/game-session/recording-
 export type { RecordedSessionOutput, RecordingSessionEmitter } from '#internal/game-session/recording-emitter';
 export * from '#internal/game-session/core-events';
 export { validateCoreEventSequence } from '#internal/game-session/core-event-protocol';
+export {
+  createSessionPersistenceCoreEventSink,
+  isSessionPersistenceCoreEvent,
+} from '#internal/game-session/persistence-core-event-sink';
+export type { SessionPersistenceCoreEventSink } from '#internal/game-session/persistence-core-event-sink';
 export { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
 export {
   createLegacySessionEmitterProjection,
@@ -114,7 +124,6 @@ export class GameSession {
   private initialPrompt?: string;
   private assemblyOrder?: string[];
   private disabledSections?: string[];
-  private persistence?: SessionPersistence;
   private tracing?: SessionTracing;
   private coreEventSink?: CoreEventSink;
   // Session lifecycle
@@ -189,7 +198,7 @@ export class GameSession {
       // M3: 初始化 currentScene —— 用剧本 defaultScene，否则空
       this.currentScene = config.defaultScene ?? { background: null, sprites: [] };
 
-      this.publishCoreEvent({
+      await this.publishDurableCoreEvent({
         type: 'session-started',
         snapshot: await this.createSessionSnapshot(),
       });
@@ -236,7 +245,7 @@ export class GameSession {
         config.defaultScene ??
         { background: null, sprites: [] };
 
-      this.publishCoreEvent({
+      await this.publishDurableCoreEvent({
         type: 'session-restored',
         restoredFrom: normalizeRestoredFrom(config.status),
         snapshot: await this.createSessionSnapshot(),
@@ -259,7 +268,7 @@ export class GameSession {
 
       // 根据恢复时的状态决定进入点
       if (config.status === 'waiting-input') {
-        this.publishCoreEvent({
+        await this.publishDurableCoreEvent({
           type: 'waiting-input-started',
           turnId: toTurnId(config.turn),
           requestId: toInputRequestId(config.turn),
@@ -287,16 +296,7 @@ export class GameSession {
           });
           const memSnap = await this.memory.snapshot();
           const receiveBatchId = crypto.randomUUID() as BatchId;
-          await this.persistence?.onReceiveComplete({
-            entry: { role: 'receive', content: inputText },
-            stateVars: this.stateStore.getAll(),
-            turn: config.turn,
-            memorySnapshot: memSnap,
-            payload,
-            // migration 0011：玩家一次提交独立 batchId（未来多模态一次提交多 entry 共享）
-            batchId: receiveBatchId,
-          }).catch((e) => console.error('[Persistence] onReceiveComplete (restore) failed:', e));
-          this.publishCoreEvent({
+          await this.publishDurableCoreEvent({
             type: 'player-input-recorded',
             turnId: toTurnId(config.turn),
             requestId: toInputRequestId(config.turn),
@@ -393,9 +393,8 @@ export class GameSession {
     this.initialPrompt = config.initialPrompt;
     this.assemblyOrder = config.assemblyOrder;
     this.disabledSections = config.disabledSections;
-    this.persistence = config.persistence;
     this.tracing = config.tracing;
-    this.coreEventSink = config.coreEventSink;
+    this.coreEventSink = createGameSessionCoreEventSink(config);
     this.protocolVersion = resolveRuntimeProtocolVersion(config.protocolVersion);
     this.parserManifest = config.parserManifest;
     this.characters = config.characters ?? [];
@@ -421,14 +420,11 @@ export class GameSession {
       // 这里统一处理：持久化 finished 状态 + 退出外循环，不再进入 Receive 阶段。
       if (this.scenarioEnded && this.active) {
         this.active = false;
-        this.publishCoreEvent({
+        await this.publishDurableCoreEvent({
           type: 'session-finished',
           reason: this.scenarioEndReason,
           snapshot: await this.createSessionSnapshot(),
         });
-        await this.persistence?.onScenarioFinished?.({
-          reason: this.scenarioEndReason,
-        }).catch((e) => console.error('[Persistence] onScenarioFinished failed:', e));
         break;
       }
 
@@ -451,11 +447,6 @@ export class GameSession {
   private async beginGenerateTurn(): Promise<number> {
     const turn = this.stateStore.getTurn() + 1;
     this.stateStore.setTurn(turn);
-
-    // ① 持久化：generate 开始
-    await this.persistence?.onGenerateStart(turn).catch((e) =>
-      console.error('[Persistence] onGenerateStart failed:', e));
-
     return turn;
   }
 
@@ -471,7 +462,6 @@ export class GameSession {
       initialPrompt: this.initialPrompt,
       assemblyOrder: this.assemblyOrder,
       disabledSections: this.disabledSections,
-      persistence: this.persistence,
       tracing: this.tracing,
       coreEventSink: this.coreEventSink,
       protocolVersion: this.protocolVersion,
@@ -508,23 +498,13 @@ export class GameSession {
     const signal = this.pendingSignal;
     const waitingHint = signal?.hint ?? null;
     const waitingChoices = signal?.choices && signal.choices.length > 0 ? signal.choices : null;
-    const waitingInputType = waitingChoices ? 'choice' : 'freetext';
     const requestId = toInputRequestId(turn);
 
-    // ③ 持久化：onWaitingInput 快照（signal / freetext 统一调一次）
-    //    2026-04-24：stateVars 也在这一刻持久化 —— 本轮 LLM update_state
+    // 2026-04-24：stateVars 也在这一刻持久化 —— 本轮 LLM update_state
     //    改动的 state（比如 chapter 切换）必须立即入库，否则断线重连时
     //    DB state 滞后一个回合（history 在 ch2、state_vars 仍 ch1）
     const memSnapWait = await this.memory.snapshot();
-    await this.persistence?.onWaitingInput({
-      hint: waitingHint,
-      inputType: waitingInputType,
-      choices: waitingChoices,
-      memorySnapshot: memSnapWait,
-      currentScene: this.currentScene,
-      stateVars: this.stateStore.getAll(),
-    }).catch((e) => console.error('[Persistence] onWaitingInput failed:', e));
-    this.publishCoreEvent({
+    await this.publishDurableCoreEvent({
       type: 'waiting-input-started',
       turnId: toTurnId(turn),
       requestId,
@@ -555,19 +535,9 @@ export class GameSession {
         tokenCount: estimateTokens(inputText),
       });
 
-      // ④ 持久化：receive 完成
       const memSnapRx = await this.memory.snapshot();
       const receiveBatchId = crypto.randomUUID() as BatchId;
-      await this.persistence?.onReceiveComplete({
-        entry: { role: 'receive', content: inputText },
-        stateVars: this.stateStore.getAll(),
-        turn,
-        memorySnapshot: memSnapRx,
-        payload,
-        // migration 0011：玩家一次提交独立 batchId（未来多模态一次提交多 entry 共享）
-        batchId: receiveBatchId,
-      }).catch((e) => console.error('[Persistence] onReceiveComplete failed:', e));
-      this.publishCoreEvent({
+      await this.publishDurableCoreEvent({
         type: 'player-input-recorded',
         turnId: toTurnId(turn),
         requestId,
@@ -635,6 +605,11 @@ export class GameSession {
     this.coreEventSink?.publish(event);
   }
 
+  private async publishDurableCoreEvent(event: CoreEvent): Promise<void> {
+    this.publishCoreEvent(event);
+    await this.coreEventSink?.flushDurable?.();
+  }
+
   private async createSessionSnapshot(): Promise<SessionSnapshot> {
     return {
       turn: this.stateStore.getTurn(),
@@ -644,6 +619,22 @@ export class GameSession {
     };
   }
 
+}
+
+function createGameSessionCoreEventSink(
+  config: Pick<GameSessionConfig | RestoreConfig, 'coreEventSink' | 'persistence'>,
+): CoreEventSink | undefined {
+  if (!config.persistence) {
+    return config.coreEventSink;
+  }
+
+  return createDurableFirstCoreEventSink({
+    durableSinks: [
+      createSessionPersistenceCoreEventSink(config.persistence),
+    ],
+    realtimeSinks: config.coreEventSink ? [config.coreEventSink] : [],
+    isDurableEvent: isSessionPersistenceCoreEvent,
+  });
 }
 
 function normalizeRestoredFrom(status: string): 'idle' | 'generating' | 'waiting-input' | 'finished' {

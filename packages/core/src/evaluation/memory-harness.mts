@@ -14,15 +14,21 @@ import type {
   BatchId,
   CoreEvent,
   CoreEventEnvelope,
+  CoreEventBus,
   CoreEventSink,
 } from '#internal/game-session/core-events';
 import {
   batchId as toBatchId,
+  createDurableFirstCoreEventSink,
   createInputRequest,
   inputRequestId as toInputRequestId,
   turnId as toTurnId,
 } from '#internal/game-session/core-events';
 import { validateCoreEventSequence, type CoreEventProtocolReport } from '#internal/game-session/core-event-protocol';
+import {
+  createSessionPersistenceCoreEventSink,
+  isSessionPersistenceCoreEvent,
+} from '#internal/game-session/persistence-core-event-sink';
 import { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
 import {
   createRecordingSessionEmitter,
@@ -221,8 +227,12 @@ export async function runMemoryEvaluationCase(options: {
   const playthroughId = scenario.playthroughId ?? `memory-eval-${scenario.id}-${variant.id}`;
   const recording = createRecordingSessionEmitter();
   const coreRecorder = createRecordingCoreEventSink({ playthroughId });
-  const harnessCoreEventSink = createHarnessCoreEventSink(recording, coreRecorder);
   const journal = createInMemoryEvaluationJournal(playthroughId);
+  const harnessCoreEventSink = createHarnessCoreEventSink(
+    recording,
+    coreRecorder,
+    journal.persistence,
+  );
   const llmClient = createScriptedEvaluationLLM({
     turns: script.map((turn) => turn.generate),
     compression: options.compression,
@@ -252,7 +262,6 @@ export async function runMemoryEvaluationCase(options: {
     const turn = stateStore.getTurn() + 1;
     stateStore.setTurn(turn);
     turnsRun += 1;
-    await journal.persistence.onGenerateStart(turn);
 
     const runtime = createGenerateTurnRuntime({
       turn,
@@ -265,7 +274,6 @@ export async function runMemoryEvaluationCase(options: {
       initialPrompt: scenario.initialPrompt,
       assemblyOrder: scenario.assemblyOrder,
       disabledSections: scenario.disabledSections,
-      persistence: journal.persistence,
       coreEventSink: harnessCoreEventSink,
       ...createRuntimeProtocolConfig(scenario),
       characters: scenario.characters ?? [],
@@ -288,8 +296,7 @@ export async function runMemoryEvaluationCase(options: {
     }
 
     if (scenarioEnded) {
-      await journal.persistence.onScenarioFinished?.({ reason: scenarioEndReason });
-      harnessCoreEventSink.publish({
+      await publishHarnessCoreEvent(harnessCoreEventSink, {
         type: 'session-finished',
         reason: scenarioEndReason,
         snapshot: await createHarnessSnapshot(memory, stateStore, currentScene),
@@ -301,7 +308,6 @@ export async function runMemoryEvaluationCase(options: {
     const inputText = getScriptedInput(turnSpec.input);
     await requestInput({
       memory,
-      persistence: journal.persistence,
       coreEventSink: harnessCoreEventSink,
       stateStore,
       currentScene,
@@ -316,7 +322,6 @@ export async function runMemoryEvaluationCase(options: {
     lastPlayerInput = inputText;
     await receiveInput({
       memory,
-      persistence: journal.persistence,
       coreEventSink: harnessCoreEventSink,
       stateStore,
       currentScene,
@@ -378,8 +383,12 @@ export async function runLiveMemoryEvaluationCase(options: {
   const playthroughId = scenario.playthroughId ?? `memory-live-${scenario.id}-${variant.id}`;
   const recording = createRecordingSessionEmitter();
   const coreRecorder = createRecordingCoreEventSink({ playthroughId });
-  const harnessCoreEventSink = createHarnessCoreEventSink(recording, coreRecorder);
   const journal = createInMemoryEvaluationJournal(playthroughId);
+  const harnessCoreEventSink = createHarnessCoreEventSink(
+    recording,
+    coreRecorder,
+    journal.persistence,
+  );
   const llmClient = createRecordingEvaluationLLM(new LLMClient(createNoThinkingLLMConfig(options.llmConfig)));
   const stateStore = new StateStore(scenario.stateSchema);
   const memory = await createVariantMemory({
@@ -407,7 +416,6 @@ export async function runLiveMemoryEvaluationCase(options: {
     const turn = stateStore.getTurn() + 1;
     stateStore.setTurn(turn);
     turnsRun += 1;
-    await journal.persistence.onGenerateStart(turn);
 
     const runtime = createGenerateTurnRuntime({
       turn,
@@ -420,7 +428,6 @@ export async function runLiveMemoryEvaluationCase(options: {
       initialPrompt: scenario.initialPrompt,
       assemblyOrder: scenario.assemblyOrder,
       disabledSections: scenario.disabledSections,
-      persistence: journal.persistence,
       coreEventSink: harnessCoreEventSink,
       ...createRuntimeProtocolConfig(scenario),
       characters: scenario.characters ?? [],
@@ -443,8 +450,7 @@ export async function runLiveMemoryEvaluationCase(options: {
     }
 
     if (scenarioEnded) {
-      await journal.persistence.onScenarioFinished?.({ reason: scenarioEndReason });
-      harnessCoreEventSink.publish({
+      await publishHarnessCoreEvent(harnessCoreEventSink, {
         type: 'session-finished',
         reason: scenarioEndReason,
         snapshot: await createHarnessSnapshot(memory, stateStore, currentScene),
@@ -455,7 +461,6 @@ export async function runLiveMemoryEvaluationCase(options: {
 
     await requestInput({
       memory,
-      persistence: journal.persistence,
       coreEventSink: harnessCoreEventSink,
       stateStore,
       currentScene,
@@ -471,7 +476,6 @@ export async function runLiveMemoryEvaluationCase(options: {
     lastPlayerInput = inputText;
     await receiveInput({
       memory,
-      persistence: journal.persistence,
       coreEventSink: harnessCoreEventSink,
       stateStore,
       currentScene,
@@ -559,14 +563,32 @@ function stripToolTimestamp(entry: ToolCallEntry): ToolCallEntry {
 function createHarnessCoreEventSink(
   recording: RecordingSessionEmitter,
   downstream: CoreEventSink,
-): CoreEventSink {
+  persistence: SessionPersistence,
+): CoreEventBus {
   const projection = createLegacySessionEmitterProjection(recording.emitter);
-  return {
+  const realtimeSink: CoreEventSink = {
     publish(event) {
       projection.publish(event);
       downstream.publish(event);
     },
+    async flushDurable() {
+      await downstream.flushDurable?.();
+    },
   };
+
+  return createDurableFirstCoreEventSink({
+    durableSinks: [createSessionPersistenceCoreEventSink(persistence)],
+    realtimeSinks: [realtimeSink],
+    isDurableEvent: isSessionPersistenceCoreEvent,
+  });
+}
+
+async function publishHarnessCoreEvent(
+  sink: CoreEventSink,
+  event: CoreEvent,
+): Promise<void> {
+  sink.publish(event);
+  await sink.flushDurable?.();
 }
 
 function createVariantMemory(options: {
@@ -615,7 +637,6 @@ function buildRetrievalQuery(
 
 async function requestInput(options: {
   readonly memory: Memory;
-  readonly persistence: SessionPersistence;
   readonly coreEventSink: CoreEventSink;
   readonly stateStore: StateStore;
   readonly currentScene: SceneState;
@@ -627,19 +648,10 @@ async function requestInput(options: {
 }): Promise<void> {
   const signal = options.pendingSignal;
   const choices = signal?.choices && signal.choices.length > 0 ? [...signal.choices] : null;
-  const inputType = choices ? 'choice' : 'freetext';
   const hint = signal?.hint ?? null;
   const turn = options.stateStore.getTurn();
 
-  await options.persistence.onWaitingInput({
-    hint,
-    inputType,
-    choices,
-    memorySnapshot: await options.memory.snapshot(),
-    currentScene: copyScene(options.currentScene),
-    stateVars: options.stateStore.getAll(),
-  });
-  options.coreEventSink.publish({
+  await publishHarnessCoreEvent(options.coreEventSink, {
     type: 'waiting-input-started',
     turnId: toTurnId(turn),
     requestId: toInputRequestId(turn),
@@ -652,7 +664,6 @@ async function requestInput(options: {
 
 async function receiveInput(options: {
   readonly memory: Memory;
-  readonly persistence: SessionPersistence;
   readonly coreEventSink: CoreEventSink;
   readonly stateStore: StateStore;
   readonly currentScene: SceneState;
@@ -685,15 +696,7 @@ async function receiveInput(options: {
 
   const receiveBatchId = `memory-eval-receive-${turn}` as BatchId;
   const memorySnapshot = await options.memory.snapshot();
-  await options.persistence.onReceiveComplete({
-    entry: { role: 'receive', content: options.inputText },
-    stateVars: options.stateStore.getAll(),
-    turn,
-    memorySnapshot,
-    payload,
-    batchId: receiveBatchId,
-  });
-  options.coreEventSink.publish({
+  await publishHarnessCoreEvent(options.coreEventSink, {
     type: 'player-input-recorded',
     turnId: toTurnId(turn),
     requestId: toInputRequestId(turn),

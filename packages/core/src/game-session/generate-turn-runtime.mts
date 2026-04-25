@@ -44,7 +44,6 @@ import {
 } from '#internal/game-session/core-events';
 import type {
   GenerateTraceHandle,
-  SessionPersistence,
   SessionTracing,
   ToolCallTraceHandle,
 } from '#internal/game-session/types';
@@ -116,7 +115,6 @@ export interface GenerateTurnRuntimeDeps {
   readonly initialPrompt?: string;
   readonly assemblyOrder?: ReadonlyArray<string>;
   readonly disabledSections?: ReadonlyArray<string>;
-  readonly persistence?: SessionPersistence;
   readonly tracing?: SessionTracing;
   readonly protocolVersion: ProtocolVersion;
   readonly parserManifest?: ParserManifest;
@@ -181,7 +179,8 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   async run(): Promise<GenerateTurnResult> {
     const traceHandle = this.deps.tracing?.startGenerateTrace(this.deps.turn);
     const toolCallStack = new Map<string, ToolCallTraceHandle[]>();
-    this.publish({
+    const toolInputStack = new Map<string, unknown[]>();
+    await this.publishDurable({
       type: 'generate-turn-started',
       turn: this.deps.turn,
       turnId: this.turnId,
@@ -194,7 +193,12 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         return this.snapshotResult(true);
       }
       const activeTurn = this.beginGenerateTurn(prepared, traceHandle);
-      const result = await this.runLLMGenerate(activeTurn, traceHandle, toolCallStack);
+      const result = await this.runLLMGenerate(
+        activeTurn,
+        traceHandle,
+        toolCallStack,
+        toolInputStack,
+      );
       await this.completeGenerateTurn(activeTurn, result, traceHandle);
     } catch (error) {
       if (!this.deps.isActive()) {
@@ -287,6 +291,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     prepared: ActiveGenerateTurn,
     traceHandle: GenerateTraceHandle | undefined,
     toolCallStack: Map<string, ToolCallTraceHandle[]>,
+    toolInputStack: Map<string, unknown[]>,
   ): Promise<GenerateResult> {
     return this.deps.llmClient.generate({
       systemPrompt: prepared.context.systemPrompt,
@@ -318,6 +323,9 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         });
       },
       onToolCall: (name, args) => {
+        const inputStack = toolInputStack.get(name) ?? [];
+        inputStack.push(args);
+        toolInputStack.set(name, inputStack);
         this.publish({
           type: 'tool-call-started',
           turnId: this.turnId,
@@ -334,12 +342,14 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         }
       },
       onToolResult: (name, toolResult) => {
+        const input = toolInputStack.get(name)?.shift();
         this.publish({
           type: 'tool-call-finished',
           turnId: this.turnId,
           stepId: this.currentStepId,
           batchId: toBatchId(this.currentStepBatchId),
           toolName: name,
+          input,
           output: toolResult,
         });
         const stack = toolCallStack.get(name);
@@ -349,16 +359,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       },
       onStepStart: (info) => this.handleStepStart(info),
       onStep: (step) => this.handleStepFinished(step, traceHandle),
-      onToolObserved: async (evt) => {
-        await this.deps.persistence?.onToolCallRecorded?.({
-          toolName: evt.toolName,
-          input: evt.input,
-          output: evt.output,
-          batchId: evt.batchId,
-        }).catch((e) =>
-          console.error('[Persistence] onToolCallRecorded failed:', e),
-        );
-      },
     });
   }
 
@@ -400,16 +400,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     }
 
     if (this.currentNarrativeBuffer) {
-      await this.deps.persistence?.onNarrativeSegmentFinalized({
-        entry: {
-          role: 'generate',
-          content: this.currentNarrativeBuffer,
-          reasoning: this.currentReasoningBuffer || undefined,
-          finishReason: result.finishReason,
-        },
-        batchId: this.currentStepBatchId,
-      }).catch((e) => console.error('[Persistence] onNarrativeSegmentFinalized (final) failed:', e));
-      this.publish({
+      await this.publishDurable({
         type: 'narrative-segment-finalized',
         turnId: this.turnId,
         stepId: this.currentStepId,
@@ -428,14 +419,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     }
 
     const memSnapGen = await this.deps.memory.snapshot();
-    await this.deps.persistence?.onGenerateComplete({
-      memorySnapshot: memSnapGen,
-      preview: result.text
-        ? extractPlainText(result.text).slice(0, 80).replace(/\n/g, ' ').trim()
-        : null,
-      currentScene: this.currentScene,
-    }).catch((e) => console.error('[Persistence] onGenerateComplete failed:', e));
-    this.publish({
+    await this.publishDurable({
       type: 'generate-turn-completed',
       turnId: this.turnId,
       finishReason: result.finishReason,
@@ -810,26 +794,12 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     if (
       step.isFollowup ||
       !step.batchId ||
-      !step.reasoning ||
-      !this.deps.persistence
+      !step.reasoning
     ) {
       return;
     }
 
     const stepReasoning = step.reasoning;
-    void this.deps.persistence
-      .onNarrativeSegmentFinalized({
-        entry: {
-          role: 'generate',
-          content: '',
-          reasoning: stepReasoning,
-          finishReason: String(step.finishReason),
-        },
-        batchId: step.batchId,
-      })
-      .catch((err) =>
-        console.error('[Persistence] step reasoning stub failed:', err),
-      );
     this.publish({
       type: 'narrative-segment-finalized',
       turnId: this.turnId,
@@ -874,20 +844,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         console.error('[recordPendingSignal] memory.appendTurn failed:', e);
       }
 
-      try {
-        await this.deps.persistence?.onNarrativeSegmentFinalized({
-          entry: {
-            role: 'generate',
-            content: buffered,
-            reasoning: undefined,
-            finishReason: 'signal-input-preflush',
-          },
-          batchId: this.currentStepBatchId,
-        });
-      } catch (e) {
-        console.error('[recordPendingSignal] onNarrativeSegmentFinalized failed:', e);
-      }
-      this.publish({
+      await this.publishDurable({
         type: 'narrative-segment-finalized',
         turnId: this.turnId,
         stepId: this.currentStepId,
@@ -910,16 +867,11 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     };
 
     if (hint) {
-      this.emitSignalInputSentence(hint, choices);
-      await this.deps.persistence?.onSignalInputRecorded?.({
-        hint,
-        choices,
-        batchId: this.currentStepBatchId,
-      }).catch((e) => console.error('[Persistence] onSignalInputRecorded failed:', e));
+      await this.emitSignalInputSentence(hint, choices);
     }
   }
 
-  private emitSignalInputSentence(hint: string, choices: string[]): void {
+  private async emitSignalInputSentence(hint: string, choices: string[]): Promise<void> {
     const sentence = {
       kind: 'signal_input',
       hint,
@@ -928,7 +880,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       turnNumber: this.deps.turn,
       index: Date.now(),
     } as const;
-    this.publish({
+    await this.publishDurable({
       type: 'signal-input-recorded',
       turnId: this.turnId,
       batchId: toBatchId(this.currentStepBatchId),
@@ -960,6 +912,11 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
 
   private publish(event: Parameters<CoreEventSink['publish']>[0]): void {
     this.deps.coreEventSink?.publish(event);
+  }
+
+  private async publishDurable(event: Parameters<CoreEventSink['publish']>[0]): Promise<void> {
+    this.publish(event);
+    await this.deps.coreEventSink?.flushDurable?.();
   }
 }
 

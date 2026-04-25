@@ -109,6 +109,7 @@ export type GenerateCoreEvent =
       readonly stepId: StepId | null;
       readonly batchId: BatchId | null;
       readonly toolName: string;
+      readonly input: unknown;
       readonly output: unknown;
     }
   | {
@@ -228,10 +229,18 @@ export interface CoreEventEnvelope {
 
 export interface CoreEventSink {
   publish(event: CoreEvent): void;
+  flushDurable?(): Promise<void>;
 }
 
 export interface CoreEventBus extends CoreEventSink {
   flushDurable(): Promise<void>;
+}
+
+export interface DurableFirstCoreEventSinkOptions {
+  readonly durableSinks: readonly CoreEventSink[];
+  readonly realtimeSinks?: readonly CoreEventSink[];
+  readonly isDurableEvent: (event: CoreEvent) => boolean;
+  readonly onError?: (error: unknown, event: CoreEvent) => void;
 }
 
 export function createCoreEventBus(sinks: readonly CoreEventSink[] = []): CoreEventBus {
@@ -241,12 +250,56 @@ export function createCoreEventBus(sinks: readonly CoreEventSink[] = []): CoreEv
         sink.publish(event);
       }
     },
-    async flushDurable() {},
+    async flushDurable() {
+      await Promise.all(sinks.map((sink) => sink.flushDurable?.()));
+    },
+  };
+}
+
+export function createDurableFirstCoreEventSink(
+  options: DurableFirstCoreEventSinkOptions,
+): CoreEventBus {
+  const realtimeSinks = options.realtimeSinks ?? [];
+  const onError = options.onError ?? logCoreEventSinkError;
+  let tail = Promise.resolve();
+
+  const enqueue = (event: CoreEvent, work: () => Promise<void>) => {
+    tail = tail.then(work).catch((error) => onError(error, event));
+  };
+
+  return {
+    publish(event) {
+      enqueue(event, async () => {
+        if (options.isDurableEvent(event)) {
+          for (const sink of options.durableSinks) {
+            sink.publish(event);
+          }
+          await Promise.all(options.durableSinks.map((sink) => sink.flushDurable?.()));
+        }
+
+        for (const sink of realtimeSinks) {
+          sink.publish(event);
+        }
+        await Promise.all(realtimeSinks.map((sink) => sink.flushDurable?.()));
+      });
+    },
+
+    async flushDurable() {
+      await tail;
+      await Promise.all([
+        ...options.durableSinks.map((sink) => sink.flushDurable?.()),
+        ...realtimeSinks.map((sink) => sink.flushDurable?.()),
+      ]);
+    },
   };
 }
 
 export function createNoopCoreEventSink(): CoreEventSink {
   return { publish() {} };
+}
+
+function logCoreEventSinkError(error: unknown, event: CoreEvent): void {
+  console.error(`[CoreEventSink] ${event.type} failed:`, error);
 }
 
 export function turnId(turn: number): TurnId {

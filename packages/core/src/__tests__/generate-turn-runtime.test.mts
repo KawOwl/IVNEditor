@@ -6,7 +6,8 @@ import {
   type RecordingSessionEmitter,
 } from '#internal/game-session/recording-emitter';
 import { createLegacySessionEmitterProjection } from '#internal/game-session/legacy-session-emitter-projection';
-import type { CoreEventSink } from '#internal/game-session/core-events';
+import { createCoreEventBus, type CoreEventBus, type CoreEventSink } from '#internal/game-session/core-events';
+import { createSessionPersistenceCoreEventSink } from '#internal/game-session/persistence-core-event-sink';
 import type { GenerateOptions, GenerateResult, LLMClient, StepInfo } from '#internal/llm-client';
 import type { Memory } from '#internal/memory/types';
 import type { MemoryEntry, StateSchema } from '#internal/types';
@@ -19,6 +20,7 @@ describe('GenerateTurnRuntime', () => {
     const memory = createMemoryDouble();
     const persistence = createPersistenceDouble();
     const recording = createRecordingSessionEmitter();
+    const coreEventSink = createTestCoreEventSink(recording, persistence);
     const llmClient = createLLMDouble(async (options) => {
       options.onStepStart?.({ stepNumber: 0, batchId: 'batch-1', isFollowup: false });
       options.onTextChunk?.('<narration>雨停了。</narration>');
@@ -40,8 +42,7 @@ describe('GenerateTurnRuntime', () => {
       segments: [],
       enabledTools: [],
       tokenBudget: 12000,
-      persistence,
-      coreEventSink: createRecordingProjectionSink(recording),
+      coreEventSink,
       ...runtimeProtocolConfig(),
       characters: [],
       backgrounds: [],
@@ -50,6 +51,7 @@ describe('GenerateTurnRuntime', () => {
       isActive: () => true,
       onScenarioEnd: () => {},
     }).run();
+    await coreEventSink.flushDurable();
 
     const output = recording.getSnapshot();
 
@@ -151,6 +153,7 @@ describe('GenerateTurnRuntime', () => {
     const memory = createMemoryDouble();
     const persistence = createPersistenceDouble();
     const recording = createRecordingSessionEmitter();
+    const coreEventSink = createTestCoreEventSink(recording, persistence);
     const llmClient = createLLMDouble(async (options) => {
       options.onStepStart?.({ stepNumber: 0, batchId: 'batch-tool', isFollowup: false });
       options.onReasoningChunk?.('先切场景再写状态');
@@ -173,8 +176,7 @@ describe('GenerateTurnRuntime', () => {
       segments: [],
       enabledTools: [],
       tokenBudget: 12000,
-      persistence,
-      coreEventSink: createRecordingProjectionSink(recording),
+      coreEventSink,
       ...runtimeProtocolConfig(),
       characters: [],
       backgrounds: [],
@@ -183,6 +185,7 @@ describe('GenerateTurnRuntime', () => {
       isActive: () => true,
       onScenarioEnd: () => {},
     }).run();
+    await coreEventSink.flushDurable();
 
     expect(persistence.narrativeEntries).toEqual([
       {
@@ -203,6 +206,7 @@ describe('GenerateTurnRuntime', () => {
     const memory = createMemoryDouble();
     const persistence = createPersistenceDouble();
     const recording = createRecordingSessionEmitter();
+    const coreEventSink = createTestCoreEventSink(recording, persistence);
     const llmClient = createLLMDouble(async (options) => {
       options.onStepStart?.({ stepNumber: 0, batchId: 'batch-scene', isFollowup: false });
       options.onTextChunk?.('<narration>你走进屋子。</narration>');
@@ -246,8 +250,7 @@ describe('GenerateTurnRuntime', () => {
       segments: [],
       enabledTools: [],
       tokenBudget: 12000,
-      persistence,
-      coreEventSink: createRecordingProjectionSink(recording),
+      coreEventSink,
       ...runtimeProtocolConfig(),
       characters: [],
       backgrounds: [],
@@ -256,6 +259,7 @@ describe('GenerateTurnRuntime', () => {
       isActive: () => true,
       onScenarioEnd: () => {},
     }).run();
+    await coreEventSink.flushDurable();
 
     expect(result.pendingSignal).toEqual({
       hint: '接下来呢？',
@@ -324,6 +328,16 @@ const emptyStateSchema: StateSchema = { variables: [] };
 function createRecordingProjectionSink(recording: RecordingSessionEmitter): CoreEventSink {
   const projection = createLegacySessionEmitterProjection(recording.emitter);
   return { publish: (event) => projection.publish(event) };
+}
+
+function createTestCoreEventSink(
+  recording: RecordingSessionEmitter,
+  persistence: SessionPersistence,
+): CoreEventBus {
+  return createCoreEventBus([
+    createSessionPersistenceCoreEventSink(persistence),
+    createRecordingProjectionSink(recording),
+  ]);
 }
 
 function runtimeProtocolConfig() {
