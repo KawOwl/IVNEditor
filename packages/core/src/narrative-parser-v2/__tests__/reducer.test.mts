@@ -162,6 +162,176 @@ describe('reduce · narration 容器', () => {
 });
 
 // ============================================================================
+// 段落切分（\n\n 分段 → 1 容器产多条 Sentence，共享 sceneRef/pf）
+// ============================================================================
+
+describe('reduce · 段落切分（\\n\\n）', () => {
+  it('<narration> 两段 \\n\\n → 2 条 narration Sentence，index 连续', () => {
+    const { state, outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: '第一段文字。\n\n第二段文字。' },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    expect(outputs.sentences[0]!.kind).toBe('narration');
+    expect(outputs.sentences[1]!.kind).toBe('narration');
+    expect(outputs.sentences[0]!.text).toBe('第一段文字。');
+    expect(outputs.sentences[1]!.text).toBe('第二段文字。');
+    expect(outputs.sentences[0]!.index).toBe(0);
+    expect(outputs.sentences[1]!.index).toBe(1);
+    expect(state.nextIndex).toBe(2);
+  });
+
+  it('多段切分共享同一 sceneRef（容器 = 视觉单元）', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'opentag', name: 'background', attrs: { scene: 'plaza_day' } },
+      { type: 'closetag', name: 'background' },
+      { type: 'text', data: '段一。\n\n段二。\n\n段三。' },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.sentences).toHaveLength(3);
+    const scenes = outputs.sentences.map((s) => s.sceneRef.background);
+    expect(scenes).toEqual(['plaza_day', 'plaza_day', 'plaza_day']);
+  });
+
+  it('bgChanged / spritesChanged 只打在第一条', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'opentag', name: 'background', attrs: { scene: 'plaza_day' } },
+      { type: 'closetag', name: 'background' },
+      {
+        type: 'opentag',
+        name: 'sprite',
+        attrs: { char: 'sakuya', mood: 'smile', position: 'center' },
+      },
+      { type: 'closetag', name: 'sprite' },
+      { type: 'text', data: '第一段。\n\n第二段。' },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    expect(outputs.sentences[0]!.bgChanged).toBe(true);
+    expect(outputs.sentences[0]!.spritesChanged).toBe(true);
+    expect(outputs.sentences[1]!.bgChanged).toBe(false);
+    expect(outputs.sentences[1]!.spritesChanged).toBe(false);
+  });
+
+  it('truncated 只打在最后一条（container-truncated degrade 仍然只一条）', () => {
+    // 未闭合 → finalize 强制 close
+    const { outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: '段一。\n\n段二。\n\n段三（截断）' },
+      { type: 'finalize' },
+    ]);
+    expect(outputs.sentences).toHaveLength(3);
+    expect(outputs.sentences[0]!.truncated).toBeUndefined();
+    expect(outputs.sentences[1]!.truncated).toBeUndefined();
+    expect(outputs.sentences[2]!.truncated).toBe(true);
+    const trunc = outputs.degrades.filter((d) => d.code === 'container-truncated');
+    expect(trunc).toHaveLength(1);
+  });
+
+  it('<dialogue> 多段 \\n\\n → 多条 dialogue Sentence，共享同一 PF', () => {
+    const { outputs } = run([
+      {
+        type: 'opentag',
+        name: 'dialogue',
+        attrs: { speaker: 'sakuya', to: 'karina' },
+      },
+      { type: 'text', data: '第一句话。\n\n第二句话。' },
+      { type: 'closetag', name: 'dialogue' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    for (const s of outputs.sentences) {
+      expect(s.kind).toBe('dialogue');
+      if (s.kind === 'dialogue') {
+        expect(s.pf.speaker).toBe('sakuya');
+        expect(s.pf.addressee).toEqual(['karina']);
+      }
+    }
+  });
+
+  it('dialogue 多段：truncated 只贴最后一条', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'dialogue', attrs: { speaker: 'sakuya' } },
+      { type: 'text', data: '一句。\n\n两句（截断）' },
+      { type: 'finalize' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    expect(outputs.sentences[0]!.truncated).toBeUndefined();
+    expect(outputs.sentences[1]!.truncated).toBe(true);
+  });
+
+  it('dialogue 缺 speaker + 多段 → 全部降级 narration + 一条 degrade', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'dialogue', attrs: {} },
+      { type: 'text', data: '匿名段一。\n\n匿名段二。' },
+      { type: 'closetag', name: 'dialogue' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    expect(outputs.sentences[0]!.kind).toBe('narration');
+    expect(outputs.sentences[1]!.kind).toBe('narration');
+    const miss = outputs.degrades.filter((d) => d.code === 'dialogue-missing-speaker');
+    expect(miss).toHaveLength(1);
+  });
+
+  it('dialogue unknown speaker + 多段 → 保留 dialogue + degrade 只一条', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'dialogue', attrs: { speaker: 'ghost' } },
+      { type: 'text', data: 'boo 1。\n\nboo 2。' },
+      { type: 'closetag', name: 'dialogue' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    expect(outputs.sentences[0]!.kind).toBe('dialogue');
+    expect(outputs.sentences[1]!.kind).toBe('dialogue');
+    const unknown = outputs.degrades.filter((d) => d.code === 'dialogue-unknown-speaker');
+    expect(unknown).toHaveLength(1);
+  });
+
+  it('空行后跟空行（\\n\\n\\n）仍只切一次，空段被丢弃', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: '段一\n\n\n\n段二' },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    expect(outputs.sentences[0]!.text).toBe('段一');
+    expect(outputs.sentences[1]!.text).toBe('段二');
+  });
+
+  it('空行里夹空白（\\n \\t \\n）也识别为段落边界', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: '段一\n \t \n段二' },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    expect(outputs.sentences[0]!.text).toBe('段一');
+    expect(outputs.sentences[1]!.text).toBe('段二');
+  });
+
+  it('空 <narration></narration> → 0 条 Sentence（无空段污染）', () => {
+    const { state, outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.sentences).toHaveLength(0);
+    expect(outputs.degrades).toHaveLength(0);
+    expect(state.nextIndex).toBe(0);
+  });
+
+  it('单段（无 \\n\\n）仍是 1 条 Sentence（向后兼容）', () => {
+    const { state, outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: '只有一段，没有空行。包含单个 \\n 也不切。\n就还是这一段。' },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.sentences).toHaveLength(1);
+    expect(state.nextIndex).toBe(1);
+  });
+});
+
+// ============================================================================
 // 裸文本 / 未知顶层标签
 // ============================================================================
 

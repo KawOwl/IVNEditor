@@ -477,18 +477,18 @@ function finalizeUnit(
     ? [{ code: 'container-truncated', detail: unit.kind }]
     : [];
 
-  const sentence = buildSentence(state, unit, scene, bgChanged, spritesChanged, truncated, manifest);
-  const additionalDegrades = sentence.extraDegrades;
+  const built = buildSentences(state, unit, scene, bgChanged, spritesChanged, truncated, manifest);
+  const additionalDegrades = built.extraDegrades;
 
   return {
     state: {
       ...state,
-      nextIndex: state.nextIndex + 1,
+      nextIndex: state.nextIndex + built.sentences.length,
       lastScene: scene,
       containerStack: restStack,
     },
     outputs: {
-      sentences: [sentence.sentence],
+      sentences: built.sentences,
       scratches: [],
       degrades: [...sceneDegrades, ...truncDegrade, ...additionalDegrades],
     },
@@ -526,12 +526,27 @@ function finalizeScratch(
 // Sentence 构造（dialogue / narration 合用）
 // ============================================================================
 
-interface BuildSentenceResult {
-  readonly sentence: Sentence;
+interface BuildSentencesResult {
+  readonly sentences: ReadonlyArray<Sentence>;
   readonly extraDegrades: ReadonlyArray<DegradeEvent>;
 }
 
-function buildSentence(
+/**
+ * 把一个 `<dialogue>` / `<narration>` 容器的文本按 `\n\n` 切分成 1..N 条 Sentence，
+ * 共享同一 sceneRef / PF（容器 = 视觉单元；段落 = 播放单元，UI 逐段打字机）。
+ *
+ * 分配规则：
+ * - `sceneRef`、`pf`、`turnNumber` 所有段共享
+ * - `index` 从 `state.nextIndex` 起逐段 +1
+ * - `bgChanged` / `spritesChanged` 只贴在**第一条**（视觉变化只发生在进入容器时）
+ * - `truncated` 只贴在**最后一条**（截断发生在容器末尾）
+ * - `extraDegrades` 只在整容器级产出一次（与段数无关）
+ *
+ * 空文本容器（trim 后为空）→ 返回 0 条 Sentence，但保留 degrade（例如
+ * dialogue-missing-speaker 仍然报告，避免"空 speaker + 空正文"这类异常被吞）。
+ * 这和现有 `finalizeScratch` "空 scratch 不产 block" 的语义对齐。
+ */
+function buildSentences(
   state: ParserState,
   unit: PendingUnit,
   sceneRef: ReturnType<typeof resolveScene>['scene'],
@@ -539,72 +554,72 @@ function buildSentence(
   spritesChanged: boolean,
   truncated: boolean,
   manifest: ParserManifest,
-): BuildSentenceResult {
-  const text = normalizeText(unit.textBuffer);
+): BuildSentencesResult {
+  const paragraphs = splitParagraphs(unit.textBuffer);
+
+  // 先算这个容器级的 extraDegrades（只产一次）
+  let kind: 'narration' | 'dialogue';
+  let pf: ParticipationFrame | null = null;
+  const extraDegrades: DegradeEvent[] = [];
 
   if (unit.kind === 'narration') {
-    return {
-      sentence: {
-        kind: 'narration',
-        text,
-        sceneRef,
-        turnNumber: state.turnNumber,
-        index: state.nextIndex,
-        bgChanged,
-        spritesChanged,
-        ...(truncated ? { truncated: true } : {}),
-      },
-      extraDegrades: [],
-    };
+    kind = 'narration';
+  } else if (unit.speakerMissing) {
+    // dialogue 缺 speaker → 整容器降级 narration
+    kind = 'narration';
+    extraDegrades.push({ code: 'dialogue-missing-speaker' });
+  } else {
+    kind = 'dialogue';
+    pf = unit.pf ?? { speaker: unit.rawSpeaker ?? '' };
+    if (pf.speaker && !manifest.characters.has(pf.speaker)) {
+      extraDegrades.push({ code: 'dialogue-unknown-speaker', detail: pf.speaker });
+    }
   }
 
-  // dialogue
-  if (unit.speakerMissing) {
-    // 降级为 narration
-    return {
-      sentence: {
-        kind: 'narration',
-        text,
-        sceneRef,
-        turnNumber: state.turnNumber,
-        index: state.nextIndex,
-        bgChanged,
-        spritesChanged,
-        ...(truncated ? { truncated: true } : {}),
-      },
-      extraDegrades: [{ code: 'dialogue-missing-speaker' }],
-    };
+  if (paragraphs.length === 0) {
+    // 整容器为空（e.g. `<narration></narration>` 或 `<dialogue speaker="x"/>`）：
+    // 不产 Sentence，但 extraDegrades 仍然上报（方便调试）。
+    return { sentences: [], extraDegrades };
   }
 
-  const pf: ParticipationFrame = unit.pf ?? { speaker: unit.rawSpeaker ?? '' };
-  const extraDegrades: DegradeEvent[] = [];
-  if (pf.speaker && !manifest.characters.has(pf.speaker)) {
-    extraDegrades.push({ code: 'dialogue-unknown-speaker', detail: pf.speaker });
-  }
-
-  return {
-    sentence: {
-      kind: 'dialogue',
+  const sentences: Sentence[] = paragraphs.map((text, i) => {
+    const isFirst = i === 0;
+    const isLast = i === paragraphs.length - 1;
+    const base = {
       text,
-      pf,
       sceneRef,
       turnNumber: state.turnNumber,
-      index: state.nextIndex,
-      bgChanged,
-      spritesChanged,
-      ...(truncated ? { truncated: true } : {}),
-    },
-    extraDegrades,
-  };
+      index: state.nextIndex + i,
+      bgChanged: isFirst ? bgChanged : false,
+      spritesChanged: isFirst ? spritesChanged : false,
+      ...(truncated && isLast ? { truncated: true } : {}),
+    };
+    if (kind === 'narration') {
+      return { kind: 'narration', ...base };
+    }
+    // dialogue：pf 在上面已 narrow 非空
+    return { kind: 'dialogue', pf: pf!, ...base };
+  });
+
+  return { sentences, extraDegrades };
 }
 
 /**
- * text buffer 的规范化：
- *   - 去掉首尾空白（但保留内部双换行，下游段落切分器依赖）
- *   - 连续空白（但非 \n\n）压缩为单空格
+ * 按 `\n\s*\n+`（空行，允许中间有空白字符）切段，每段 trim 并过滤空段。
  *
- * 为了贴近 v1 行为，这里简化只做首尾 trim，更复杂的段落处理让消费方做。
+ * - 0 段（全空白）→ 返回 `[]`
+ * - 无 `\n\n` → 返回 1 段（整段 trim）
+ * - N 段 → 返回 N 段
+ *
+ * 空行分段是 v1 `findNarrationCut` 的第一优先级切分信号，这里和 v1 对齐语义，
+ * 让 `<narration>` / `<dialogue>` 内部的自然段节奏能对应到多条 Sentence。
  */
-function normalizeText(buf: string): string {
-  return buf.trim();
+function splitParagraphs(buf: string): string[] {
+  const parts = buf.split(/\n[ \t]*\n+/);
+  const out: string[] = [];
+  for (const p of parts) {
+    const t = p.trim();
+    if (t.length > 0) out.push(t);
+  }
+  return out;
 }
