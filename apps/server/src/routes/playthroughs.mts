@@ -166,6 +166,18 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
       );
     }
 
+    // 拒绝指向已软删 script 的创建：scriptVersion 行还在但 parent script 已软删时，
+    // scriptService.getById 返 null（默认过滤 deleted_at IS NULL）→ 当 404。
+    const script = resolvedScriptId
+      ? await scriptService.getById(resolvedScriptId)
+      : null;
+    if (!script) {
+      return new Response(
+        JSON.stringify({ error: 'Script not found or has been deleted' }),
+        { status: 404 },
+      );
+    }
+
     // ========================================================================
     // v2.7 LLM config fallback 链：
     //   1. body.llmConfigId（编辑器 playtest override / 未来的玩家端选择器）
@@ -186,11 +198,8 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
       llmConfigId = cfg.id;
     }
 
-    if (!llmConfigId && resolvedScriptId) {
-      const script = await scriptService.getById(resolvedScriptId);
-      if (script?.productionLlmConfigId) {
-        llmConfigId = script.productionLlmConfigId;
-      }
+    if (!llmConfigId && script.productionLlmConfigId) {
+      llmConfigId = script.productionLlmConfigId;
     }
 
     if (!llmConfigId) {

@@ -937,7 +937,7 @@ describe('mcp route', () => {
     expect(stillHere).not.toBeNull();
   });
 
-  it('delete_script with confirm=true + matching scriptIdConfirm deletes script + cascades versions', async () => {
+  it('delete_script with confirm=true + matching scriptIdConfirm soft-deletes script (rows preserved)', async () => {
     const app = buildApp();
     const { userId, sessionId } = await createTestAdmin();
     const scriptId = crypto.randomUUID();
@@ -973,12 +973,13 @@ describe('mcp route', () => {
     expect(payload.ok).toBe(true);
     expect(payload.deleted.scriptId).toBe(scriptId);
     expect(payload.deleted.versionCount).toBe(2);
-    expect(payload.warning).toContain('OSS');
+    expect(payload.warning).toContain('UPDATE scripts SET deleted_at = NULL');
 
-    // script + versions 都没了
+    // 软删后 list/get 默认看不见，但底层 script_versions 行保留
     expect(await scriptService.getById(scriptId)).toBeNull();
+    expect(await scriptService.getById(scriptId, { includeDeleted: true })).not.toBeNull();
     const remainingVersions = await scriptVersionService.listByScript(scriptId);
-    expect(remainingVersions.length).toBe(0);
+    expect(remainingVersions.length).toBe(2);
   });
 
   it('delete_script on nonexistent id → isError', async () => {

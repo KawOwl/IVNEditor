@@ -5,7 +5,7 @@
  * Route 层只负责 HTTP/参数处理，不直接访问 db/schema。
  */
 
-import { eq, and, desc, asc, sql, inArray } from 'drizzle-orm';
+import { eq, and, desc, asc, sql, inArray, isNull } from 'drizzle-orm';
 import { db, schema } from '#internal/db';
 
 const defined = <T,>(value: T | undefined): value is T => value !== undefined;
@@ -143,6 +143,10 @@ export class PlaythroughService {
       !filter.includeArchived ? eq(schema.playthroughs.archived, false) : undefined,
       versionCondition,
       filter.kind ? eq(schema.playthroughs.kind, filter.kind) : undefined,
+      // join scripts 过滤指向已软删剧本的 playthroughs：
+      // 玩家"我的游玩"和编剧"试玩历史"列表都不展示孤儿条目，避免点进去 404。
+      // DB 行仍在，admin 想看孤儿 SQL 直查或用 includeDeleted（暂未实现）。
+      isNull(schema.scripts.deletedAt),
     ].filter(defined);
 
     const rows = await db
@@ -158,6 +162,14 @@ export class PlaythroughService {
         updatedAt: schema.playthroughs.updatedAt,
       })
       .from(schema.playthroughs)
+      .innerJoin(
+        schema.scriptVersions,
+        eq(schema.playthroughs.scriptVersionId, schema.scriptVersions.id),
+      )
+      .innerJoin(
+        schema.scripts,
+        eq(schema.scriptVersions.scriptId, schema.scripts.id),
+      )
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(schema.playthroughs.updatedAt))
       .limit(100);

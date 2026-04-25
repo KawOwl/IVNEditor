@@ -166,6 +166,12 @@ export const scripts = pgTable('scripts', {
     .references(() => llmConfigs.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  // 软删除时刻：null = 活跃，非 null = 已软删（deletedAt 即被删时间）。
+  // 选软删而非硬删的原因：playthroughs.script_version_id 没 ON DELETE
+  // CASCADE，硬删 script → cascade 删 script_versions → 撞 FK violation
+  // 全 tx rollback。软删完全 sidestep 这条链，且保留 Langfuse trace 上的
+  // playthroughs 历史 + 误删可手动 SQL 恢复。
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
 }, (table) => [
   index('idx_scripts_author').on(table.authorUserId),
 ]);
