@@ -540,6 +540,27 @@ describe('PlaythroughService', () => {
       expect(id).toBeTruthy();
       expect(typeof id).toBe('string');
     });
+
+    it('serializes concurrent appends for one playthrough', async () => {
+      const pt = await createTestPlaythrough();
+
+      await Promise.all(
+        Array.from({ length: 20 }, (_, i) =>
+          service.appendNarrativeEntry({
+            playthroughId: pt.id,
+            role: 'generate',
+            content: `concurrent-${i}`,
+          }),
+        ),
+      );
+
+      const entries = await service.loadEntries(pt.id, 100);
+      expect(entries.length).toBe(20);
+      expect(entries.map((entry) => entry.orderIdx)).toEqual(
+        Array.from({ length: 20 }, (_, i) => i),
+      );
+      expect(new Set(entries.map((entry) => entry.orderIdx)).size).toBe(20);
+    });
   });
 
   // --------------------------------------------------------------------------

@@ -383,9 +383,14 @@ export class PlaythroughService {
   }): Promise<string> {
     const id = crypto.randomUUID();
 
-    // 用事务保证 max(orderIdx) 查询和 insert 的原子性，
-    // 防止并发 GameSession 写入导致 orderIdx 重复（P1 修复）。
+    // 用 per-playthrough transaction-level advisory lock 串行化 max(orderIdx)
+    // 查询和 insert。普通 READ COMMITTED 事务本身不足以防止两个并发 writer
+    // 同时读到相同 max 值。
     await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        select pg_advisory_xact_lock(hashtext(${entry.playthroughId}), 0)
+      `);
+
       const maxResult = await tx
         .select({ max: sql<number>`coalesce(max(${schema.narrativeEntries.orderIdx}), -1)` })
         .from(schema.narrativeEntries)
