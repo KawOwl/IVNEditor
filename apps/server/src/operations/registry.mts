@@ -16,6 +16,9 @@ import { listAssetsOp } from '#internal/operations/script/list-assets';
 import { updateSegmentContentOp } from '#internal/operations/script/update-segment-content';
 import { replaceManifestOp } from '#internal/operations/script/replace-manifest';
 import { publishVersionOp } from '#internal/operations/script/publish-version';
+import { uploadAssetOp } from '#internal/operations/script/upload-asset';
+import { addBackgroundOp } from '#internal/operations/script/add-background';
+import { addCharacterSpriteOp } from '#internal/operations/script/add-character-sprite';
 
 /** 全部 op 列表。新增 op 在这里登记。*/
 export const ALL_OPS = [
@@ -31,6 +34,10 @@ export const ALL_OPS = [
   updateSegmentContentOp,
   replaceManifestOp,
   publishVersionOp,
+  // script.* —— 资产写
+  uploadAssetOp,
+  addBackgroundOp,
+  addCharacterSpriteOp,
 ] as const satisfies ReadonlyArray<AnyOp>;
 
 /** 按 category 分组（adapter / 文档生成器用）*/
