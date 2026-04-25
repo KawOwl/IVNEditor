@@ -105,9 +105,10 @@ export class LLMSummarizerMemory implements Memory {
   // ─── Read ──────────────────────────────────────────────────────────
 
   async retrieve(query: string): Promise<MemoryRetrieval> {
-    const parts: string[] = [];
-    for (const s of this.state.summaries) parts.push(s);
-    for (const p of this.state.pinned) parts.push(`[重要] ${p.content}`);
+    const parts = [
+      ...this.state.summaries,
+      ...this.state.pinned.map((entry) => `[重要] ${entry.content}`),
+    ];
 
     const recent = await this.readRecentMemoryEntries();
     return {

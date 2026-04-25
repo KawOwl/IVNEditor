@@ -202,11 +202,13 @@ export class Mem0Memory implements Memory {
       }
 
       // 把相关 memory 条目拼成一段 summary 喂进 _engine_memory section
-      const summaryParts: string[] = ['[Relevant Memories]'];
-      for (const r of results) {
-        const text = r.memory ?? r.data?.memory ?? '';
-        if (text) summaryParts.push(`- ${text}`);
-      }
+      const summaryParts = [
+        '[Relevant Memories]',
+        ...results
+          .map((result) => result.memory ?? result.data?.memory ?? '')
+          .filter(Boolean)
+          .map((text) => `- ${text}`),
+      ];
 
       return {
         summary: summaryParts.join('\n'),

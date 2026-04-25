@@ -8,6 +8,8 @@
 import { eq, and, desc, asc, sql, inArray } from 'drizzle-orm';
 import { db, schema } from '#internal/db';
 
+const defined = <T,>(value: T | undefined): value is T => value !== undefined;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -130,19 +132,18 @@ export class PlaythroughService {
    */
   async list(filter: ListFilter): Promise<PlaythroughSummary[]> {
     // userId 必填 → 强制按用户隔离
-    const conditions = [eq(schema.playthroughs.userId, filter.userId)];
-    if (!filter.includeArchived) {
-      conditions.push(eq(schema.playthroughs.archived, false));
-    }
     // scriptVersionIds（数组）优先于 scriptVersionId（单个）
-    if (filter.scriptVersionIds && filter.scriptVersionIds.length > 0) {
-      conditions.push(inArray(schema.playthroughs.scriptVersionId, filter.scriptVersionIds));
-    } else if (filter.scriptVersionId) {
-      conditions.push(eq(schema.playthroughs.scriptVersionId, filter.scriptVersionId));
-    }
-    if (filter.kind) {
-      conditions.push(eq(schema.playthroughs.kind, filter.kind));
-    }
+    const versionCondition = filter.scriptVersionIds && filter.scriptVersionIds.length > 0
+      ? inArray(schema.playthroughs.scriptVersionId, filter.scriptVersionIds)
+      : filter.scriptVersionId
+        ? eq(schema.playthroughs.scriptVersionId, filter.scriptVersionId)
+        : undefined;
+    const conditions = [
+      eq(schema.playthroughs.userId, filter.userId),
+      !filter.includeArchived ? eq(schema.playthroughs.archived, false) : undefined,
+      versionCondition,
+      filter.kind ? eq(schema.playthroughs.kind, filter.kind) : undefined,
+    ].filter(defined);
 
     const rows = await db
       .select({
@@ -483,13 +484,15 @@ export class PlaythroughService {
     fromOrderIdx?: number,
     toOrderIdx?: number,
   ): Promise<NarrativeEntryRow[]> {
-    const conditions = [eq(schema.narrativeEntries.playthroughId, playthroughId)];
-    if (fromOrderIdx !== undefined) {
-      conditions.push(sql`${schema.narrativeEntries.orderIdx} >= ${fromOrderIdx}`);
-    }
-    if (toOrderIdx !== undefined) {
-      conditions.push(sql`${schema.narrativeEntries.orderIdx} <= ${toOrderIdx}`);
-    }
+    const conditions = [
+      eq(schema.narrativeEntries.playthroughId, playthroughId),
+      fromOrderIdx !== undefined
+        ? sql`${schema.narrativeEntries.orderIdx} >= ${fromOrderIdx}`
+        : undefined,
+      toOrderIdx !== undefined
+        ? sql`${schema.narrativeEntries.orderIdx} <= ${toOrderIdx}`
+        : undefined,
+    ].filter(defined);
     return await db
       .select()
       .from(schema.narrativeEntries)

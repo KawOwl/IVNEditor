@@ -1057,12 +1057,12 @@ export class GameSession {
    */
   private async buildRetrievalQuery(): Promise<string> {
     const focus = computeFocus(this.stateStore.getAll());
-    const parts: string[] = [];
-    if (focus.scene) parts.push(focus.scene);
-    // v2: if (focus.stage) parts.push(focus.stage);
-    // v2: if (focus.characters?.length) parts.push(focus.characters.join(', '));
-    if (this.lastPlayerInput) parts.push(this.lastPlayerInput);
-    return parts.join('. ');
+    return [
+      focus.scene,
+      // v2: focus.stage,
+      // v2: focus.characters?.join(', '),
+      this.lastPlayerInput,
+    ].filter((part): part is string => !!part).join('. ');
   }
 
   /**

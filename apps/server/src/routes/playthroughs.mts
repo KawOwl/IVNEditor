@@ -77,9 +77,8 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
       versionNumber: number;
       versionStatus: string;
     }
-    const versionMap = new Map<string, VersionMeta>();
-    if (versionIds.length > 0) {
-      const joined = await db
+    const joinedVersions = versionIds.length > 0
+      ? await db
         .select({
           versionId: schema.scriptVersions.id,
           scriptLabel: schema.scripts.label,
@@ -88,15 +87,18 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
         })
         .from(schema.scriptVersions)
         .innerJoin(schema.scripts, eq(schema.scriptVersions.scriptId, schema.scripts.id))
-        .where(inArray(schema.scriptVersions.id, versionIds));
-      for (const row of joined) {
-        versionMap.set(row.versionId, {
+        .where(inArray(schema.scriptVersions.id, versionIds))
+      : [];
+    const versionMap = new Map<string, VersionMeta>(
+      joinedVersions.map((row) => [
+        row.versionId,
+        {
           scriptLabel: row.scriptLabel,
           versionNumber: row.versionNumber,
           versionStatus: row.versionStatus,
-        });
-      }
-    }
+        },
+      ]),
+    );
 
     const withTitles = playthroughs.map((pt) => {
       const meta = versionMap.get(pt.scriptVersionId);

@@ -1,6 +1,9 @@
-# CLAUDE.md — Agent 工作流规范
+# CLAUDE.md — Claude 工作流规范
 
-本文件定义 Claude 在本项目中的工作流程。每次会话开始时必须阅读本文件。
+本文件定义 Claude 在本项目中的工作流程。每次会话开始时必须先阅读
+`AGENTS.md`，再阅读本文件。代码风格、包边界、副作用隔离、验证和提交纪律等
+Claude/Codex 共用规则统一维护在 `AGENTS.md`；本文件只保留 Claude 专属的会话
+工作流与项目记忆规则。
 
 ---
 
@@ -11,8 +14,8 @@
 1. **会话间无记忆，靠文件传递上下文**：每次新会话/context reset 后，通过读取项目文件恢复完整认知，而非依赖对话记忆。
 2. **增量推进，一次一个 Step**：每次只聚焦 feature_list.json 中的一个 Step，完成并验证后再开始下一个。收到跨多个 Step 的大指令时，仍逐个 Step 执行开发循环，不批量实现。
 3. **结构化交接**：每次会话结束前，将进展、决策、遗留问题写入追踪文件，确保下次会话无缝衔接。
-4. **约束优于自由**：通过类型定义、目录结构、lint 规则限制实现空间，提高一致性。
-5. **用人类工程实践要求自己**：提交纪律（小而频繁的 commit）、文档更新、验证后再推进。
+4. **共享规则优先**：代码风格、目录边界和提交纪律以 `AGENTS.md` 为准。
+5. **用人类工程实践要求自己**：小步推进、文档更新、验证后再推进。
 
 ---
 
@@ -85,12 +88,13 @@
 
 每次新会话（包括 context reset 后），按以下顺序恢复上下文：
 
-1. **读 CLAUDE.md**（本文件）— 了解工作流规范
-2. **读 PROGRESS.md** — 了解当前任务、关键决策
-3. **读 feature_list.json** — 了解所有 feature 的状态，定位下一个 pending
-4. **读 git log（最近 10 条）** — 了解最近的代码变更
-5. **读 v2.0.md 的相关章节**（按当前 feature 的 ref 字段定位）
-6. **确认当前任务** — 从 PROGRESS.md 中的"当前任务"继续，或从 feature_list.json 选取下一个 pending
+1. **读 AGENTS.md** — 了解 Claude/Codex 共用工程规则
+2. **读 CLAUDE.md**（本文件）— 了解 Claude 会话工作流
+3. **读 PROGRESS.md** — 了解当前任务、关键决策
+4. **读 feature_list.json** — 了解所有 feature 的状态，定位下一个 pending
+5. **读 git log（最近 10 条）** — 了解最近的代码变更
+6. **读 v2.0.md 的相关章节**（按当前 feature 的 ref 字段定位）
+7. **确认当前任务** — 从 PROGRESS.md 中的"当前任务"继续，或从 feature_list.json 选取下一个 pending
 
 ### 开发循环（每个 feature）
 
@@ -148,44 +152,24 @@
 
 ---
 
-## 四、提交纪律
+## 四、共享工程规则
 
-- **小而频繁**：每完成一个有意义的步骤就提交
-- **提交信息格式**：`类型: 简短描述`（feat / fix / refactor / docs / chore）
-- **不要积攒大量改动一次性提交**
-- **每次 commit 前确认**：类型检查通过、不包含敏感信息
+以下内容统一维护在 `AGENTS.md`，不要在本文件重复分叉：
 
----
-
-## 五、目录结构约束
-
-```
-src/
-  core/           # 引擎核心（纯逻辑，不依赖 React）
-  ui/             # React UI 组件
-  store/          # Zustand stores（连接 core 和 ui）
-  storage/        # IndexedDB 持久化
-  fixtures/       # 测试用的手写 IR 数据
-```
-
-依赖分层规则：
-```
-types（纯类型）→ core（纯逻辑）→ store（状态管理）→ ui（React）
-                                  ↘ storage（持久化）
-```
-
-- `core/` 不得 import React 或 Zustand
-- `ui/` 通过 `store/` 间接访问 `core/`
-- `storage/` 只被 `store/` 调用
+- 代码风格：pure core, imperative shell；数据组装优先不可变表达式；状态机保留显式顺序
+- Parser/runtime 风格：纯 reducer + 边界 adapter
+- 副作用隔离：DB / LLM / S3 / tracing / WebSocket 通过窄接口或 adapter
+- Monorepo 包边界和 ESM-only 规则
+- 验证命令、negentropy 报告、提交纪律
 
 ---
 
-## 六、技术栈
+## 五、技术栈
 
-- React 19 + TypeScript 5.7 + Vite 6
+- React 19 + TypeScript/tsgo + Vite
 - Zustand 5（状态管理）
-- Zod 3（运行时验证）
+- Zod（运行时验证）
 - Vercel AI SDK（LLM 调用）
-- shadcn/ui（UI 组件，底层 Radix + Tailwind）
+- Tailwind / shadcn-style UI 组件
 - idb（IndexedDB 封装）
 - ReactFlow（Phase 3，流程图编辑器）

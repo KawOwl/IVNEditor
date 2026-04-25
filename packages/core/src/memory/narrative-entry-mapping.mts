@@ -70,10 +70,8 @@ export function narrativeToMemoryEntry(e: NarrativeEntry): MemoryEntry | null {
 export function narrativeEntriesToMemoryEntries(
   entries: NarrativeEntry[],
 ): MemoryEntry[] {
-  const result: MemoryEntry[] = [];
-  for (const e of entries) {
-    const mapped = narrativeToMemoryEntry(e);
-    if (mapped) result.push(mapped);
-  }
-  return result;
+  return entries.flatMap((entry) => {
+    const mapped = narrativeToMemoryEntry(entry);
+    return mapped ? [mapped] : [];
+  });
 }

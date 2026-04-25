@@ -32,11 +32,14 @@ export class StateStore {
 
   constructor(schema: StateSchema) {
     // Initialize state from schema defaults
-    const vars: Record<string, unknown> = {};
-    for (const variable of schema.variables) {
-      vars[variable.name] = structuredClone(variable.initial);
-    }
-    this.state = { vars };
+    this.state = {
+      vars: Object.fromEntries(
+        schema.variables.map((variable) => [
+          variable.name,
+          structuredClone(variable.initial),
+        ]),
+      ),
+    };
   }
 
   // --- Read ---
@@ -50,13 +53,13 @@ export class StateStore {
   }
 
   getKeys(keys: string[]): Record<string, unknown> {
-    const result: Record<string, unknown> = {};
-    for (const key of keys) {
-      if (key in this.state.vars) {
-        result[key] = this.state.vars[key];
-      }
-    }
-    return structuredClone(result);
+    return structuredClone(
+      Object.fromEntries(
+        keys
+          .filter((key) => key in this.state.vars)
+          .map((key) => [key, this.state.vars[key]]),
+      ),
+    );
   }
 
   // --- Write ---
@@ -184,11 +187,9 @@ export class StateStore {
  * 也能用同一套格式生成 INTERNAL_STATE section，和运行时保持一致。
  */
 export function serializeStateVars(vars: Record<string, unknown>): string {
-  const lines: string[] = [];
-  for (const [key, value] of Object.entries(vars)) {
-    lines.push(`${key}: ${formatValue(value)}`);
-  }
-  return lines.join('\n');
+  return Object.entries(vars)
+    .map(([key, value]) => `${key}: ${formatValue(value)}`)
+    .join('\n');
 }
 
 function formatValue(value: unknown): string {
