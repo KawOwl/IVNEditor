@@ -109,6 +109,9 @@ function projectSessionError(
   event: CoreEventOf<'session-error'>,
   emitter: SessionEmitter,
 ): void {
+  if (event.phase === 'generate') {
+    emitter.finalizeStreamingEntry();
+  }
   emitter.setError(event.message);
 }
 

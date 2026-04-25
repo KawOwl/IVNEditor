@@ -36,6 +36,7 @@ import { serializeMessagesForDebug } from '#internal/messages-builder';
 import { createNarrationAccumulator } from '#internal/game-session/narration';
 import { applyScenePatchToState } from '#internal/game-session/scene-state';
 import type { CoreEventSink, RuntimeSentence, StepId, TurnId } from '#internal/game-session/core-events';
+import { createSessionEmitterProjection } from '#internal/game-session/session-emitter-projection';
 import {
   batchId as toBatchId,
   createInputRequest,
@@ -157,6 +158,7 @@ function toTraceStepRecord(step: StepInfo): TraceStepRecord {
 }
 
 class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
+  private readonly sessionEmitterProjection: CoreEventSink;
   private readonly turnId: TurnId;
   private currentScene: SceneState;
   private currentNarrativeBuffer = '';
@@ -171,6 +173,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   private abortController: AbortController | null = null;
 
   constructor(private readonly deps: GenerateTurnRuntimeDeps) {
+    this.sessionEmitterProjection = createSessionEmitterProjection(deps.emitter);
     this.turnId = toTurnId(deps.turn);
     this.currentScene = copyScene(deps.currentScene);
   }
@@ -242,21 +245,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     const activeSegmentIds = this.computeActiveSegmentIds();
     const debugMessages = serializeMessagesForDebug(context.messages);
 
-    this.deps.emitter.updateDebug({
-      tokenBreakdown: context.tokenBreakdown,
-      assembledSystemPrompt: context.systemPrompt,
-      assembledMessages: debugMessages,
-      activeSegmentIds,
-    });
-
-    this.deps.emitter.stagePendingDebug({
-      promptSnapshot: {
-        systemPrompt: context.systemPrompt,
-        messages: debugMessages,
-        tokenBreakdown: context.tokenBreakdown,
-        activeSegmentIds,
-      },
-    });
     this.publish({
       type: 'context-assembled',
       turnId: this.turnId,
@@ -287,7 +275,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     this.abortController = new AbortController();
     this.currentNarrativeBuffer = '';
     this.currentReasoningBuffer = '';
-    this.deps.emitter.beginStreamingEntry();
     this.publish({ type: 'assistant-message-started', turnId: this.turnId });
 
     const narrativeRuntime = this.createNarrativeRuntime(traceHandle);
@@ -311,7 +298,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       prepareStepSystem: prepared.prepareStepSystem,
       onTextChunk: (chunk) => {
         this.currentNarrativeBuffer += chunk;
-        this.deps.emitter.appendToStreamingEntry(chunk);
         this.publish({
           type: 'assistant-text-delta',
           turnId: this.turnId,
@@ -323,7 +309,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       },
       onReasoningChunk: (chunk) => {
         this.currentReasoningBuffer += chunk;
-        this.deps.emitter.appendReasoningToStreamingEntry(chunk);
         this.publish({
           type: 'assistant-reasoning-delta',
           turnId: this.turnId,
@@ -333,8 +318,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         });
       },
       onToolCall: (name, args) => {
-        this.deps.emitter.addToolCall({ name, args, result: undefined });
-        this.deps.emitter.addPendingToolCall({ name, args, result: undefined });
         this.publish({
           type: 'tool-call-started',
           turnId: this.turnId,
@@ -351,8 +334,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         }
       },
       onToolResult: (name, toolResult) => {
-        this.deps.emitter.updateToolResult(name, toolResult);
-        this.deps.emitter.updatePendingToolResult(name, toolResult);
         this.publish({
           type: 'tool-call-finished',
           turnId: this.turnId,
@@ -401,8 +382,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     prepared.narrativeRuntime.flushPendingNarration();
     this.scenePatchEmitter = null;
     this.pendingNarrationFlusher = null;
-    this.deps.emitter.stagePendingDebug({ finishReason: result.finishReason });
-    this.deps.emitter.finalizeStreamingEntry();
     this.publish({
       type: 'assistant-message-finalized',
       turnId: this.turnId,
@@ -473,7 +452,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   }
 
   private async compactMemoryIfNeeded(): Promise<void> {
-    this.deps.emitter.setStatus('compressing');
     this.publish({ type: 'memory-compaction-started', turnId: this.turnId });
     await this.deps.memory.maybeCompact();
     this.publish({
@@ -492,12 +470,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     const memSnap = await this.deps.memory.snapshot();
     const entries = (memSnap.entries as unknown[] | undefined) ?? [];
     const summaries = (memSnap.summaries as string[] | undefined) ?? [];
-    this.deps.emitter.updateDebug({
-      stateVars: this.deps.stateStore.getAll(),
-      totalTurns: this.deps.stateStore.getTurn(),
-      memoryEntryCount: entries.length,
-      memorySummaryCount: summaries.length,
-    });
     this.publish({
       type: 'diagnostics-updated',
       diagnostics: {
@@ -513,13 +485,11 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     error: unknown,
     traceHandle: GenerateTraceHandle | undefined,
   ): void {
-    this.deps.emitter.finalizeStreamingEntry();
     traceHandle?.error(
       error instanceof Error ? error.message : String(error),
       'generate',
     );
     traceHandle?.end({ error: String(error) });
-    this.deps.emitter.setError(error instanceof Error ? error.message : String(error));
     this.publish({
       type: 'session-error',
       phase: 'generate',
@@ -627,7 +597,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         if (sentence.kind !== 'scene_change') {
           this.currentScene = copyScene(sentence.sceneRef);
         }
-        this.deps.emitter.appendSentence(sentence);
         if (sentence.kind === 'dialogue' && sentence.truncated) {
           this.traceNarrativeTruncation(traceHandle, {
             kind: 'dialogue',
@@ -693,7 +662,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     let turnSentenceIndex = 0;
     const emitSentence = (draft: GeneratedSentenceDraft) => {
       const sentence = this.createGeneratedSentence(draft, turnSentenceIndex);
-      this.deps.emitter.appendSentence(sentence);
       if (sentence.kind !== 'scene_change') {
         this.publish({
           type: 'narrative-batch-emitted',
@@ -733,7 +701,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
 
     this.scenePatchEmitter = (transition) => {
       flushPendingNarration();
-      this.deps.emitter.emitSceneChange(this.currentScene, transition);
       const sentence = emitSentence({ kind: 'scene_change', scene: copyScene(this.currentScene), transition });
       if (sentence.kind === 'scene_change') {
         this.publish({
@@ -961,7 +928,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       turnNumber: this.deps.turn,
       index: Date.now(),
     } as const;
-    this.deps.emitter.appendSentence(sentence);
     this.publish({
       type: 'signal-input-recorded',
       turnId: this.turnId,
@@ -993,6 +959,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   }
 
   private publish(event: Parameters<CoreEventSink['publish']>[0]): void {
+    this.sessionEmitterProjection.publish(event);
     this.deps.coreEventSink?.publish(event);
   }
 }
