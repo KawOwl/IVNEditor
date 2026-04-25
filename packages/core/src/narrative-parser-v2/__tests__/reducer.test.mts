@@ -780,3 +780,142 @@ describe('reduce · mismatch / 容错', () => {
     expect(state.containerStack).toEqual([]);
   });
 });
+
+// ============================================================================
+// typo close tag + drain-on-open（carina trace d6ef2af7 回归）
+// ============================================================================
+
+describe('reduce · typo close tag → unknown-close-tag degrade + drain on next open', () => {
+  it('未知 close tag 自身不闭合容器，但 emit unknown-close-tag degrade', () => {
+    const { outputs, state } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: 'hi' },
+      { type: 'closetag', name: 'narrtion' }, // typo
+    ]);
+    // 未关，narration 留在栈上
+    expect(state.containerStack).toHaveLength(1);
+    expect(state.containerStack[0]!.kind).toBe('narration');
+    // sentence 不产，但 degrade 留痕
+    expect(outputs.sentences).toHaveLength(0);
+    expect(outputs.degrades).toMatchObject([{ code: 'unknown-close-tag', detail: 'narrtion' }]);
+  });
+
+  it('typo close 后开新顶层 → drain 旧容器为 truncated，emit 顺序对齐文本顺序', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: 'first' },
+      { type: 'closetag', name: 'narrtion' }, // typo
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: 'second' },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    expect(outputs.sentences[0]!.kind).toBe('narration');
+    expect(outputs.sentences[0]!.text).toBe('first');
+    expect(outputs.sentences[0]!.truncated).toBe(true);
+    expect(outputs.sentences[0]!.index).toBe(0);
+    expect(outputs.sentences[1]!.kind).toBe('narration');
+    expect(outputs.sentences[1]!.text).toBe('second');
+    expect(outputs.sentences[1]!.truncated).toBeUndefined();
+    expect(outputs.sentences[1]!.index).toBe(1);
+  });
+
+  it('carina trace 完整复现：narr-typo, narr-typo, dialogue → 三条按文本顺序', () => {
+    // d6ef2af7 现场：两段 narration 用 </narrtion> 错字关，紧跟 carina 对白。
+    // 修复前：carina index=0, 两条 narration index=1/2 truncated 甩到末尾。
+    // 修复后：narr1 → narr2 → carina，index 0/1/2 严格对齐文本顺序。
+    const { outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: '你放下相机。' },
+      { type: 'closetag', name: 'narrtion' },
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: '巷子安静了一瞬。' },
+      { type: 'closetag', name: 'narrtion' },
+      { type: 'opentag', name: 'dialogue', attrs: { speaker: 'karina' } },
+      { type: 'text', data: '"他在拍照。"' },
+      { type: 'closetag', name: 'dialogue' },
+    ]);
+
+    expect(outputs.sentences).toHaveLength(3);
+    expect(outputs.sentences[0]!.kind).toBe('narration');
+    expect(outputs.sentences[0]!.text).toBe('你放下相机。');
+    expect(outputs.sentences[0]!.truncated).toBe(true);
+    expect(outputs.sentences[0]!.index).toBe(0);
+
+    expect(outputs.sentences[1]!.kind).toBe('narration');
+    expect(outputs.sentences[1]!.text).toBe('巷子安静了一瞬。');
+    expect(outputs.sentences[1]!.truncated).toBe(true);
+    expect(outputs.sentences[1]!.index).toBe(1);
+
+    expect(outputs.sentences[2]!.kind).toBe('dialogue');
+    expect(outputs.sentences[2]!.text).toBe('"他在拍照。"');
+    expect(outputs.sentences[2]!.truncated).toBeUndefined();
+    expect(outputs.sentences[2]!.index).toBe(2);
+
+    // 两条 typo close 各自一条 degrade
+    const unknownClose = outputs.degrades.filter((d) => d.code === 'unknown-close-tag');
+    expect(unknownClose).toHaveLength(2);
+    expect(unknownClose.every((d) => d.detail === 'narrtion')).toBe(true);
+
+    // 两条被强制关掉的 narration 各自一条 container-truncated
+    const truncated = outputs.degrades.filter((d) => d.code === 'container-truncated');
+    expect(truncated).toHaveLength(2);
+  });
+
+  it('同 kind 嵌套（无 typo）→ 外层 auto-close truncated', () => {
+    // <narration>outer<narration>inner</narration> ← outer 没关
+    const { outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: 'outer' },
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: 'inner' },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    expect(outputs.sentences[0]!.text).toBe('outer');
+    expect(outputs.sentences[0]!.truncated).toBe(true);
+    expect(outputs.sentences[0]!.index).toBe(0);
+    expect(outputs.sentences[1]!.text).toBe('inner');
+    expect(outputs.sentences[1]!.truncated).toBeUndefined();
+    expect(outputs.sentences[1]!.index).toBe(1);
+  });
+
+  it('异 kind 嵌套（无 typo）→ 外层也 auto-close（顶层平铺规则）', () => {
+    // <narration>outer<dialogue speaker="x">inner</dialogue> ← outer 没关
+    // 修复前：finalize-time LIFO drain → dialogue index 0, narration index 1 truncated
+    // 修复后：dialogue open 先 drain narration → narration index 0 truncated, dialogue index 1
+    const { outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: 'outer' },
+      { type: 'opentag', name: 'dialogue', attrs: { speaker: 'sakuya' } },
+      { type: 'text', data: 'inner' },
+      { type: 'closetag', name: 'dialogue' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    expect(outputs.sentences[0]!.kind).toBe('narration');
+    expect(outputs.sentences[0]!.text).toBe('outer');
+    expect(outputs.sentences[0]!.truncated).toBe(true);
+    expect(outputs.sentences[0]!.index).toBe(0);
+    expect(outputs.sentences[1]!.kind).toBe('dialogue');
+    expect(outputs.sentences[1]!.text).toBe('inner');
+    expect(outputs.sentences[1]!.truncated).toBeUndefined();
+    expect(outputs.sentences[1]!.index).toBe(1);
+  });
+
+  it('typo close 在 dialogue 容器里 → 同样 emit unknown-close-tag', () => {
+    // 不只是 narration 错字 —— dialogue 错字也要留痕
+    const { outputs } = run([
+      { type: 'opentag', name: 'dialogue', attrs: { speaker: 'sakuya' } },
+      { type: 'text', data: 'hi' },
+      { type: 'closetag', name: 'dialouge' }, // typo
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: 'next' },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.sentences).toHaveLength(2);
+    expect(outputs.sentences[0]!.kind).toBe('dialogue');
+    expect(outputs.sentences[0]!.truncated).toBe(true);
+    expect(outputs.sentences[1]!.kind).toBe('narration');
+    expect(outputs.degrades.some((d) => d.code === 'unknown-close-tag' && d.detail === 'dialouge')).toBe(true);
+  });
+});

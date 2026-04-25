@@ -152,6 +152,7 @@ export type DegradeCode =
   | 'bg-missing-attr'
   | 'bg-unknown-scene'
   | 'unknown-toplevel-tag'
+  | 'unknown-close-tag'
   | 'container-truncated'
   | 'dialogue-missing-speaker'
   | 'dialogue-unknown-speaker'

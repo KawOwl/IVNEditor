@@ -87,7 +87,7 @@ function onOpenTag(
   state: ParserState,
   name: string,
   attrs: Readonly<Record<string, string>>,
-  _manifest: ParserManifest,
+  manifest: ParserManifest,
 ): ReducerResult {
   // 在未知顶层标签内部 → 静默吞掉子元素（深度+1）
   if (state.unknownDepth > 0) {
@@ -102,7 +102,7 @@ function onOpenTag(
   const flushed = flushBareText(state);
 
   if (isTopLevelTag(name)) {
-    return mergeResult(flushed, openTopLevel(flushed.state, name, attrs));
+    return mergeResult(flushed, openTopLevel(flushed.state, name, attrs, manifest));
   }
 
   if (isVisualChildTag(name)) {
@@ -177,17 +177,60 @@ function openTopLevel(
   state: ParserState,
   name: string,
   attrs: Readonly<Record<string, string>>,
+  manifest: ParserManifest,
 ): ReducerResult {
   const spec = TOP_LEVEL_BY_NAME[name];
   if (!spec) return identityResult(state);
+
+  // RFC §3 三种顶层容器是平铺关系，不嵌套。如果新顶层 open 时栈非空，说明上
+  // 一个容器从未正常闭合（典型场景：LLM 把 `</narration>` 写成 `</narrtion>`
+  // 之类的 typo，机制上 onCloseTag 走了未知路径不 pop）。
+  //
+  // 不 drain 的话，新容器 push 在残留之上，等到 finalize 才统一 LIFO drain，
+  // 残留的 sentence 会被分配到比当前容器**更晚**的 index，emit 顺序和文本顺
+  // 序不一致——参见 carina trace（d6ef2af7）："narration1<typo>narration2<typo>
+  // <dialogue>...</dialogue>" 流出来的对白 index 在两个本应铺垫的旁白之前。
+  const drained = drainStackAsTruncated(state, manifest);
+
   const unit =
     spec.kind === 'dialogue'
       ? buildDialogueUnit(attrs)
       : emptyPendingUnit(spec.kind);
   return {
-    state: { ...state, containerStack: pushContainer(state.containerStack, unit) },
-    outputs: EMPTY_OUTPUTS,
+    state: { ...drained.state, containerStack: pushContainer(drained.state.containerStack, unit) },
+    outputs: drained.outputs,
   };
+}
+
+/**
+ * 把栈里所有未闭合容器按 LIFO 强制 finalize（truncated:true）。
+ *
+ * 调用时机：
+ * - 新顶层 open（openTopLevel）→ 防 emit 顺序错位
+ * - 流结束（onFinalize）→ 兜底
+ *
+ * 栈在新顶层 open 时通常只有 0 或 1 项（每次 open 都 drain 干净），
+ * 所以 LIFO vs FIFO 的差异在实际场景里观察不到。多于 1 项是 LLM 连续
+ * typo 的极端情况，按 LIFO 仍然是合理保守行为。
+ */
+function drainStackAsTruncated(
+  state: ParserState,
+  manifest: ParserManifest,
+): ReducerResult {
+  if (state.containerStack.length === 0) return identityResult(state);
+  return repeatUntil(
+    { state, outputs: EMPTY_OUTPUTS as ReducerOutputs },
+    (r) => r.state.containerStack.length === 0,
+    (r) => {
+      const { rest, top } = popContainer(r.state.containerStack);
+      if (!top) return r;
+      const step = finalizeUnit(r.state, rest, top, manifest, true);
+      return {
+        state: step.state,
+        outputs: concatOutputs(r.outputs, step.outputs),
+      };
+    },
+  );
 }
 
 function buildDialogueUnit(attrs: Readonly<Record<string, string>>): PendingUnit {
@@ -374,8 +417,18 @@ function onCloseTag(
   }
 
   if (!isTopLevelTag(name)) {
-    // 容器内的未知 tag close：忽略
-    return identityResult(state);
+    // 未知 close tag —— 典型场景是 LLM 写错字（`</narrtion>`、`</dialouge>`
+    // 等）。RFC §4.3 silent tolerance：不崩、不强行映射回某个合法 kind，但
+    // emit 一条 degrade 让 trace 留痕。容器本身保持挂在栈上，等下一个顶层
+    // open（drainStackAsTruncated）或 finalize 强制关闭。
+    return {
+      state,
+      outputs: {
+        sentences: [],
+        scratches: [],
+        degrades: [{ code: 'unknown-close-tag', detail: name }],
+      },
+    };
   }
 
   const { rest, top } = popContainer(state.containerStack);
@@ -403,31 +456,12 @@ function onFinalize(state: ParserState, manifest: ParserManifest): ReducerResult
   // 先兜底 flush 容器外残留的裸文本（最后一个容器已关但后面又出现了裸文本的情况）。
   const flushed = flushBareText(state);
 
-  if (flushed.state.containerStack.length === 0) {
-    return {
-      state: { ...flushed.state, finalized: true },
-      outputs: flushed.outputs,
-    };
-  }
-
-  // 从栈顶开始逐层 truncated close。每次 finalizeUnit 会把栈顶弹掉并累积 outputs。
-  const drained = repeatUntil(
-    { state: flushed.state, outputs: flushed.outputs as ReducerOutputs },
-    (r) => r.state.containerStack.length === 0,
-    (r) => {
-      const { rest, top } = popContainer(r.state.containerStack);
-      if (!top) return r;
-      const step = finalizeUnit(r.state, rest, top, manifest, true);
-      return {
-        state: step.state,
-        outputs: concatOutputs(r.outputs, step.outputs),
-      };
-    },
-  );
+  // 栈非空时按 LIFO 逐层 truncated close。同一 helper 也被新顶层 open 复用。
+  const drained = drainStackAsTruncated(flushed.state, manifest);
 
   return {
     state: { ...drained.state, finalized: true, containerStack: [] },
-    outputs: drained.outputs,
+    outputs: concatOutputs(flushed.outputs, drained.outputs),
   };
 }
 
