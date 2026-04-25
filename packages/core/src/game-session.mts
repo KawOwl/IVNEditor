@@ -98,12 +98,6 @@ export {
 } from '#internal/game-session/persistence-core-event-sink';
 export type { SessionPersistenceCoreEventSink } from '#internal/game-session/persistence-core-event-sink';
 export { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
-export {
-  createLegacySessionEmitterProjection,
-  createSessionEmitterProjection,
-  projectCoreEventToLegacySessionEmitter,
-  projectCoreEventToSessionEmitter,
-} from '#internal/game-session/legacy-session-emitter-projection';
 export type {
   GameSessionConfig,
   GenerateTraceHandle,

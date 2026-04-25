@@ -310,12 +310,3 @@ function copySentence(sentence: Sentence): Sentence {
 
   return { ...sentence, sceneRef: copyScene(sentence.sceneRef) };
 }
-
-/** @deprecated Use `LegacySessionEmitterProjection`. */
-export type SessionEmitterProjection = LegacySessionEmitterProjection;
-
-/** @deprecated Use `createLegacySessionEmitterProjection`. */
-export const createSessionEmitterProjection = createLegacySessionEmitterProjection;
-
-/** @deprecated Use `projectCoreEventToLegacySessionEmitter`. */
-export const projectCoreEventToSessionEmitter = projectCoreEventToLegacySessionEmitter;

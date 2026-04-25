@@ -19,7 +19,8 @@ GameSession
 
 The runtime no longer depends on the legacy `SessionEmitter` interface for live
 output or persistence. `SessionEmitter` is now a compatibility projection used
-by historical comparison tests and readback migration paths.
+by historical golden comparison tests. Historical V1 playthroughs are read back
+through the dedicated `legacy-v1-readback` boundary.
 
 ## Runtime Flow
 
@@ -68,6 +69,12 @@ used.
   - main batch membership
   - player request/payload consistency
 - A durable event-log sink and replay helper exist in core.
+- Historical `v1-tool-call` playthroughs have a readonly readback boundary that
+  reconstructs Sentence streams from old narrative/tool entries without running
+  the engine or using SessionEmitter projection.
+- Deprecated SessionEmitter projection aliases and public GameSession barrel
+  exports have been removed; the remaining projection is explicitly legacy and
+  internal to compatibility checks.
 - Negentropy JSON reports are now chained with `--baseline` for each refactor
   step.
 
@@ -75,11 +82,6 @@ used.
 
 - Wire `CoreEventLogSink` to a real server-side durable store if event replay is
   needed beyond test/eval memory.
-- Decide when to delete the legacy `SessionEmitter` projection. It is no longer
-  on live WebSocket, persistence, runtime-test, or evaluation recording paths,
-  but still provides useful golden comparison for historical compatibility.
-- Add a historical V1 parser/readback package boundary if old playthrough
-  replay needs to outlive the current compatibility projection.
 - Keep expanding validator coverage only when a real timing invariant appears;
   avoid making it a duplicate runtime implementation.
 
