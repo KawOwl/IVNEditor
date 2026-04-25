@@ -1,7 +1,7 @@
 import { EditorDebugPanel } from '#internal/ui/editor/EditorDebugPanel';
+import { EditorPlayTab } from '#internal/ui/editor/EditorPlayTab';
 import { PromptPreviewPanel } from '#internal/ui/editor/PromptPreviewPanel';
 import { ScriptInfoPanel } from '#internal/ui/editor/ScriptInfoPanel';
-import { PlayPanel } from '#internal/ui/play/PlayPanel';
 import { LLMSettingsPanel } from '#internal/ui/settings/LLMSettingsPanel';
 import { cn } from '@/lib/utils';
 import type {
@@ -142,33 +142,15 @@ export function EditorRightPanel({
           />
         </div>
 
-        <div className={cn('absolute inset-0 flex flex-col', activeTab !== 'play' && 'hidden')}>
-          <div className="flex-none flex items-center gap-2 px-3 py-1.5 border-b border-zinc-800 bg-zinc-950/60">
-            <span className="text-[10px] text-zinc-500">试玩使用：</span>
-            <select
-              value={playtestLlmConfigId ?? ''}
-              onChange={(e) => onPlaytestLlmConfigIdChange(e.target.value || null)}
-              className="flex-1 text-[11px] px-2 py-0.5 bg-zinc-900 border border-zinc-700 rounded text-zinc-300 focus:outline-none focus:border-zinc-500"
-            >
-              <option value="">（剧本默认 / fallback）</option>
-              {llmConfigs.map((config) => (
-                <option key={config.id} value={config.id}>
-                  {config.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex-1 min-h-0">
-            <PlayPanel
-              manifest={playManifest}
-              compact
-              showDebug={false}
-              showReasoning
-              editorMode
-              scriptVersionId={loadedVersionId ?? undefined}
-              llmConfigId={playtestLlmConfigId}
-            />
-          </div>
+        <div className={cn('absolute inset-0', activeTab !== 'play' && 'hidden')}>
+          <EditorPlayTab
+            manifest={playManifest}
+            loadedScriptId={loadedScriptId}
+            loadedVersionId={loadedVersionId}
+            playtestLlmConfigId={playtestLlmConfigId}
+            llmConfigs={llmConfigs}
+            onPlaytestLlmConfigIdChange={onPlaytestLlmConfigIdChange}
+          />
         </div>
 
         <div className={cn('absolute inset-0', activeTab !== 'debug' && 'hidden')}>

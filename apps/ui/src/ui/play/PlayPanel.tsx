@@ -177,17 +177,23 @@ export function PlayPanel({
       return;
     }
 
-    // 决定目标 playthroughId（仅玩家模式从 localStorage 恢复；
-    // 编辑器模式每次都新建，不复用上次的试玩）
+    // 决定目标 playthroughId：
+    //   - 显式 'new' → 永远新建
+    //   - 显式 uuid → 两种模式都尊重，恢复指定的 playthrough
+    //                （编辑器模式下"载入历史试玩存档"必须靠这条路径）
+    //   - 缺省       → 编辑器模式新建（lossless 试玩快照不复用上次）；
+    //                   玩家模式回落到 localStorage 的"上次游玩 id"
     const storageKey = editorMode
       ? `version:${scriptVersionId}`
       : playerScriptId!;
-    const targetPtId =
-      editorMode
-        ? null  // 编辑器试玩永远新建（lossless 试玩快照）
-        : playthroughId === 'new'
-          ? null
-          : playthroughId ?? getStoredPlaythroughId(storageKey);
+    let targetPtId: string | null;
+    if (playthroughId === 'new') {
+      targetPtId = null;
+    } else if (playthroughId) {
+      targetPtId = playthroughId;
+    } else {
+      targetPtId = editorMode ? null : getStoredPlaythroughId(storageKey);
+    }
 
     if (targetPtId) {
       // 恢复指定的游玩 —— 直接 WS 连接，服务端会自动发 'restored' 快照

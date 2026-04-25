@@ -609,5 +609,15 @@
     "ref": "docs/refactor/op-kit-roadmap.md (待写 op-c-propose-manifest-alignment-plan.md)",
     "verify": "apps/server bun test 单文件全绿（pure function alignmentPatch(manifest, findings) 验补 background/character/emotion 占位、不重复添加已有项、不删除 orphan）；dry-run vs apply 两 path 都覆盖；起 server smoke：MCP tools/list 出现，dry-run 不写 DB，apply 生成 draft 版本可在 list_versions 看到",
     "note": "未开工。这是 P0 lint 套件最复杂的 op，先做 OP.5 / OP.6 探清模式。设计选择待确认：单 op + applyMode 字段 vs 两 op（propose + apply）；前者更简洁，后者 effect 字段更准确。开工前单独写 op-c-propose-manifest-alignment-plan.md。"
+  },
+  {
+    "id": "EUX.1",
+    "title": "编辑器试玩 tab 接入存档列表（list ↔ play 切换）",
+    "description": "镜像玩家流 PlayPage 的两阶段模式，把编辑器右侧'试玩'tab 重做成'存档列表 ↔ PlayPanel'切换：默认渲染 PlaythroughList(kind='playtest', scriptId=loadedScriptId)，admin 看到自己跑过的所有试玩存档；选某条 → PlayPanel 自动 reconnect 恢复；点'+ 开始新游戏'→ PlayPanel autoStart 创建新试玩；进 game 视图后顶部出现'← 返回列表'按钮回 list。新建未保存剧本（loadedScriptId=null）显示占位文案'保存剧本后即可创建 / 查看试玩存档'。改动三处：(1) PlaythroughList 加 kind?: 'production'|'playtest' prop，缺省 'production' 保留玩家流原行为；(2) PlayPanel handleStart 重写 targetPtId 决议——显式 playthroughId（非 'new'）两种模式都尊重，editorMode 只控制'缺省时'是否新建（原代码强制 null 让编辑器永远不能恢复指定 playthrough）；(3) 抽 EditorPlayTab.tsx 封装 list/play 状态机，EditorRightPanel.tsx 替换原 'play' tab 内嵌 PlayPanel。",
+    "status": "done",
+    "type": "ui",
+    "ref": "apps/ui/src/ui/editor/EditorPlayTab.tsx + apps/ui/src/ui/editor/EditorRightPanel.tsx + apps/ui/src/ui/play/PlayPanel.tsx + apps/ui/src/ui/play/PlaythroughList.tsx",
+    "verify": "bun run typecheck（apps/ui tsgo --noEmit）干净；packages/core bun test 248/248 全绿；浏览器端到端：编辑器进试玩 tab，未加载剧本 → 显示'保存剧本后即可...'占位；加载已有剧本 → PlaythroughList 出现 + '+ 开始新游戏'按钮 + 空态'还没有游玩记录'；点 '+ 开始新游戏' → PlayPanel autoStart 跑通且 LLM 真生成（创建 kind=playtest playthrough）；点 '← 返回列表' 回 list 看到刚跑的那条游玩 #1（带 v2 版本号 + preview 文本）；点'继续' → reconnect 成功，状态切'等待输入'，恢复 sprite + choices",
+    "note": "用户原话：'在编剧的界面把存档列表也加上，让大家可以读取存档'。设计上把 list 直接放进现有 '试玩' tab 而不是加新 tab，是因为玩家流 PlayPage 也是 list-first，编辑器 admin 心智一致；LLM dropdown 仍在顶部 header（控制下一次 NEW playthrough 选哪套 LLM；恢复老 playthrough 时 LLM 已固化，dropdown 不影响）。PlayPanel editorMode targetPtId 决议改动是这次的关键 bug 修复——之前显式 playthroughId 在 editorMode 下被无脑置 null，'载入历史试玩'整条路径不通。"
   }
 ]

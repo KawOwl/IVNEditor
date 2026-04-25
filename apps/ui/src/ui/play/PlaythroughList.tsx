@@ -32,13 +32,19 @@ interface PlaythroughListProps {
   scriptId: string;
   scriptTitle: string;
   onSelect: (playthroughId: string | 'new') => void;
+  /**
+   * 过滤维度，对应 GET /api/playthroughs?kind=...
+   *   - 'production'（缺省）：玩家流，正式游玩记录
+   *   - 'playtest'：编剧侧试玩记录
+   */
+  kind?: 'production' | 'playtest';
 }
 
 // ============================================================================
 // Component
 // ============================================================================
 
-export function PlaythroughList({ scriptId, onSelect }: PlaythroughListProps) {
+export function PlaythroughList({ scriptId, onSelect, kind = 'production' }: PlaythroughListProps) {
   const [items, setItems] = useState<PlaythroughItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,10 +54,9 @@ export function PlaythroughList({ scriptId, onSelect }: PlaythroughListProps) {
     try {
       setLoading(true);
       setError(null);
-      // 玩家侧只显示 kind=production 的记录，避免把 admin 自己的编辑器
-      // 试玩（kind=playtest）混进玩家 UI 里
+      // 默认 kind='production'，玩家侧不混 admin 试玩；编辑器侧显式传 'playtest'
       const res = await fetchWithAuth(
-        `${getBackendUrl()}/api/playthroughs?scriptId=${scriptId}&kind=production`,
+        `${getBackendUrl()}/api/playthroughs?scriptId=${scriptId}&kind=${kind}`,
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -61,7 +66,7 @@ export function PlaythroughList({ scriptId, onSelect }: PlaythroughListProps) {
     } finally {
       setLoading(false);
     }
-  }, [scriptId]);
+  }, [scriptId, kind]);
 
   useEffect(() => {
     fetchList();

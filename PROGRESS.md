@@ -9,15 +9,26 @@
 
 ## 当前任务
 
-**OP.5 = Op A: `script.extract_referenced_ids`**
+**OP.5 = Op A: `script.extract_referenced_ids`**（暂停，等下一会话恢复）
 - 类型：实现（op-kit 业务能力扩展）
 - 来源：op-kit roadmap 下一批 P0 lint 套件首个
 - 目标：补完"修复型 agent"工具链中的"知道剧本实际引用了什么"这块拼图，作为 OP.7 propose_manifest_alignment 的纯函数上游
 - 进展：**plan 已就绪，未开工**。完整 plan + 恢复指令模板见 `docs/refactor/op-a-extract-referenced-ids-plan.md`（顶部"恢复上下文指令"段直接 copy 给新会话即可开工）
+- 状态：本会话用户临时插入了 EUX.1（编辑器试玩 tab 接入存档列表），已完成；OP.5 仍是下一个待开工项
 
 **辅助任务（待评估）**：V.x 这条线的"本地连 ivn-test 跑 E2E 验证"还没跑。是否在 OP.5 之前 / 之后 / 并行做，看用户指示。
 
 ## 最近完成
+
+**EUX.1 编辑器试玩 tab 接入存档列表（2026-04-25，本会话）**
+- 用户原话："在编剧的界面把存档列表也加上，让大家可以读取存档"
+- 镜像玩家流 PlayPage 的 list-first 模式，把 EditorRightPanel 的'试玩'tab body 重做成"PlaythroughList ↔ PlayPanel"切换。
+- **PlaythroughList.tsx**：加 `kind?: 'production'|'playtest'` prop，缺省 'production' 保留玩家流原行为；fetch URL 用 `kind` 变量代替硬编码。
+- **PlayPanel.tsx**：重写 `handleStart` 里 `targetPtId` 决议——显式 `playthroughId`（非 'new'）两种模式都尊重，editorMode 只控制"缺省时"是否新建。原代码强制 `editorMode ? null : ...` 导致编辑器永远不能 reconnect 指定 playthrough（关键 bug 修复，否则存档列表点"继续"无效）。
+- **EditorPlayTab.tsx**（新文件）：封装 list/play 状态机；header 始终显示 LLM dropdown，inGame 时多一个"← 返回列表"按钮；loadedScriptId=null 时显示占位文案。
+- **EditorRightPanel.tsx**：play tab body 替换为 `<EditorPlayTab .../>`。
+- 验证：`bun run typecheck` 干净；`bun test packages/core` 248/248 + `bun test apps/ui/src/core src/stores` 15/15 全绿；浏览器端到端跑通三场景（无 scriptId 占位 / 有 scriptId 列表 + 新建 / list ↔ play 切换 / "继续"按钮 reconnect 恢复 sprite + choices）。
+- 决策记录：list 直接放进现有'试玩'tab 而非加新 tab——玩家流 PlayPage 也是 list-first，admin 心智一致；LLM dropdown 留 header（控制下一次 NEW playthrough 用哪套，reconnect 老的时已固化不影响）。
 
 **op-kit 重构线 OP.0 - OP.4（2026-04-25）**
 - **OP.0** `f843d61` op-kit 单源 Operation 定义 + 第一例 `script.lint_manifest`
