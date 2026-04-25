@@ -9,7 +9,7 @@
  * 和"正式玩家"（走 scriptId + kind=production）。
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { InputPanel } from '#internal/ui/InputPanel';
 import { VNStageContainer } from '#internal/ui/play/vn/VNStageContainer';
 import { useGameStore } from '@/stores/game-store';
@@ -95,6 +95,9 @@ export function PlayPanel({
   const error = useGameStore((s) => s.error);
 
   const remoteRef = useRef<RemoteSession | null>(null);
+  // remoteRef 是 ref 不触发渲染，用 state 同步当前真实的 playthroughId 给反馈按钮
+  const [currentPlaythroughId, setCurrentPlaythroughId] = useState<string | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   // Seed opening messages on mount (only for new games, not when restoring).
   //
@@ -151,6 +154,7 @@ export function PlayPanel({
             { kind: 'production', llmConfigId },
           );
       remoteRef.current = remote;
+      setCurrentPlaythroughId(remote.playthroughId);
       remote.start();
       return true;
     } catch (err) {
@@ -192,6 +196,7 @@ export function PlayPanel({
         useGameStore.getState().reset();
         const remote = await reconnectRemoteSession(getBackendUrl(), targetPtId);
         remoteRef.current = remote;
+        setCurrentPlaythroughId(remote.playthroughId);
         return;
       } catch (err) {
         console.warn('[PlayPanel] Reconnect failed, falling back to new session:', err);
@@ -219,7 +224,15 @@ export function PlayPanel({
     remoteRef.current?.stop();
     remoteRef.current?.disconnect();
     remoteRef.current = null;
+    setCurrentPlaythroughId(null);
   }, []);
+
+  const handleOpenFeedback = useCallback(() => {
+    if (!currentPlaythroughId) return;
+    setFeedbackOpen(true);
+  }, [currentPlaythroughId]);
+
+  const handleCloseFeedback = useCallback(() => setFeedbackOpen(false), []);
 
   /**
    * 重置 = 和当前 playthrough 分手 + 启动一个全新的 playthrough。
@@ -323,6 +336,18 @@ export function PlayPanel({
           >
             重置
           </button>
+          <button
+            onClick={handleOpenFeedback}
+            disabled={!currentPlaythroughId}
+            title={
+              currentPlaythroughId
+                ? '查看并复制当前 playthroughId 用于反馈'
+                : '游戏未开始，无 playthroughId 可复制'
+            }
+            className="text-[11px] px-2 py-0.5 rounded text-zinc-600 hover:text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            反馈
+          </button>
         </div>
       </div>
 
@@ -343,6 +368,101 @@ export function PlayPanel({
 
       {/* Input area */}
       <InputPanel onSubmit={handlePlayerInput} />
+
+      {feedbackOpen && currentPlaythroughId && (
+        <FeedbackModal
+          playthroughId={currentPlaythroughId}
+          onClose={handleCloseFeedback}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// FeedbackModal — 显示当前 playthroughId 供用户复制贴到反馈渠道
+//
+// 不只走 navigator.clipboard.writeText：那个 API 在 http / 焦点不在 / 沙箱
+// iframe 等场景会静默失败。Modal 里同时 render 一个 readOnly input + autoFocus
+// + select()，用户即便复制按钮失败也能 ⌘C 兜底。
+// ============================================================================
+
+function FeedbackModal({
+  playthroughId,
+  onClose,
+}: {
+  playthroughId: string;
+  onClose: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+
+  useEffect(() => {
+    inputRef.current?.select();
+  }, []);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(playthroughId);
+      setCopyState('copied');
+    } catch {
+      // clipboard API 没权限：input 已经 select，提示用户 ⌘C
+      inputRef.current?.select();
+      setCopyState('failed');
+    }
+  }, [playthroughId]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onClick={onClose}
+    >
+      <div
+        className="w-[28rem] max-w-[90vw] bg-zinc-900 border border-zinc-700 rounded p-5 space-y-4 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-sm font-medium text-zinc-200">反馈 · 当前游玩 ID</h2>
+        <p className="text-[11px] text-zinc-400 leading-relaxed">
+          把下面这串 ID 一起发给开发者，方便定位你这局的日志和数据库记录。
+        </p>
+        <input
+          ref={inputRef}
+          type="text"
+          value={playthroughId}
+          readOnly
+          onFocus={(e) => e.currentTarget.select()}
+          style={{ fontSize: 12 }}
+          className="w-full font-mono px-3 py-2 rounded bg-zinc-800 border border-zinc-700 text-zinc-200 focus:outline-none focus:border-zinc-500 select-all"
+        />
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(
+              'text-[11px] flex-1',
+              copyState === 'copied' && 'text-emerald-400',
+              copyState === 'failed' && 'text-amber-400',
+              copyState === 'idle' && 'text-zinc-500',
+            )}
+          >
+            {copyState === 'copied' && '已复制到剪贴板'}
+            {copyState === 'failed' && '剪贴板失败，请手动 ⌘C / Ctrl+C 复制'}
+            {copyState === 'idle' && ''}
+          </span>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="text-xs px-3 py-1.5 rounded bg-emerald-700 text-white hover:bg-emerald-600 transition-colors"
+          >
+            复制
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xs px-3 py-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors"
+          >
+            关闭
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
