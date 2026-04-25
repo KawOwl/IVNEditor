@@ -19,6 +19,7 @@ import { publishVersionOp } from '#internal/operations/script/publish-version';
 import { uploadAssetOp } from '#internal/operations/script/upload-asset';
 import { addBackgroundOp } from '#internal/operations/script/add-background';
 import { addCharacterSpriteOp } from '#internal/operations/script/add-character-sprite';
+import { deleteScriptOp } from '#internal/operations/script/delete-script';
 
 /** 全部 op 列表。新增 op 在这里登记。*/
 export const ALL_OPS = [
@@ -38,6 +39,8 @@ export const ALL_OPS = [
   uploadAssetOp,
   addBackgroundOp,
   addCharacterSpriteOp,
+  // script.* —— destructive
+  deleteScriptOp,
 ] as const satisfies ReadonlyArray<AnyOp>;
 
 /** 按 category 分组（adapter / 文档生成器用）*/

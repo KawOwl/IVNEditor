@@ -41,9 +41,6 @@
  */
 
 import { Elysia } from 'elysia';
-import { scriptService } from '#internal/services/script-service';
-import { scriptVersionService } from '#internal/services/script-version-service';
-import { assetService } from '#internal/services/asset-service';
 import { requireAdmin, isResponse, type Identity } from '#internal/auth-identity';
 import { ALL_OPS } from '#internal/operations/registry';
 import { opsToMcpTools } from '#internal/operations/adapters/mcp';
@@ -125,111 +122,18 @@ function textResult(value: unknown, isError = false): { content: Array<{ type: '
 }
 
 // ============================================================================
-// 资产上传辅助函数 → 已迁移到 operations/script/_asset-helpers.mts
-// segment / version helpers → 已迁移到 operations/script/_shared.mts
+// Tool registry —— 全部 tool 由 op-kit 派生，本文件不再写本地 ToolDef
 // ============================================================================
+//
+// 加新 tool：去 apps/server/src/operations/script/<name>.mts 写 op，
+// 然后在 operations/registry.mts 的 ALL_OPS 数组里登记。HTTP /api/ops/* 端点
+// 同步多出来。本文件 (routes/mcp.mts) 仅负责 JSON-RPC 协议层。
+//
+// 业务相关的 MCP helper 历史上集中在本文件，已陆续搬走：
+//   - 资产上传辅助 → operations/script/_asset-helpers.mts
+//   - segment / version helpers → operations/script/_shared.mts
 
-
-const tools: ToolDef[] = [
-  // ------------------------------------------------------------------------
-  // 只读 tools —— 已迁移到 op-kit（apps/server/src/operations/script/）
-  // 通过 tools.push(...opsToMcpTools(ALL_OPS)) 在尾部追加，保持 MCP 接口
-  // 不变：list_scripts / list_script_versions / get_script_overview /
-  // get_segment / get_full_manifest / list_script_assets。
-  // 写 tools 还没迁，仍然走下面的本地 ToolDef。
-  // ------------------------------------------------------------------------
-
-  // ------------------------------------------------------------------------
-  // 写操作（永远创建 draft，不自动 publish —— 编剧审完再手动 publish）
-  // update_segment_content / replace_script_manifest 已迁到 op-kit
-  // ------------------------------------------------------------------------
-
-  // ------------------------------------------------------------------------
-  // 资产上传（图片）—— upload_script_asset / add_background_to_script /
-  //   add_character_sprite / list_script_assets 都已迁到 op-kit
-  // publish_script_version 也已迁到 op-kit
-  // ------------------------------------------------------------------------
-
-  {
-    name: 'delete_script',
-    description:
-      '【危险 · 不可逆】彻底删除一个剧本。级联删除：该剧本的所有版本（draft / published / archived）、' +
-      '所有 playthroughs（玩家和编剧试玩）、所有 script_assets 数据库记录。' +
-      '**OSS / S3 上的图片对象**不会被物理删除（只是 DB 里的引用没了），如需清理要管理员手动进 OSS 控制台。\n\n' +
-      '必须显式传 `confirm: true` + 同时传 `scriptIdConfirm` 与 `scriptId` 一致才真执行 —— 防止 LLM 误触。' +
-      '强烈建议：调用前先用 `list_scripts` 和 `get_script_overview` 跟用户再次确认要删的是哪个剧本。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        scriptId: { type: 'string', description: '要删除的剧本 id' },
-        scriptIdConfirm: {
-          type: 'string',
-          description: '再输一次 scriptId，必须和上面完全一致 —— 防止传错',
-        },
-        confirm: {
-          type: 'boolean',
-          description: '必须传 true 才真删除；传 false 或不传 → 返回 "dry-run" 预览（告诉你会影响多少版本 / playthrough / asset）',
-        },
-      },
-      required: ['scriptId'],
-      additionalProperties: false,
-    },
-    async handler(args) {
-      const scriptId = String(args.scriptId);
-      const scriptIdConfirm = args.scriptIdConfirm ? String(args.scriptIdConfirm) : undefined;
-      const confirm = args.confirm === true;
-
-      // 先查出会被影响的东西，既用于 dry-run 响应，也让真删除的响应里带上删了什么
-      const script = await scriptService.getById(scriptId);
-      if (!script) throw new Error(`Script not found: ${scriptId}`);
-
-      const versions = await scriptVersionService.listByScript(scriptId);
-      const assets = await assetService.listByScript(scriptId);
-      // playthrough 数无法从 scriptService 直接查；不想为 MCP 单独开 service 方法，
-      // 先报 "不精确"提示（数据库 FK CASCADE 会自动清，不影响正确性）
-      const impact = {
-        scriptId,
-        scriptLabel: script.label,
-        versionCount: versions.length,
-        assetCount: assets.length,
-        publishedVersionIds: versions.filter((v) => v.status === 'published').map((v) => v.id),
-        note:
-          '级联删除：script_versions / playthroughs / script_assets 的数据库行会被 FK CASCADE 自动清理。' +
-          'OSS / S3 上的图片文件不会被物理删除。',
-      };
-
-      if (!confirm) {
-        return textResult({
-          dryRun: true,
-          wouldDelete: impact,
-          message:
-            '未传 confirm=true，已返回 dry-run。真要删请再调一次并带 `confirm: true`，同时 `scriptIdConfirm` 必须等于 scriptId。',
-        });
-      }
-      if (scriptIdConfirm !== scriptId) {
-        throw new Error(
-          `Safety check failed: scriptIdConfirm (${scriptIdConfirm ?? '<missing>'}) does not match scriptId (${scriptId}). ` +
-            'Re-enter scriptId in the scriptIdConfirm field to confirm.',
-        );
-      }
-
-      const ok = await scriptService.delete(scriptId);
-      if (!ok) throw new Error(`Delete failed (script vanished mid-op?): ${scriptId}`);
-
-      return textResult({
-        ok: true,
-        deleted: impact,
-        warning:
-          'OSS 上的 asset 文件未物理删除。如需清理，请在 OSS 控制台按 key 前缀 scripts/' + scriptId + '/ 手动删除。',
-      });
-    },
-  },
-];
-
-// 把 op-kit 注册的 ops（v0.1：lint_manifest）派生为 MCP tool 追加到尾部。
-// 旧 tool 后续会逐个迁移到 op-kit；过渡期两边并存。
-tools.push(...opsToMcpTools(ALL_OPS));
-
+const tools: ToolDef[] = opsToMcpTools(ALL_OPS);
 const toolByName = new Map(tools.map((t) => [t.name, t]));
 
 // ============================================================================
