@@ -489,28 +489,87 @@ export class LLMClient {
       }
     };
 
-    const result = streamText({
-      model: this.getModel(),
+    // ─── 三段 streamText 共享的参数 + 流处理工具 ─────────────────────────
+    //
+    // baseStreamArgs 把 model / system / tools / abortSignal / providerOptions
+    // / 4 个 hook callback 一次定义，主 / 续写 / signal 补刀三处各自只声明
+    // 自己独有的部分（messages / stopWhen / maxOutputTokens / toolChoice /
+    // prepareStep）。
+    //
+    // turnEndStop 是 main + 续写共用的"回合结束"停止条件三件套；follow-up
+    // 用自己的 stop 列表（详见下方）。
+    let fullText = '';
+    let fullReasoning = '';
+    let usage: GenerateResult['usage'] | undefined;
+
+    const model = this.getModel();
+    const turnEndStop = [
+      stepCountIs(maxSteps),
+      hasToolCall('signal_input_needed'),
+      hasToolCall('end_scenario'),
+    ];
+    const baseStreamArgs = {
+      model,
       system: systemPrompt,
-      messages,
       tools: aiTools,
-      // 方案 B：三种停止条件
-      //   - stepCountIs(maxSteps)：每回合 step 预算上限（默认 20）
-      //   - hasToolCall('signal_input_needed')：LLM 请求玩家输入 → 当回合结束
-      //   - hasToolCall('end_scenario')：LLM 终止剧情 → 退出整局
-      stopWhen: [
-        stepCountIs(maxSteps),
-        hasToolCall('signal_input_needed'),
-        hasToolCall('end_scenario'),
-      ],
-      maxOutputTokens,
       abortSignal,
       ...(providerOptions ? { providerOptions } : {}),
-      // Focus Injection D：per-step system prompt 覆盖。每个 step 开始前，
-      // 如果上层想根据当前 state 换一份 system，在这里返回新字符串。
-      // 返回 undefined → AI SDK 用外层的 `system` 参数。
-      //
-      // 每 step 实际使用的 system 都存进 stepSystemMap，供 onStepFinish 回传 tracing。
+      experimental_onStepStart: handleStepStart,
+      experimental_onToolCallStart: handleToolCallStart,
+      experimental_onToolCallFinish: handleToolCallFinish,
+      onStepFinish: handleStepFinish,
+    };
+
+    type StreamHandle = ReturnType<typeof streamText>;
+    /**
+     * 耗尽 stream 的 fullStream。`forward=true` 时把 text-delta /
+     * reasoning-delta 累加到 fullText / fullReasoning 并转发给上游 callback；
+     * `false` 时只 drain 不累加（follow-up 模式：toolChoice 强制下偶发的 text
+     * 是"我要调工具"这类元说明，写进 fullText 会污染玩家叙事）。
+     */
+    const consumeStream = async (stream: StreamHandle, forward: boolean): Promise<void> => {
+      for await (const part of stream.fullStream) {
+        if (!forward) continue;
+        if (part.type === 'text-delta') {
+          fullText += part.text;
+          onTextChunk?.(part.text);
+        } else if (part.type === 'reasoning-delta') {
+          fullReasoning += part.text;
+          onReasoningChunk?.(part.text);
+        }
+      }
+    };
+
+    /** 累加 usage —— 主初始化也走这条（prev=undefined + addition = 单纯赋值）。*/
+    const addUsage = async (stream: StreamHandle): Promise<void> => {
+      try {
+        const u = await (await stream).usage;
+        if (!u) return;
+        usage = {
+          inputTokens: (usage?.inputTokens ?? 0) + (u.inputTokens ?? 0),
+          outputTokens: (usage?.outputTokens ?? 0) + (u.outputTokens ?? 0),
+          totalTokens: (usage?.totalTokens ?? 0) + (u.totalTokens ?? 0),
+        };
+      } catch {
+        // 某些 provider 不返回 usage，静默忽略
+      }
+    };
+
+    // ─── 主 generate ────────────────────────────────────────────────────────
+    //
+    // stopWhen 三种情况：
+    //   - stepCountIs(maxSteps)：每回合 step 预算上限（默认 20）
+    //   - hasToolCall('signal_input_needed')：LLM 请求玩家输入 → 当回合结束
+    //   - hasToolCall('end_scenario')：LLM 终止剧情 → 退出整局
+    //
+    // prepareStep 是 main 独有：Focus Injection D 方案，让上层每个 step 重新
+    // 决定 system prompt（focus 没变就返回 undefined 让 AI SDK 沿用初始 system）。
+    // 续写和 follow-up 都是单 step / 几 step 的短脉冲，没必要切 system。
+    const result = streamText({
+      ...baseStreamArgs,
+      messages,
+      stopWhen: turnEndStop,
+      maxOutputTokens,
       ...(prepareStepSystem
         ? {
             prepareStep: async ({ stepNumber, steps }: { stepNumber: number; steps: ReadonlyArray<unknown> }) => {
@@ -520,44 +579,11 @@ export class LLMClient {
             },
           }
         : {}),
-      experimental_onStepStart: handleStepStart,
-      experimental_onToolCallStart: handleToolCallStart,
-      experimental_onToolCallFinish: handleToolCallFinish,
-      onStepFinish: handleStepFinish,
     });
 
-    // Stream via fullStream to separate reasoning from text
-    let fullText = '';
-    let fullReasoning = '';
-
-    for await (const part of result.fullStream) {
-      if (part.type === 'text-delta') {
-        fullText += part.text;
-        onTextChunk?.(part.text);
-      } else if (part.type === 'reasoning-delta') {
-        fullReasoning += part.text;
-        onReasoningChunk?.(part.text);
-      }
-      // tool-call and tool-result are handled by experimental_onToolCall* callbacks
-    }
-
-    const finalResult = await result;
-    let finishReason = await finalResult.finishReason;
-
-    // 提取 token usage（Vercel AI SDK v6 提供 usage Promise/object）
-    let usage: GenerateResult['usage'] | undefined;
-    try {
-      const u = await finalResult.usage;
-      if (u) {
-        usage = {
-          inputTokens: u.inputTokens,
-          outputTokens: u.outputTokens,
-          totalTokens: u.totalTokens,
-        };
-      }
-    } catch {
-      // 某些 provider 不返回 usage，静默忽略
-    }
+    await consumeStream(result, true);
+    let finishReason = await (await result).finishReason;
+    await addUsage(result);
 
     // ─── 续写 follow-up（RFC §11 V.5，2026-04-24）────────────────────────
     //
@@ -583,7 +609,6 @@ export class LLMClient {
     // 让下面的 signal_input follow-up 做最后兜底（至少玩家端看到选项）。
     const MAX_CONTINUATION_ATTEMPTS = 3;
     let continuationAttempts = 0;
-    // 保留主 generate 的原始 messages + 系统消息。每次续写都基于它 + 最新 fullText 构造。
     while (
       finishReason === 'length' &&
       !(abortSignal?.aborted ?? false) &&
@@ -599,62 +624,21 @@ export class LLMClient {
             '不要重复已经输出过的内容，不要加任何前缀说明或致歉。' +
             '如果当前段落已完整收尾，直接调用 signal_input_needed 结束本轮。',
         };
-        const continuationHistory: ModelMessage[] = [
-          ...messages,
-          // 把当前 fullText 作为 assistant 的 partial output 塞回历史。
-          { role: 'assistant', content: fullText },
-          continuationNudge,
-        ];
         const continuationStream = streamText({
-          model: this.getModel(),
-          system: systemPrompt,
-          messages: continuationHistory,
-          tools: aiTools,
-          stopWhen: [
-            stepCountIs(maxSteps),
-            hasToolCall('signal_input_needed'),
-            hasToolCall('end_scenario'),
+          ...baseStreamArgs,
+          messages: [
+            ...messages,
+            // 把当前 fullText 作为 assistant 的 partial output 塞回历史。
+            { role: 'assistant', content: fullText },
+            continuationNudge,
           ],
+          stopWhen: turnEndStop,
           maxOutputTokens,
-          abortSignal,
-          ...(providerOptions ? { providerOptions } : {}),
-          experimental_onStepStart: handleStepStart,
-          experimental_onToolCallStart: handleToolCallStart,
-          experimental_onToolCallFinish: handleToolCallFinish,
-          onStepFinish: handleStepFinish,
         });
 
-        // 续写流：text-delta 正常累加 + 转发，让 parser 接着消费，
-        // reasoning-delta 同样转发（continuation 产出的 reasoning 也是有效上下文）。
-        for await (const part of continuationStream.fullStream) {
-          if (part.type === 'text-delta') {
-            fullText += part.text;
-            onTextChunk?.(part.text);
-          } else if (part.type === 'reasoning-delta') {
-            fullReasoning += part.text;
-            onReasoningChunk?.(part.text);
-          }
-        }
-
-        const continuationFinal = await continuationStream;
-        const nextFinish = await continuationFinal.finishReason;
-
-        // 合并 usage
-        try {
-          const cu = await continuationFinal.usage;
-          if (cu) {
-            usage = {
-              inputTokens: (usage?.inputTokens ?? 0) + (cu.inputTokens ?? 0),
-              outputTokens: (usage?.outputTokens ?? 0) + (cu.outputTokens ?? 0),
-              totalTokens: (usage?.totalTokens ?? 0) + (cu.totalTokens ?? 0),
-            };
-          }
-        } catch {
-          // 某些 provider 不返回 usage，静默忽略
-        }
-
-        finishReason = nextFinish;
-        // 下次循环再判：若仍是 'length'，再续一次；否则跳出。
+        await consumeStream(continuationStream, true);
+        finishReason = await (await continuationStream).finishReason;
+        await addUsage(continuationStream);
       } catch (err) {
         console.error(
           `[llm-client] continuation attempt ${continuationAttempts} threw:`,
@@ -734,10 +718,8 @@ export class LLMClient {
             '现在立即调用 signal_input_needed：把当前局面总结为 hint（1-2 句），并提供 2-4 个推进选项作为 choices。不要再写任何旁白文本或 <d> 标签。',
         };
         const followupStream = streamText({
-          model: this.getModel(),
-          system: systemPrompt,
+          ...baseStreamArgs,
           messages: [...messages, nudgeMessage],
-          tools: aiTools,
           // 硬 cap 2 步：正常情况 step 0 就应该调到 signal_input_needed，
           // 留 1 步冗余以防 provider 先吐 text 再 tool_call 分步走。
           stopWhen: [
@@ -751,39 +733,13 @@ export class LLMClient {
           // 主 generate 用 'auto'，让 LLM 自由叙事；follow-up 用具名 tool
           // 强制，保证一定产生 signal_input_needed tool_call。
           toolChoice: { type: 'tool', toolName: 'signal_input_needed' },
-          abortSignal,
-          ...(providerOptions ? { providerOptions } : {}),
-          experimental_onStepStart: handleStepStart,
-          experimental_onToolCallStart: handleToolCallStart,
-          experimental_onToolCallFinish: handleToolCallFinish,
-          onStepFinish: handleStepFinish,
         });
 
-        // 耗尽 follow-up 流。
-        //   - text-delta：**不**累加进 fullText。toolChoice 下模型通常不
-        //     会产生 text，即便产生也是"我要调工具"这种元说明，不该写进
-        //     玩家看到的叙事。onTextChunk 同理不转发，避免前端看到跳字。
-        //   - reasoning-delta：同理忽略。
-        for await (const part of followupStream.fullStream) {
-          void part; // drain only
-        }
-
-        const followupFinal = await followupStream;
-        const followupFinish = await followupFinal.finishReason;
-
-        // 合并 usage（input/output token 相加）
-        try {
-          const fu = await followupFinal.usage;
-          if (fu) {
-            usage = {
-              inputTokens: (usage?.inputTokens ?? 0) + (fu.inputTokens ?? 0),
-              outputTokens: (usage?.outputTokens ?? 0) + (fu.outputTokens ?? 0),
-              totalTokens: (usage?.totalTokens ?? 0) + (fu.totalTokens ?? 0),
-            };
-          }
-        } catch {
-          // ignore
-        }
+        // text-delta / reasoning-delta 不转发也不累加进 fullText —— toolChoice
+        // 下偶发的 text 是"我要调工具"这类元说明，写进玩家叙事会跳字。
+        await consumeStream(followupStream, false);
+        const followupFinish = await (await followupStream).finishReason;
+        await addUsage(followupStream);
 
         // toolCallLog 在 handleToolCallFinish 已经被 follow-up 的
         // signal_input_needed 追加过，这里重新检查确认补刀成功。
