@@ -30,6 +30,41 @@ describe('createWebSocketCoreEventSink', () => {
       { type: 'status', status: 'waiting-input' },
     ]);
   });
+
+  it('omits debug-only messages when debug output is disabled', () => {
+    const sent: string[] = [];
+    const sink = createWebSocketCoreEventSink({ send: (data) => sent.push(data) });
+
+    sink.publish(events[0]!);
+    sink.publish({
+      type: 'context-assembled',
+      turnId: turnId(1),
+      promptSnapshot: {
+        systemPrompt: 'secret system prompt',
+        messages: [{ role: 'user', content: 'hi' }],
+        tokenBreakdown: {
+          system: 1,
+          state: 0,
+          summaries: 0,
+          recentHistory: 0,
+          contextSegments: 0,
+          total: 1,
+          budget: 100,
+        },
+        activeSegmentIds: ['rules'],
+      },
+    });
+    sink.publish({
+      type: 'diagnostics-updated',
+      diagnostics: { assembledSystemPrompt: 'secret system prompt' },
+    });
+
+    expect(sent.map((message) => JSON.parse(message) as { type: string })).toMatchObject([
+      { type: 'reset' },
+      { type: 'status', status: 'loading' },
+      { type: 'scene-change', scene: emptyScene },
+    ]);
+  });
 });
 
 const emptyScene = { background: null, sprites: [] };
