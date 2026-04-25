@@ -2,11 +2,10 @@ import { describe, expect, it } from 'bun:test';
 import { StateStore } from '#internal/state-store';
 import { createGenerateTurnRuntime } from '#internal/game-session/generate-turn-runtime';
 import {
-  createRecordingSessionEmitter,
-  type RecordingSessionEmitter,
-} from '#internal/game-session/recording-emitter';
-import { createLegacySessionEmitterProjection } from '#internal/game-session/legacy-session-emitter-projection';
-import { createCoreEventBus, type CoreEventBus, type CoreEventSink } from '#internal/game-session/core-events';
+  createRecordingSessionOutputSink,
+  type RecordingSessionOutputSink,
+} from '#internal/game-session/recording-session-output';
+import { createCoreEventBus, type CoreEventBus } from '#internal/game-session/core-events';
 import { createSessionPersistenceCoreEventSink } from '#internal/game-session/persistence-core-event-sink';
 import type { GenerateOptions, GenerateResult, LLMClient, StepInfo } from '#internal/llm-client';
 import type { Memory } from '#internal/memory/types';
@@ -19,7 +18,7 @@ describe('GenerateTurnRuntime', () => {
     stateStore.setTurn(1);
     const memory = createMemoryDouble();
     const persistence = createPersistenceDouble();
-    const recording = createRecordingSessionEmitter();
+    const recording = createRecordingSessionOutputSink();
     const coreEventSink = createTestCoreEventSink(recording, persistence);
     const llmClient = createLLMDouble(async (options) => {
       options.onStepStart?.({ stepNumber: 0, batchId: 'batch-1', isFollowup: false });
@@ -114,7 +113,7 @@ describe('GenerateTurnRuntime', () => {
   it('does not start LLM streaming when the session stops during preparation', async () => {
     const stateStore = new StateStore(emptyStateSchema);
     const memory = createMemoryDouble();
-    const recording = createRecordingSessionEmitter();
+    const recording = createRecordingSessionOutputSink();
     let generateCalled = false;
     const llmClient = createLLMDouble(async () => {
       generateCalled = true;
@@ -129,7 +128,7 @@ describe('GenerateTurnRuntime', () => {
       segments: [],
       enabledTools: [],
       tokenBudget: 12000,
-      coreEventSink: createRecordingProjectionSink(recording),
+      coreEventSink: recording,
       ...runtimeProtocolConfig(),
       characters: [],
       backgrounds: [],
@@ -152,7 +151,7 @@ describe('GenerateTurnRuntime', () => {
     const stateStore = new StateStore(emptyStateSchema);
     const memory = createMemoryDouble();
     const persistence = createPersistenceDouble();
-    const recording = createRecordingSessionEmitter();
+    const recording = createRecordingSessionOutputSink();
     const coreEventSink = createTestCoreEventSink(recording, persistence);
     const llmClient = createLLMDouble(async (options) => {
       options.onStepStart?.({ stepNumber: 0, batchId: 'batch-tool', isFollowup: false });
@@ -205,7 +204,7 @@ describe('GenerateTurnRuntime', () => {
     const stateStore = new StateStore(emptyStateSchema);
     const memory = createMemoryDouble();
     const persistence = createPersistenceDouble();
-    const recording = createRecordingSessionEmitter();
+    const recording = createRecordingSessionOutputSink();
     const coreEventSink = createTestCoreEventSink(recording, persistence);
     const llmClient = createLLMDouble(async (options) => {
       options.onStepStart?.({ stepNumber: 0, batchId: 'batch-scene', isFollowup: false });
@@ -300,7 +299,7 @@ describe('GenerateTurnRuntime', () => {
   it('rejects legacy-readable v1 as a runtime protocol', () => {
     const stateStore = new StateStore(emptyStateSchema);
     const memory = createMemoryDouble();
-    const recording = createRecordingSessionEmitter();
+    const recording = createRecordingSessionOutputSink();
     const llmClient = createLLMDouble(async () => ({ text: '', toolCalls: [], finishReason: 'stop' }));
 
     expect(() => createGenerateTurnRuntime({
@@ -311,7 +310,7 @@ describe('GenerateTurnRuntime', () => {
       segments: [],
       enabledTools: [],
       tokenBudget: 12000,
-      coreEventSink: createRecordingProjectionSink(recording),
+      coreEventSink: recording,
       protocolVersion: 'v1-tool-call',
       characters: [],
       backgrounds: [],
@@ -325,18 +324,13 @@ describe('GenerateTurnRuntime', () => {
 
 const emptyStateSchema: StateSchema = { variables: [] };
 
-function createRecordingProjectionSink(recording: RecordingSessionEmitter): CoreEventSink {
-  const projection = createLegacySessionEmitterProjection(recording.emitter);
-  return { publish: (event) => projection.publish(event) };
-}
-
 function createTestCoreEventSink(
-  recording: RecordingSessionEmitter,
+  recording: RecordingSessionOutputSink,
   persistence: SessionPersistence,
 ): CoreEventBus {
   return createCoreEventBus([
     createSessionPersistenceCoreEventSink(persistence),
-    createRecordingProjectionSink(recording),
+    recording,
   ]);
 }
 

@@ -12,13 +12,14 @@ GameSession
   -> CoreEvent
        -> durable-first SessionPersistenceCoreEventSink
        -> WebSocketCoreEventSink
+       -> RecordingSessionOutputSink
        -> RecordingCoreEventSink
        -> CoreEventLogSink
 ```
 
 The runtime no longer depends on the legacy `SessionEmitter` interface for live
 output or persistence. `SessionEmitter` is now a compatibility projection used
-by recording/evaluation tests and by historical comparison paths.
+by historical comparison tests and readback migration paths.
 
 ## Runtime Flow
 
@@ -53,6 +54,9 @@ used.
   called directly from runtime code.
 - WebSocket output is now a direct CoreEvent sink with the same JSON wire format
   as before.
+- Evaluation and runtime tests record `RecordedSessionOutput` directly from
+  CoreEvents via `RecordingSessionOutputSink`; the legacy projection remains as
+  a golden compatibility comparison.
 - `tool-call-finished` carries both `input` and `output`, so persistence does
   not infer tool payloads from external state.
 - The memory evaluation harness runs persistence through the CoreEvent path.
@@ -72,8 +76,8 @@ used.
 - Wire `CoreEventLogSink` to a real server-side durable store if event replay is
   needed beyond test/eval memory.
 - Decide when to delete the legacy `SessionEmitter` projection. It is no longer
-  on the live WebSocket path, but still provides useful golden comparison for
-  tests and evaluation.
+  on live WebSocket, persistence, runtime-test, or evaluation recording paths,
+  but still provides useful golden comparison for historical compatibility.
 - Add a historical V1 parser/readback package boundary if old playthrough
   replay needs to outlive the current compatibility projection.
 - Keep expanding validator coverage only when a real timing invariant appears;

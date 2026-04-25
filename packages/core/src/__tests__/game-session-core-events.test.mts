@@ -3,18 +3,17 @@ import { GameSession } from '#internal/game-session';
 import type { RestoreConfig } from '#internal/game-session/types';
 import { createCoreEventBus } from '#internal/game-session/core-events';
 import { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
-import { createRecordingSessionEmitter } from '#internal/game-session/recording-emitter';
-import { createLegacySessionEmitterProjection } from '#internal/game-session/legacy-session-emitter-projection';
+import { createRecordingSessionOutputSink } from '#internal/game-session/recording-session-output';
 import { buildParserManifest } from '#internal/narrative-parser-v2';
 import type { MemoryConfig, PromptSegment, SceneState, StateSchema } from '#internal/types';
 
 describe('GameSession CoreEvent projection', () => {
   it('projects restored and stopped lifecycle events through CoreEvents', async () => {
-    const recording = createRecordingSessionEmitter();
+    const recording = createRecordingSessionOutputSink();
     const coreRecorder = createRecordingCoreEventSink({ playthroughId: 'pt-core-events' });
     const session = new GameSession();
     const coreEventSink = createCoreEventBus([
-      createLegacySessionEmitterProjection(recording.emitter),
+      recording,
       coreRecorder,
     ]);
     const scene: SceneState = { background: 'hall', sprites: [] };

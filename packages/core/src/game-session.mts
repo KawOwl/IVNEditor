@@ -78,6 +78,8 @@ export { computeReceivePayload } from '#internal/game-session/input-payload';
 export { applyScenePatchToState } from '#internal/game-session/scene-state';
 export { createRecordingSessionEmitter } from '#internal/game-session/recording-emitter';
 export type { RecordedSessionOutput, RecordingSessionEmitter } from '#internal/game-session/recording-emitter';
+export { createRecordingSessionOutputSink } from '#internal/game-session/recording-session-output';
+export type { RecordingSessionOutputSink } from '#internal/game-session/recording-session-output';
 export * from '#internal/game-session/core-events';
 export { validateCoreEventSequence } from '#internal/game-session/core-event-protocol';
 export {

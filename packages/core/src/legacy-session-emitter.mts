@@ -2,13 +2,13 @@
  * Legacy SessionEmitter — runtime compatibility projection target
  *
  * Core session logic emits CoreEvent. This interface is the compatibility
- * target used by CoreEvent projection adapters for WebSocket, tests, and
- * existing UI/debug consumers. New core code should depend on CoreEventSink
- * instead of this method-oriented interface.
+ * target used by CoreEvent projection adapters for historical comparison and
+ * migration readback. New core code should depend on CoreEventSink instead of
+ * this method-oriented interface.
  *
  * 典型消费者：
- *   - WebSocketSessionEmitter: 后端运行时把事件序列化给前端
- *   - RecordingSessionEmitter: 测试 / 评测任务直接收集事件快照
+ *   - LegacySessionEmitterProjection: 用于历史兼容 / golden 对照
+ *   - RecordingSessionEmitter: 收集 legacy projection 的对照快照
  */
 
 import type {

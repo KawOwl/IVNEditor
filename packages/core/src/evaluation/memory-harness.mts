@@ -2,7 +2,7 @@
  * Memory evaluation harness
  *
  * Runs deterministic generate/receive scripts through the core generate runtime
- * with a RecordingSessionEmitter and an in-memory narrative history store.
+ * with a CoreEvent-native session output recorder and an in-memory narrative history store.
  * This gives memory providers the same canonical narrative_entries reader shape
  * they see in server runtime, without WebSocket, DOM, or live LLM calls.
  */
@@ -32,9 +32,11 @@ import {
 import { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
 import {
   createRecordingSessionEmitter,
-  type RecordingSessionEmitter,
   type RecordedSessionOutput,
 } from '#internal/game-session/recording-emitter';
+import {
+  createRecordingSessionOutputSink,
+} from '#internal/game-session/recording-session-output';
 import { createLegacySessionEmitterProjection } from '#internal/game-session/legacy-session-emitter-projection';
 import type { SessionPersistence } from '#internal/game-session/types';
 import { LLMClient, type GenerateOptions, type GenerateResult, type LLMConfig, type StepInfo } from '#internal/llm-client';
@@ -225,7 +227,7 @@ export async function runMemoryEvaluationCase(options: {
 }): Promise<MemoryEvaluationRun> {
   const { scenario, variant, script } = options;
   const playthroughId = scenario.playthroughId ?? `memory-eval-${scenario.id}-${variant.id}`;
-  const recording = createRecordingSessionEmitter();
+  const recording = createRecordingSessionOutputSink();
   const coreRecorder = createRecordingCoreEventSink({ playthroughId });
   const journal = createInMemoryEvaluationJournal(playthroughId);
   const harnessCoreEventSink = createHarnessCoreEventSink(
@@ -381,7 +383,7 @@ export async function runLiveMemoryEvaluationCase(options: {
 }): Promise<MemoryEvaluationRun> {
   const { scenario, variant } = options;
   const playthroughId = scenario.playthroughId ?? `memory-live-${scenario.id}-${variant.id}`;
-  const recording = createRecordingSessionEmitter();
+  const recording = createRecordingSessionOutputSink();
   const coreRecorder = createRecordingCoreEventSink({ playthroughId });
   const journal = createInMemoryEvaluationJournal(playthroughId);
   const harnessCoreEventSink = createHarnessCoreEventSink(
@@ -561,18 +563,20 @@ function stripToolTimestamp(entry: ToolCallEntry): ToolCallEntry {
 }
 
 function createHarnessCoreEventSink(
-  recording: RecordingSessionEmitter,
+  recording: CoreEventSink,
   downstream: CoreEventSink,
   persistence: SessionPersistence,
 ): CoreEventBus {
-  const projection = createLegacySessionEmitterProjection(recording.emitter);
   const realtimeSink: CoreEventSink = {
     publish(event) {
-      projection.publish(event);
+      recording.publish(event);
       downstream.publish(event);
     },
     async flushDurable() {
-      await downstream.flushDurable?.();
+      await Promise.all([
+        recording.flushDurable?.(),
+        downstream.flushDurable?.(),
+      ]);
     },
   };
 
