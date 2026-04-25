@@ -1,4 +1,4 @@
-import { asc, desc, eq } from 'drizzle-orm';
+import { asc, desc, eq, sql } from 'drizzle-orm';
 import type {
   CoreEventEnvelope,
   CoreEventLogWriter,
@@ -7,13 +7,25 @@ import { db, schema } from '#internal/db';
 
 export class CoreEventLogService {
   async append(envelope: CoreEventEnvelope): Promise<void> {
-    await db.insert(schema.coreEventEnvelopes).values({
-      id: crypto.randomUUID(),
-      playthroughId: envelope.playthroughId,
-      schemaVersion: envelope.schemaVersion,
-      sequence: envelope.sequence,
-      occurredAt: envelope.occurredAt,
-      event: envelope.event,
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        select pg_advisory_xact_lock(hashtext(${envelope.playthroughId}), 1)
+      `);
+
+      const maxResult = await tx
+        .select({ max: sql<number>`coalesce(max(${schema.coreEventEnvelopes.sequence}), 0)` })
+        .from(schema.coreEventEnvelopes)
+        .where(eq(schema.coreEventEnvelopes.playthroughId, envelope.playthroughId));
+      const nextSequence = Number(maxResult[0]?.max ?? 0) + 1;
+
+      await tx.insert(schema.coreEventEnvelopes).values({
+        id: crypto.randomUUID(),
+        playthroughId: envelope.playthroughId,
+        schemaVersion: envelope.schemaVersion,
+        sequence: nextSequence,
+        occurredAt: envelope.occurredAt,
+        event: envelope.event,
+      });
     });
   }
 
