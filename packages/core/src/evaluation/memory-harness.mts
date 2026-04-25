@@ -255,7 +255,6 @@ export async function runMemoryEvaluationCase(options: {
 
     const runtime = createGenerateTurnRuntime({
       turn,
-      emitter: recording.emitter,
       stateStore,
       memory,
       llmClient,
@@ -266,7 +265,7 @@ export async function runMemoryEvaluationCase(options: {
       assemblyOrder: scenario.assemblyOrder,
       disabledSections: scenario.disabledSections,
       persistence: journal.persistence,
-      coreEventSink: coreRecorder,
+      coreEventSink: harnessCoreEventSink,
       protocolVersion: scenario.protocolVersion ?? 'v1-tool-call',
       parserManifest: scenario.parserManifest,
       characters: scenario.characters ?? [],
@@ -412,7 +411,6 @@ export async function runLiveMemoryEvaluationCase(options: {
 
     const runtime = createGenerateTurnRuntime({
       turn,
-      emitter: recording.emitter,
       stateStore,
       memory,
       llmClient,
@@ -423,7 +421,7 @@ export async function runLiveMemoryEvaluationCase(options: {
       assemblyOrder: scenario.assemblyOrder,
       disabledSections: scenario.disabledSections,
       persistence: journal.persistence,
-      coreEventSink: coreRecorder,
+      coreEventSink: harnessCoreEventSink,
       protocolVersion: scenario.protocolVersion ?? 'v1-tool-call',
       parserManifest: scenario.parserManifest,
       characters: scenario.characters ?? [],

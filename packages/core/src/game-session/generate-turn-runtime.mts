@@ -24,7 +24,6 @@ import { computeFocus } from '#internal/focus';
 import { createTools, getEnabledTools } from '#internal/tool-executor';
 import type { ScenePatch, SignalInputOptions } from '#internal/tool-executor';
 import type { GenerateOptions, GenerateResult, LLMClient, StepInfo } from '#internal/llm-client';
-import type { SessionEmitter } from '#internal/session-emitter';
 import { NarrativeParser, extractPlainText } from '#internal/narrative-parser';
 import {
   createParser as createParserV2,
@@ -36,7 +35,6 @@ import { serializeMessagesForDebug } from '#internal/messages-builder';
 import { createNarrationAccumulator } from '#internal/game-session/narration';
 import { applyScenePatchToState } from '#internal/game-session/scene-state';
 import type { CoreEventSink, RuntimeSentence, StepId, TurnId } from '#internal/game-session/core-events';
-import { createSessionEmitterProjection } from '#internal/game-session/session-emitter-projection';
 import {
   batchId as toBatchId,
   createInputRequest,
@@ -108,7 +106,6 @@ export interface GenerateTurnRuntime {
 
 export interface GenerateTurnRuntimeDeps {
   readonly turn: number;
-  readonly emitter: SessionEmitter;
   readonly stateStore: StateStore;
   readonly memory: Memory;
   readonly llmClient: Pick<LLMClient, 'generate'>;
@@ -158,7 +155,6 @@ function toTraceStepRecord(step: StepInfo): TraceStepRecord {
 }
 
 class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
-  private readonly sessionEmitterProjection: CoreEventSink;
   private readonly turnId: TurnId;
   private currentScene: SceneState;
   private currentNarrativeBuffer = '';
@@ -173,7 +169,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   private abortController: AbortController | null = null;
 
   constructor(private readonly deps: GenerateTurnRuntimeDeps) {
-    this.sessionEmitterProjection = createSessionEmitterProjection(deps.emitter);
     this.turnId = toTurnId(deps.turn);
     this.currentScene = copyScene(deps.currentScene);
   }
@@ -959,7 +954,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   }
 
   private publish(event: Parameters<CoreEventSink['publish']>[0]): void {
-    this.sessionEmitterProjection.publish(event);
     this.deps.coreEventSink?.publish(event);
   }
 }

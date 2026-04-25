@@ -1,13 +1,14 @@
 /**
- * SessionEmitter — GameSession 的输出端口
+ * SessionEmitter — legacy runtime projection target
  *
- * GameSession 通过此接口向外部推送事件。它只描述 core loop 的可观察输出，
- * 不直接依赖 WebSocket、Zustand、DOM 或任何具体视图。
+ * Core session logic emits CoreEvent. This interface is the compatibility
+ * target used by CoreEvent projection adapters for WebSocket, tests, and
+ * existing UI/debug consumers. New core code should depend on CoreEventSink
+ * instead of this method-oriented interface.
  *
  * 典型消费者：
  *   - WebSocketSessionEmitter: 后端运行时把事件序列化给前端
  *   - RecordingSessionEmitter: 测试 / 评测任务直接收集事件快照
- *   - 未来 ivn-xml consumer: 后端或批量评测场景把 Sentence/Scene 投影成专用视图协议
  */
 
 import type {
@@ -98,29 +99,4 @@ export interface SessionEmitter {
    * 注：调用顺序和 appendSentence('scene_change') 一致——在发出 Sentence 前先 emit。
    */
   emitSceneChange(scene: SceneState, transition?: 'fade' | 'cut' | 'dissolve'): void;
-}
-
-export function createNoopSessionEmitter(): SessionEmitter {
-  return {
-    reset() {},
-    setStatus() {},
-    setError() {},
-    beginStreamingEntry() {
-      return '';
-    },
-    appendToStreamingEntry() {},
-    appendReasoningToStreamingEntry() {},
-    finalizeStreamingEntry() {},
-    appendEntry() {},
-    addToolCall() {},
-    addPendingToolCall() {},
-    updateToolResult() {},
-    updatePendingToolResult() {},
-    setInputHint() {},
-    setInputType() {},
-    stagePendingDebug() {},
-    updateDebug() {},
-    appendSentence() {},
-    emitSceneChange() {},
-  };
 }

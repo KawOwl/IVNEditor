@@ -34,7 +34,6 @@ import { estimateTokens } from '#internal/tokens';
 import { computeFocus } from '#internal/focus';
 import { LLMClient } from '#internal/llm-client';
 import type { LLMConfig } from '#internal/llm-client';
-import type { SessionEmitter } from '#internal/session-emitter';
 import type { ParserManifest } from '#internal/narrative-parser-v2';
 import { computeReceivePayload } from '#internal/game-session/input-payload';
 import type {
@@ -53,7 +52,6 @@ import {
   type GenerateTurnPendingSignal,
   type GenerateTurnRuntime,
 } from '#internal/game-session/generate-turn-runtime';
-import { createSessionEmitterProjection } from '#internal/game-session/session-emitter-projection';
 import type {
   GameSessionConfig,
   RestoreConfig,
@@ -93,9 +91,6 @@ export type { ProtocolVersion } from '#internal/types';
 // ============================================================================
 
 export class GameSession {
-  private emitter: SessionEmitter;
-  private coreEventProjection: CoreEventSink;
-
   private stateStore!: StateStore;
   private memory!: Memory;
 
@@ -170,11 +165,6 @@ export class GameSession {
 
   // compressFn 从 game-session 移除 —— 现在由 Memory adapter 构造时注入
   // （Legacy 用 truncatingCompressFn，LLMSummarizer 用真 LLM）
-
-  constructor(emitter: SessionEmitter) {
-    this.emitter = emitter;
-    this.coreEventProjection = createSessionEmitterProjection(emitter);
-  }
 
   /** 即时更新 LLM 配置（下一次 generate 生效，无需重启会话） */
   updateLLMConfig(patch: Partial<LLMConfig>): void {
@@ -462,7 +452,6 @@ export class GameSession {
   private async runGeneratePhase(turn: number): Promise<{ stopped: boolean }> {
     const runtime = createGenerateTurnRuntime({
       turn,
-      emitter: this.emitter,
       stateStore: this.stateStore,
       memory: this.memory,
       llmClient: this.llmClient,
@@ -633,7 +622,6 @@ export class GameSession {
   }
 
   private publishCoreEvent(event: Parameters<CoreEventSink['publish']>[0]): void {
-    this.coreEventProjection.publish(event);
     this.coreEventSink?.publish(event);
   }
 

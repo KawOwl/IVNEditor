@@ -15,7 +15,6 @@ import type {
   RestoreConfig,
   ProtocolVersion,
 } from '@ivn/core/game-session';
-import { createNoopSessionEmitter } from '@ivn/core/session-emitter';
 import type { ScriptManifest, PromptSegment, SceneState } from '@ivn/core/types';
 import type { LLMConfig } from '@ivn/core/llm-client';
 import { buildParserManifest, type ParserManifest } from '@ivn/core/narrative-parser-v2';
@@ -85,7 +84,7 @@ export class GameSessionWrapper {
     this.coreEventSink = createWebSocketCoreEventSink(ws, {
       enableDebug: this.kind === 'playtest',
     });
-    this.gameSession = new GameSession(createNoopSessionEmitter());
+    this.gameSession = new GameSession();
   }
 
   start(): void {

@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import { StateStore } from '#internal/state-store';
 import { createGenerateTurnRuntime } from '#internal/game-session/generate-turn-runtime';
-import { createRecordingSessionEmitter } from '#internal/game-session/recording-emitter';
+import {
+  createRecordingSessionEmitter,
+  type RecordingSessionEmitter,
+} from '#internal/game-session/recording-emitter';
+import { createSessionEmitterProjection } from '#internal/game-session/session-emitter-projection';
+import type { CoreEventSink } from '#internal/game-session/core-events';
 import type { GenerateOptions, GenerateResult, LLMClient, StepInfo } from '#internal/llm-client';
 import type { Memory } from '#internal/memory/types';
 import type { MemoryEntry, StateSchema } from '#internal/types';
@@ -29,7 +34,6 @@ describe('GenerateTurnRuntime', () => {
 
     const result = await createGenerateTurnRuntime({
       turn: 2,
-      emitter: recording.emitter,
       stateStore,
       memory,
       llmClient,
@@ -37,6 +41,7 @@ describe('GenerateTurnRuntime', () => {
       enabledTools: [],
       tokenBudget: 12000,
       persistence,
+      coreEventSink: createRecordingProjectionSink(recording),
       protocolVersion: 'v1-tool-call',
       characters: [],
       backgrounds: [],
@@ -112,13 +117,13 @@ describe('GenerateTurnRuntime', () => {
 
     const result = await createGenerateTurnRuntime({
       turn: 1,
-      emitter: recording.emitter,
       stateStore,
       memory,
       llmClient,
       segments: [],
       enabledTools: [],
       tokenBudget: 12000,
+      coreEventSink: createRecordingProjectionSink(recording),
       protocolVersion: 'v1-tool-call',
       characters: [],
       backgrounds: [],
@@ -158,7 +163,6 @@ describe('GenerateTurnRuntime', () => {
 
     await createGenerateTurnRuntime({
       turn: 1,
-      emitter: recording.emitter,
       stateStore,
       memory,
       llmClient,
@@ -166,6 +170,7 @@ describe('GenerateTurnRuntime', () => {
       enabledTools: [],
       tokenBudget: 12000,
       persistence,
+      coreEventSink: createRecordingProjectionSink(recording),
       protocolVersion: 'v1-tool-call',
       characters: [],
       backgrounds: [],
@@ -231,7 +236,6 @@ describe('GenerateTurnRuntime', () => {
 
     const result = await createGenerateTurnRuntime({
       turn: 1,
-      emitter: recording.emitter,
       stateStore,
       memory,
       llmClient,
@@ -239,6 +243,7 @@ describe('GenerateTurnRuntime', () => {
       enabledTools: [],
       tokenBudget: 12000,
       persistence,
+      coreEventSink: createRecordingProjectionSink(recording),
       protocolVersion: 'v1-tool-call',
       characters: [],
       backgrounds: [],
@@ -286,6 +291,11 @@ describe('GenerateTurnRuntime', () => {
 });
 
 const emptyStateSchema: StateSchema = { variables: [] };
+
+function createRecordingProjectionSink(recording: RecordingSessionEmitter): CoreEventSink {
+  const projection = createSessionEmitterProjection(recording.emitter);
+  return { publish: (event) => projection.publish(event) };
+}
 
 type AppendedTurn = Parameters<Memory['appendTurn']>[0];
 

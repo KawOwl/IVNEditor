@@ -1,20 +1,26 @@
 import { describe, expect, it } from 'bun:test';
 import { GameSession } from '#internal/game-session';
 import type { RestoreConfig } from '#internal/game-session/types';
+import { createCoreEventBus } from '#internal/game-session/core-events';
 import { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
 import { createRecordingSessionEmitter } from '#internal/game-session/recording-emitter';
+import { createSessionEmitterProjection } from '#internal/game-session/session-emitter-projection';
 import type { MemoryConfig, PromptSegment, SceneState, StateSchema } from '#internal/types';
 
 describe('GameSession CoreEvent projection', () => {
   it('projects restored and stopped lifecycle events through CoreEvents', async () => {
     const recording = createRecordingSessionEmitter();
     const coreRecorder = createRecordingCoreEventSink({ playthroughId: 'pt-core-events' });
-    const session = new GameSession(recording.emitter);
+    const session = new GameSession();
+    const coreEventSink = createCoreEventBus([
+      createSessionEmitterProjection(recording.emitter),
+      coreRecorder,
+    ]);
     const scene: SceneState = { background: 'hall', sprites: [] };
 
     await session.restore({
       ...baseRestoreConfig,
-      coreEventSink: coreRecorder,
+      coreEventSink,
       status: 'finished',
       turn: 2,
       stateVars: { current_scene: 'hall' },
