@@ -1,0 +1,126 @@
+name: deploy-staging
+
+# 触发：
+#   - push 到 main → 自动跑 build-push，再卡在 staging environment 等 reviewer
+#     在 GitHub UI 点 "Approve and deploy" 才执行 rollout
+#   - workflow_dispatch → 手动触发，可指定 tag（罕见，比如 reproduce 老版本）
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '强制覆盖 tag（默认 {YYYYMMDD-HHMMSS}-{shortSHA} UTC）'
+        required: false
+        default: ''
+
+# 一次只跑一个 deploy-staging：push 连发只会串行，不会并发推坏 staging
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  # ============================================================
+  # build-push：在 GHA runner build amd64 镜像 + push 到阿里云 ACR
+  # 不走 environment protection（不影响 staging，仅写镜像仓库）
+  # ============================================================
+  build-push:
+    name: build + push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      pull_image: ${{ steps.tag.outputs.pull_image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 计算 tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
+          fi
+          echo "tag=$TAG"           >> "$GITHUB_OUTPUT"
+          echo "pull_image=memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com/ivn/engine:$TAG" >> "$GITHUB_OUTPUT"
+          echo "::notice::tag=$TAG"
+
+      - name: docker login ACR
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: |
+          echo "$ACR_PASSWORD" | docker login \
+            memoryx-registry-registry.cn-shenzhen.cr.aliyuncs.com \
+            -u "$ACR_USERNAME" \
+            --password-stdin
+
+      - name: docker build
+        env:
+          DOCKER_BUILDKIT: "1"
+          PUSH_IMAGE: memoryx-registry-registry.cn-shenzhen.cr.aliyuncs.com/ivn/engine:${{ steps.tag.outputs.tag }}
+        run: docker build --tag "$PUSH_IMAGE" --platform linux/amd64 --progress=plain .
+
+      - name: docker push
+        env:
+          PUSH_IMAGE: memoryx-registry-registry.cn-shenzhen.cr.aliyuncs.com/ivn/engine:${{ steps.tag.outputs.tag }}
+        run: docker push "$PUSH_IMAGE"
+
+  # ============================================================
+  # deploy：env=staging 触发 GitHub Environment protection rule
+  #   → 等指定 reviewer 在 GH UI Approve 才往下走
+  # 用 ServiceAccount kubeconfig（仅能动 ivn ns 的 deploy，不能读 secret）
+  # ============================================================
+  deploy:
+    name: rollout to staging
+    needs: build-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: staging
+      url: http://39.108.85.114:30001/
+    steps:
+      - name: 安装 kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+
+      - name: 写 kubeconfig
+        env:
+          KUBECONFIG_RAW: ${{ secrets.KUBECONFIG_STAGING_CI }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          printf '%s' "$KUBECONFIG_RAW" > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+          # smoke test
+          kubectl -n ivn get deploy ivn-engine -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+
+      - name: kubectl set image
+        run: |
+          kubectl -n ivn set image deploy/ivn-engine \
+            "server=${{ needs.build-push.outputs.pull_image }}"
+
+      - name: rollout status
+        run: kubectl -n ivn rollout status deploy/ivn-engine --timeout=180s
+
+      - name: 当前 pod 状态
+        if: always()
+        run: kubectl -n ivn get pods -l app=ivn-engine -o wide
+
+      - name: /health 三连
+        run: |
+          for i in 1 2 3; do
+            if curl -sf --max-time 5 http://39.108.85.114:30001/health > /dev/null; then
+              echo "/health #$i OK"
+            else
+              echo "::error::/health #$i FAIL"
+              exit 1
+            fi
+          done
+
+      - name: 总结
+        run: |
+          echo "::notice::staging 已 rollout 到 ${{ needs.build-push.outputs.tag }}"
