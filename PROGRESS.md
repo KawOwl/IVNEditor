@@ -20,6 +20,18 @@
 
 ## 最近完成
 
+**LLM context 组装 + agentic loop 代码清理 round（2026-04-26，本会话）**
+- 用户指令：审计 LLM 上下文组装链路 → 列清单 → 除 SceneState deep-readonly 之外都做
+- 5 个独立 commit，每个改完跑 typecheck + test:core 验证再提交：
+  - `4c4ded3` reuse evaluateCondition：`generate-turn-runtime.computeActiveSegmentIds` 抄了 `context-assembler.evaluateCondition` 的 `new Function` 整段，换成 import 复用 + 把 `stateStore.getAll()` 提出 filter 闭包（之前每个 segment 调一次）。-16/+5
+  - `46e0acd` collapse section maps：`context-assembler` 的 `sectionContent: Map<string,string>` + `sectionTokens: Map<string,number>` 双 Map 合并成 `sections: Map<string, AssembledSection>`，category（'system'|'context'|'state'|'summary'）+ trimmable 在创建处一并定下；assembly 循环里那条 `if (id === VIRTUAL_IDS.STATE) ... else if (id === SCENE_CONTEXT) ...` 分类链塌成 `breakdown[section.category] += tokens`；干掉了 `activeSegments.find(s=>s.id===id)` 的 O(N) 查询。`tokenBreakdown` 字段名外部完全不变。-77/+67
+  - `bd5684b` focus cache helper：`createPrepareStepSystem` 原来用 `JSON.stringify({scene,characters,stage})` 做 cache key + `JSON.parse(cachedKey)` 反序列化做 trace 日志；新增 `focusEquals(a,b)` 到 focus.mts 做结构相等比较，cache state 改为显式 `cachedFocus + everRefreshed` 布尔（之前用 `cachedSystemPrompt === context.systemPrompt` 对象身份判断）。+19/-12
+  - `11b9c02` lift drainBatch：`createNarrativeRuntime` 里 55 行 closure 抽到顶层 `drainNarrativeBatch(batch, ctx)`，依赖通过 `DrainBatchContext` 显式声明（initialScene / publish / traceHandle / turnId / turn / getBatchId），不再 `this.*` 隐式捕获；scene 由函数返回让 caller 赋值给 `this.currentScene`。`createNarrativeRuntime` 70 行 → ~20 行。+110/-71
+  - `7c970b1` llm-client 三循环统一：`generate()` 里 main / continuation / signal-input follow-up 三处 streamText 各自重抄 14 字段 + 重抄 fullStream drain + 重抄 usage merge → 抽 `baseStreamArgs`（共享 9 字段 + 4 hook）+ `consumeStream(stream, forward)` + `addUsage(stream)`（additive merge，主路径 prev=undefined 时等价于赋值）+ `turnEndStop`（main + continuation 共用）+ hoist `model = this.getModel()`。`generate()` ~525 行 → ~430 行（净 -44）。
+- 验证：每个 commit 都跑 `pnpm --filter @ivn/core typecheck` + `pnpm test:core` 292/292；最后跑全量 `pnpm typecheck` 4 个 package 全绿
+- 跳过项：用户明确说**不做** SceneState 冻 deep-readonly + 删 14 处 `copyScene()` 这条
+- worktree 第一次开工：装 corepack@`~/.local/share/fnm/aliases/default/bin/corepack` + `corepack pnpm install` 把 5 个 workspace 的 deps 拉进来（worktree 不共享主 repo node_modules）
+
 **EUX.1 编辑器试玩 tab 接入存档列表（2026-04-25，本会话）**
 - 用户原话："在编剧的界面把存档列表也加上，让大家可以读取存档"
 - 镜像玩家流 PlayPage 的 list-first 模式，把 EditorRightPanel 的'试玩'tab body 重做成"PlaythroughList ↔ PlayPanel"切换。
