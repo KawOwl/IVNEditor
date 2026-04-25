@@ -18,7 +18,12 @@ describe('GenerateTurnRuntime', () => {
       options.onStepStart?.({ stepNumber: 0, batchId: 'batch-1', isFollowup: false });
       options.onTextChunk?.('雨停了。');
       options.onReasoningChunk?.('天气观察');
-      options.onStep?.(stepInfo({ batchId: 'batch-1', text: '雨停了。' }));
+      options.onStep?.(stepInfo({
+        batchId: 'batch-1',
+        text: '雨停了。',
+        reasoning: '天气观察',
+        partKinds: ['reasoning', 'text'],
+      }));
       return { text: '雨停了。', toolCalls: [], finishReason: 'stop' };
     });
 
@@ -70,8 +75,17 @@ describe('GenerateTurnRuntime', () => {
       {
         entry: {
           role: 'generate',
-          content: '雨停了。',
+          content: '',
           reasoning: '天气观察',
+          finishReason: 'stop',
+        },
+        batchId: 'batch-1',
+      },
+      {
+        entry: {
+          role: 'generate',
+          content: '雨停了。',
+          reasoning: undefined,
           finishReason: 'stop',
         },
         batchId: 'batch-1',
@@ -173,6 +187,101 @@ describe('GenerateTurnRuntime', () => {
       },
     ]);
     expect(memory.appendedTurns).toEqual([]);
+  });
+
+  it('persists reasoning stubs for narrative+tool steps and keeps preflush reasoning empty', async () => {
+    const stateStore = new StateStore(emptyStateSchema);
+    const memory = createMemoryDouble();
+    const persistence = createPersistenceDouble();
+    const recording = createRecordingSessionEmitter();
+    const llmClient = createLLMDouble(async (options) => {
+      options.onStepStart?.({ stepNumber: 0, batchId: 'batch-scene', isFollowup: false });
+      options.onTextChunk?.('你走进屋子。');
+      options.onReasoningChunk?.('玩家进屋了，先切场景');
+      options.onStep?.(stepInfo({
+        batchId: 'batch-scene',
+        text: '你走进屋子。',
+        reasoning: '玩家进屋了，先切场景',
+        finishReason: 'tool-calls',
+        partKinds: ['reasoning', 'text', 'tool-call'],
+        toolCalls: [{ name: 'change_scene', args: { background: 'room' } }],
+      }));
+
+      options.onStepStart?.({ stepNumber: 1, batchId: 'batch-signal', isFollowup: false });
+      options.onTextChunk?.('沙发上坐着 sakuya。');
+      options.onReasoningChunk?.('描绘进屋后的画面 + 提供选项');
+      await options.tools['signal_input_needed']!.execute({
+        prompt_hint: '接下来呢？',
+        choices: ['坐下', '打招呼'],
+      });
+      options.onStep?.(stepInfo({
+        batchId: 'batch-signal',
+        text: '沙发上坐着 sakuya。',
+        reasoning: '描绘进屋后的画面 + 提供选项',
+        finishReason: 'tool-calls',
+        partKinds: ['reasoning', 'text', 'tool-call'],
+        toolCalls: [{ name: 'signal_input_needed', args: {} }],
+      }));
+      return {
+        text: '你走进屋子。沙发上坐着 sakuya。',
+        toolCalls: [],
+        finishReason: 'tool-calls',
+      };
+    });
+
+    const result = await createGenerateTurnRuntime({
+      turn: 1,
+      emitter: recording.emitter,
+      stateStore,
+      memory,
+      llmClient,
+      segments: [],
+      enabledTools: [],
+      tokenBudget: 12000,
+      persistence,
+      protocolVersion: 'v1-tool-call',
+      characters: [],
+      backgrounds: [],
+      currentScene: { background: null, sprites: [] },
+      buildRetrievalQuery: async () => '',
+      isActive: () => true,
+      onScenarioEnd: () => {},
+    }).run();
+
+    expect(result.pendingSignal).toEqual({
+      hint: '接下来呢？',
+      choices: ['坐下', '打招呼'],
+      batchId: 'batch-signal',
+    });
+    expect(persistence.narrativeEntries).toEqual([
+      {
+        entry: {
+          role: 'generate',
+          content: '',
+          reasoning: '玩家进屋了，先切场景',
+          finishReason: 'tool-calls',
+        },
+        batchId: 'batch-scene',
+      },
+      {
+        entry: {
+          role: 'generate',
+          content: '你走进屋子。沙发上坐着 sakuya。',
+          reasoning: undefined,
+          finishReason: 'signal-input-preflush',
+        },
+        batchId: 'batch-signal',
+      },
+      {
+        entry: {
+          role: 'generate',
+          content: '',
+          reasoning: '描绘进屋后的画面 + 提供选项',
+          finishReason: 'tool-calls',
+        },
+        batchId: 'batch-signal',
+      },
+    ]);
   });
 });
 

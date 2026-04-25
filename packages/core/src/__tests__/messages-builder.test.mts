@@ -505,9 +505,9 @@ describe('buildMessagesFromEntries', () => {
     expect(parts[1]).toEqual({ type: 'text', text: '叙事正文' });
   });
 
-  // ─── tool-only step stub（DeepSeek V4 thinking replay 修复，2026-04-25）─────
-  // 见 game-session.mts persistToolOnlyStepReasoning 注释 + scripts/verify-deepseek-reasoning.mts case 6。
-  // 修复落地后，tool-only step 会写 stub `narrative` entry：content='' + reasoning=非空 + 同 batch 的 tool_calls。
+  // ─── per-step reasoning stub（DeepSeek V4 thinking replay 修复，2026-04-25）─────
+  // 见 generate-turn-runtime.mts persistStepReasoning 注释 + scripts/verify-deepseek-reasoning.mts case 6。
+  // 修复落地后，带 reasoning 的 main step 会写 stub `narrative` entry：content='' + reasoning=非空 + 同 batch 的 tool_calls。
   // messages-builder 必须把这种组合投影成 `[ReasoningPart, ToolCallPart...]`（**不**带空 TextPart）。
 
   it('stub narrative (content="" + reasoning) + tool_calls 同 batch → parts 是 [reasoning, tool-call...]，无 text part', () => {
@@ -612,6 +612,84 @@ describe('buildMessagesFromEntries', () => {
       text: 'step2 思考：描绘进屋的画面',
     });
     expect(asst2Parts[1]).toEqual({ type: 'text', text: '你走进屋子。' });
+    expect(asst2Parts.filter((p) => p.type === 'tool-call')).toHaveLength(1);
+  });
+
+  // narrative+tool step（partKinds 含 'text' 也含 'tool-call'）的实战形态：
+  // 该 step 的 narrative 文本被 currentNarrativeBuffer 累积、recordPendingSignal
+  // pre-flush 时连同后续 step 的内容一起落到**后续 step 的 batchId**——这一 step
+  // 自己的 batch 上**只有 tool_call entry**，narrative 文本是不会出现在这里的。
+  // GenerateTurnRuntime 的 persistStepReasoning 因此对**每个**带 reasoning 的非 followup
+  // step 都写一条 stub，确保 narrative+tool step 的 batch 也有 reasoning 载体。
+  it('narrative+tool step：batch 上只有 tool_call + stub（narrative 跨 batch 走，被后续 pre-flush 拉走）', () => {
+    const entries = [
+      mkEntry({
+        kind: 'narrative',
+        role: 'generate',
+        content: '',
+        reasoning: '玩家进屋了，先切场景',
+        batchId: 'b1',
+        orderIdx: 0,
+      }),
+      mkEntry({
+        kind: 'tool_call',
+        role: 'system',
+        content: 'change_scene',
+        payload: { input: { background: 'room' }, output: { ok: true } },
+        batchId: 'b1',
+        orderIdx: 1,
+      }),
+      // 紧邻的 batch b2：把 step 1 buffered 的 narrative + step 2 的 narrative
+      // 一起在 recordPendingSignal pre-flush 时落到 b2（reasoning=null，因为
+      // pre-flush 不再带 reasoning，由 stub 持久化）+ step 2 自己的 stub + signal_input
+      mkEntry({
+        kind: 'narrative',
+        role: 'generate',
+        content: '你走进屋子。沙发上坐着 sakuya。',
+        reasoning: null,
+        batchId: 'b2',
+        orderIdx: 2,
+      }),
+      mkEntry({
+        kind: 'narrative',
+        role: 'generate',
+        content: '',
+        reasoning: '描绘进屋后的画面 + 提供选项',
+        batchId: 'b2',
+        orderIdx: 3,
+      }),
+      mkEntry({
+        kind: 'signal_input',
+        role: 'system',
+        content: '接下来呢？',
+        payload: { choices: ['坐下', '打招呼'] },
+        batchId: 'b2',
+        orderIdx: 4,
+      }),
+    ];
+    const msgs = buildMessagesFromEntries(entries);
+    expect(msgs).toHaveLength(4); // assistant(b1) + tool(b1) + assistant(b2) + tool(b2)
+
+    // batch b1: 只有 stub + tool_call，无 text
+    const asst1 = msgs[0] as AssistantModelMessage;
+    const asst1Parts = asst1.content as any[];
+    expect(asst1Parts[0]).toEqual({ type: 'reasoning', text: '玩家进屋了，先切场景' });
+    expect(asst1Parts.find((p) => p.type === 'text')).toBeUndefined();
+    expect(asst1Parts.filter((p) => p.type === 'tool-call')).toHaveLength(1);
+    expect((asst1Parts[1] as { toolName: string }).toolName).toBe('change_scene');
+
+    // batch b2: 含 text（pre-flush 落地的 narrative）+ stub 的 reasoning + signal_input
+    const asst2 = msgs[2] as AssistantModelMessage;
+    const asst2Parts = asst2.content as any[];
+    // reasoning 来自 stub（pre-flush 那条 reasoning=null 不贡献）
+    expect(asst2Parts[0]).toEqual({
+      type: 'reasoning',
+      text: '描绘进屋后的画面 + 提供选项',
+    });
+    expect(asst2Parts[1]).toEqual({
+      type: 'text',
+      text: '你走进屋子。沙发上坐着 sakuya。',
+    });
     expect(asst2Parts.filter((p) => p.type === 'tool-call')).toHaveLength(1);
   });
 });

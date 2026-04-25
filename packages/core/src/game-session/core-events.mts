@@ -127,7 +127,7 @@ export type GenerateCoreEvent =
 export type NarrativeSegmentFinalizedReason =
   | 'generate-complete'
   | 'signal-input-preflush'
-  | 'tool-only-step-reasoning';
+  | 'step-reasoning';
 
 export type NarrativeCoreEvent =
   | {

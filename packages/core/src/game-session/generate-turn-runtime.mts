@@ -821,7 +821,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   ): void {
     this.rememberMainStepBatch(step);
     traceHandle?.recordStep(toTraceStepRecord(step));
-    this.persistToolOnlyStepReasoning(step);
+    this.persistStepReasoning(step);
   }
 
   private rememberMainStepBatch(step: Pick<StepInfo, 'batchId' | 'isFollowup'>): void {
@@ -830,12 +830,20 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     }
   }
 
-  private persistToolOnlyStepReasoning(step: StepInfo): void {
+  /**
+   * DeepSeek V4 thinking replay 修复。
+   *
+   * 两个 user 消息之间，只要发生过 tool_call，DeepSeek 要求这段 span 内每条
+   * assistant message 都带 reasoning_content。narrative+tool step 的正文可能会
+   * 被 signal-input preflush 合并到后续 batch，所以不能只给 tool-only step 写
+   * reasoning 载体；每个非 follow-up、带 reasoning 的 main step 都要在自己的
+   * batch 上追加一条 content='' 的 stub narrative entry。
+   */
+  private persistStepReasoning(step: StepInfo): void {
     if (
       step.isFollowup ||
       !step.batchId ||
       !step.reasoning ||
-      step.partKinds.includes('text') ||
       !this.deps.persistence
     ) {
       return;
@@ -853,14 +861,14 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         batchId: step.batchId,
       })
       .catch((err) =>
-        console.error('[Persistence] tool-only step reasoning stub failed:', err),
+        console.error('[Persistence] step reasoning stub failed:', err),
       );
     this.publish({
       type: 'narrative-segment-finalized',
       turnId: this.turnId,
       stepId: this.currentStepId,
       batchId: toBatchId(step.batchId),
-      reason: 'tool-only-step-reasoning',
+      reason: 'step-reasoning',
       entry: {
         role: 'generate',
         content: '',
@@ -886,9 +894,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
 
     if (this.currentNarrativeBuffer) {
       const buffered = this.currentNarrativeBuffer;
-      const bufferedReasoning = this.currentReasoningBuffer;
       this.currentNarrativeBuffer = '';
-      this.currentReasoningBuffer = '';
 
       try {
         await this.deps.memory.appendTurn({
@@ -906,7 +912,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
           entry: {
             role: 'generate',
             content: buffered,
-            reasoning: bufferedReasoning || undefined,
+            reasoning: undefined,
             finishReason: 'signal-input-preflush',
           },
           batchId: this.currentStepBatchId,
@@ -923,7 +929,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         entry: {
           role: 'generate',
           content: buffered,
-          reasoning: bufferedReasoning || undefined,
+          reasoning: undefined,
           finishReason: 'signal-input-preflush',
         },
         sceneAfter: copyScene(this.currentScene),
