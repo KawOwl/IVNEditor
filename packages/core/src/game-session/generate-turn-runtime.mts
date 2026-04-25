@@ -520,6 +520,16 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     );
     traceHandle?.end({ error: String(error) });
     this.deps.emitter.setError(error instanceof Error ? error.message : String(error));
+    this.publish({
+      type: 'session-error',
+      phase: 'generate',
+      message: error instanceof Error ? error.message : String(error),
+      snapshot: {
+        turn: this.deps.turn,
+        stateVars: this.deps.stateStore.getAll(),
+        currentScene: copyScene(this.currentScene),
+      },
+    });
   }
 
   private createPrepareStepSystem(

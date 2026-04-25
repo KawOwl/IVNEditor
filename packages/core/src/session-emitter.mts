@@ -99,3 +99,28 @@ export interface SessionEmitter {
    */
   emitSceneChange(scene: SceneState, transition?: 'fade' | 'cut' | 'dissolve'): void;
 }
+
+export function createNoopSessionEmitter(): SessionEmitter {
+  return {
+    reset() {},
+    setStatus() {},
+    setError() {},
+    beginStreamingEntry() {
+      return '';
+    },
+    appendToStreamingEntry() {},
+    appendReasoningToStreamingEntry() {},
+    finalizeStreamingEntry() {},
+    appendEntry() {},
+    addToolCall() {},
+    addPendingToolCall() {},
+    updateToolResult() {},
+    updatePendingToolResult() {},
+    setInputHint() {},
+    setInputType() {},
+    stagePendingDebug() {},
+    updateDebug() {},
+    appendSentence() {},
+    emitSceneChange() {},
+  };
+}

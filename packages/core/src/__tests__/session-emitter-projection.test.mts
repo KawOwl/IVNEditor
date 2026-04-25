@@ -100,6 +100,24 @@ describe('createSessionEmitterProjection', () => {
     ]);
     expect(recording.getSnapshot().sentences).toEqual([sentence]);
   });
+
+  it('projects finished restore snapshots to finished status', () => {
+    const recording = createRecordingSessionEmitter();
+    const projection = createSessionEmitterProjection(recording.emitter);
+
+    projection.publish({
+      type: 'session-restored',
+      restoredFrom: 'finished',
+      snapshot: {
+        turn: 3,
+        stateVars: {},
+        memorySnapshot: {},
+        currentScene: { background: 'library', sprites: [] },
+      },
+    });
+
+    expect(recording.getSnapshot().statuses).toEqual(['loading', 'finished']);
+  });
 });
 
 function normalizeOutput(output: RecordedSessionOutput): RecordedSessionOutput {

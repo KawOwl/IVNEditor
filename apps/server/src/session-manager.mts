@@ -9,11 +9,17 @@
  */
 
 import { GameSession } from '@ivn/core/game-session';
-import type { GameSessionConfig, RestoreConfig, ProtocolVersion } from '@ivn/core/game-session';
+import type {
+  CoreEventSink,
+  GameSessionConfig,
+  RestoreConfig,
+  ProtocolVersion,
+} from '@ivn/core/game-session';
+import { createNoopSessionEmitter } from '@ivn/core/session-emitter';
 import type { ScriptManifest, PromptSegment, SceneState } from '@ivn/core/types';
 import type { LLMConfig } from '@ivn/core/llm-client';
 import { buildParserManifest, type ParserManifest } from '@ivn/core/narrative-parser-v2';
-import { createWebSocketEmitter } from '#internal/ws-session-emitter';
+import { createWebSocketCoreEventSink } from '#internal/ws-core-event-sink';
 import { createPlaythroughPersistence } from '#internal/services/playthrough-persistence';
 import { createNarrativeHistoryReader } from '#internal/services/narrative-reader';
 import { createBoundTracing } from '#internal/tracing';
@@ -44,6 +50,7 @@ export class GameSessionWrapper {
   /** v2.7：从 playthrough.llm_config_id 查出来的完整配置，每个 wrapper 固定一份 */
   private llmConfig: LLMConfig;
   private ws: WS | null = null;
+  private coreEventSink: CoreEventSink | null = null;
   /** 断线后的 TTL 定时器 */
   private ttlTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -75,11 +82,10 @@ export class GameSessionWrapper {
     }
 
     this.ws = ws;
-    // 编剧试玩（playtest）启用 debug 数据推送，玩家正式游玩不推
-    const emitter = createWebSocketEmitter(ws, {
+    this.coreEventSink = createWebSocketCoreEventSink(ws, {
       enableDebug: this.kind === 'playtest',
     });
-    this.gameSession = new GameSession(emitter);
+    this.gameSession = new GameSession(createNoopSessionEmitter());
   }
 
   start(): void {
@@ -123,6 +129,7 @@ export class GameSessionWrapper {
       disabledSections: base.disabledSections,
       persistence: base.persistence,
       tracing: base.tracing,
+      coreEventSink: base.coreEventSink,
       // mem0 key 从 base 带过来（base 已经从 env 读好了）
       mem0ApiKey: base.mem0ApiKey,
       // 🐛 FIX 2026-04-24（session 85a8c5c0 / 1e5f07db reload 100% 丢进度复盘）：
@@ -229,6 +236,7 @@ export class GameSessionWrapper {
         scriptVersionId: this.scriptVersionId,
         kind: this.kind,
       }),
+      coreEventSink: this.coreEventSink ?? undefined,
       // Memory Refactor v2：memory adapter 通过 reader 从 canonical
       // narrative_entries 读历史，不再持有 entries 副本。
       narrativeReader: createNarrativeHistoryReader(this.playthroughId),

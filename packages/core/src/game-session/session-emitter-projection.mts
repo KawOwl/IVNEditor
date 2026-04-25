@@ -85,6 +85,9 @@ function projectSessionRestored(
 ): void {
   emitter.setStatus('loading');
   projectSessionSnapshot(event.snapshot, emitter);
+  if (event.restoredFrom === 'finished') {
+    emitter.setStatus('finished');
+  }
 }
 
 function projectSessionFinished(
