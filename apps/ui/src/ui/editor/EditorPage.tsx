@@ -192,11 +192,17 @@ export function EditorPage() {
   // --- Load a script (version-aware) ---
   //
   // 流程：
-  //   1. GET /api/scripts/:id/versions → 拿到版本列表
-  //   2. 选"最新 draft 优先，否则最新 published"
+  //   1. GET /api/scripts/:id/versions → 拿到版本列表（按 versionNumber DESC）
+  //   2. 选 versionNumber 最大的版本 = 最新版本
   //   3. GET /api/script-versions/:versionId → 拿 manifest
   //   4. GET /api/scripts/:id/full → 拿 label/description
   //   5. flush 到 editor
+  //
+  // 注：旧逻辑是"draft 优先，published 兜底"。但 publish() 只 archive 之前的
+  // published，不动其他 draft；多次保存 + 一次发布后 list 里会同时存在比
+  // published 更老的 stale draft，find(draft) 会挑到陈旧内容。直接选
+  // versions[0] 即可——archived 永远不会是最新（archive 只发生在更新的
+  // published 顶替它的时候），所以最新版必是 draft 或 published。
   const handleLoadScript = useCallback(async (scriptId: string) => {
     try {
       const authHeader = useAuthStore.getState().getAuthHeader();
@@ -206,10 +212,7 @@ export function EditorPage() {
         return;
       }
       const { versions } = versionsResult.data;
-      const pick =
-        versions.find((v) => v.status === 'draft') ??
-        versions.find((v) => v.status === 'published') ??
-        versions[0];
+      const pick = versions[0];
       if (!pick) {
         alert('该剧本还没有任何版本');
         return;
