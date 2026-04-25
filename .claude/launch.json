@@ -3,15 +3,21 @@
   "configurations": [
     {
       "name": "dev",
-      "runtimeExecutable": "/Users/kawowl/.local/share/fnm/node-versions/v22.15.0/installation/bin/node",
-      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--port", "5174"],
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@ivn/ui", "dev", "--port", "5174"],
       "port": 5174
     },
     {
       "name": "server",
       "runtimeExecutable": "bun",
-      "runtimeArgs": ["run", "--cwd", "server", "--watch", "src/index.ts"],
+      "runtimeArgs": ["run", "--cwd", "apps/server", "--watch", "src/index.mts"],
       "port": 3001
+    },
+    {
+      "name": "ivn-test",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": ["-c", "cd apps/server && PORT=3002 exec bun --env-file=.env.test run src/index.mts"],
+      "port": 3002
     }
   ]
 }
