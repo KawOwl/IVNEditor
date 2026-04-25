@@ -22,6 +22,7 @@ import { llmConfigService, type LlmConfigRow } from '#internal/services/llm-conf
 import { resolvePlayerSession } from '#internal/auth-identity';
 import { coreEventLogService } from '#internal/services/core-event-log';
 import { resolveRestorableSessionState } from '#internal/session-restore-input-state';
+import { projectReadbackPage } from '#internal/session-readback';
 import type { LLMConfig } from '@ivn/core/llm-client';
 import { deriveCoreEventLogRestoreState } from '@ivn/core/game-session';
 import type { ScriptManifest } from '@ivn/core/types';
@@ -59,7 +60,6 @@ const RESTORED_CLIENT_FIELDS = [
   'inputHint',
   'inputType',
   'choices',
-  'entries',
   'totalEntries',
   'hasMore',
   'currentScene',
@@ -245,11 +245,21 @@ function restoreExistingPlaythrough(
   wrapper: ReturnType<typeof sessionManager.getOrCreate>,
   playthroughId: string,
   detail: PlaythroughDetail,
+  manifest: ScriptManifest,
 ): void {
+  const readback = projectReadbackPage({
+    manifest,
+    pageEntries: detail.entries,
+    offset: 0,
+    limit: detail.entries.length,
+    totalEntries: detail.totalEntries,
+  });
+
   sendJson(ws, {
     type: 'restored',
     playthroughId,
     ...pickFields(detail, RESTORED_CLIENT_FIELDS),
+    ...readback,
   });
 
   wrapper.restore({
@@ -265,7 +275,7 @@ async function connectSessionWebSocket(ws: SessionSocket, context: SessionOpenCo
   sendConnected(ws, context.playthroughId);
 
   if (!isNewPlaythrough(context.detail)) {
-    restoreExistingPlaythrough(ws, wrapper, context.playthroughId, context.detail);
+    restoreExistingPlaythrough(ws, wrapper, context.playthroughId, context.detail, context.manifest);
   }
 }
 

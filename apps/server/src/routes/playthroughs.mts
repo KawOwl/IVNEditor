@@ -21,6 +21,7 @@ import { scriptVersionService } from '#internal/services/script-version-service'
 import { scriptService } from '#internal/services/script-service';
 import { llmConfigService } from '#internal/services/llm-config-service';
 import { requireAnyIdentity, isResponse } from '#internal/auth-identity';
+import { projectReadbackPage } from '#internal/session-readback';
 
 export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
 
@@ -249,37 +250,44 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
   // 历史。GET /:id 也能做到分页，但它每次都 join + SELECT playthroughs 全列
   // （memorySnapshot / stateVars JSON 很大），fetchMore 每次都传一遍太浪费。
   //
-  // 这个端点只返回 { entries, offset, limit, totalEntries, hasMore }。
+  // 这个端点只返回 { sentences, offset, limit, totalEntries, hasMore, nextOffset }。
   // 前端 ws-client-emitter 收到 'restored' 后如果 hasMore=true，就循环调这个
   // 端点（用 HTTP 而不是再占 WS，保持 WS 专注推流）直到拉完。
   //
-  // ownership 校验：通过 getOwnerId 查 playthrough 的 userId，和当前身份比。
+  // ownership 校验：先按当前身份读取 playthrough 详情；不存在或不归属都返回 404。
   .get('/:id/entries', async ({ params, query, request }) => {
     const id = await requireAnyIdentity(request);
     if (isResponse(id)) return id;
 
-    // ownership 预检：playthroughService.loadEntries 本身不查 userId，所以在 route
-    // 层用 getOwnerId 做一次防护。404 + 403 合并为 404 避免信息泄漏。
-    const ownerId = await playthroughService.getOwnerId(params.id);
-    if (ownerId === null || ownerId !== id.userId) {
+    const detail = await playthroughService.getById(params.id, id.userId, 0, 0);
+    if (!detail) {
       return new Response(JSON.stringify({ error: 'Playthrough not found' }), { status: 404 });
+    }
+
+    const version = await scriptVersionService.getById(detail.scriptVersionId);
+    if (!version) {
+      return new Response(JSON.stringify({ error: 'Script version not found' }), { status: 404 });
     }
 
     const limit = Math.min(Number((query as any).limit) || 100, 500);
     const offset = Number((query as any).offset) || 0;
 
-    const [entries, totalEntries] = await Promise.all([
+    const [prefixEntries, pageEntries, totalEntries] = await Promise.all([
+      offset > 0
+        ? playthroughService.loadEntries(params.id, offset, 0)
+        : Promise.resolve([]),
       playthroughService.loadEntries(params.id, limit, offset),
       playthroughService.countEntries(params.id),
     ]);
 
-    return {
-      entries,
+    return projectReadbackPage({
+      manifest: version.manifest,
+      prefixEntries,
+      pageEntries,
       offset,
       limit,
       totalEntries,
-      hasMore: offset + entries.length < totalEntries,
-    };
+    });
   })
 
   // PATCH /:id — 更新（改标题/归档），ownership 强制

@@ -1,4 +1,3 @@
-import { NarrativeParser } from '@ivn/core/narrative-parser';
 import type { SceneState, Sentence } from '@ivn/core/types';
 
 import type { GameState } from '#internal/stores/game-store';
@@ -18,18 +17,6 @@ type SessionMessageHandler = (msg: WSMessage, context: SessionMessageContext) =>
 interface SessionMessageContext {
   store: GetGameStore;
   baseUrl: string;
-}
-
-interface EntryRow {
-  role: string;
-  kind?: string;
-  content: string;
-  payload?: Record<string, unknown> | null;
-}
-
-interface ReplayState {
-  globalIndex: number;
-  turnNumber: number;
 }
 
 const DEFAULT_SCENE: SceneState = { background: null, sprites: [] };
@@ -142,15 +129,18 @@ function restoreSessionSnapshot(
 ): void {
   store().reset();
 
-  const initialEntries = readEntryRows(msg.entries);
-  const sceneRef = readSceneState(msg.currentScene) ?? DEFAULT_SCENE;
-  const replayState: ReplayState = { globalIndex: 0, turnNumber: 0 };
-  const replay = (entries: EntryRow[]) => {
-    replayEntries(entries, store, sceneRef, replayState);
+  const initialSentences = readSentences(msg.sentences);
+  const restoredScene = readSceneState(msg.currentScene);
+  const replay = (sentences: Sentence[]) => {
+    appendSentences(sentences, store);
   };
 
-  replay(initialEntries);
-  store().setCurrentScene(sceneRef);
+  replay(initialSentences);
+  if (restoredScene) {
+    store().setCurrentScene(restoredScene);
+  } else if (initialSentences.length === 0) {
+    store().setCurrentScene(DEFAULT_SCENE);
+  }
   applyRestoredInputState(msg, store);
 
   const restoredStatus = readStatus(msg.status);
@@ -170,7 +160,7 @@ function restoreSessionSnapshot(
   void fetchRemainingEntries({
     baseUrl,
     playthroughId,
-    offset: initialEntries.length,
+    offset: readNumber(msg.nextOffset) ?? 0,
     replay,
     finalizeCursor,
   });
@@ -217,104 +207,17 @@ function applySceneChange(msg: WSMessage, store: GetGameStore): void {
   );
 }
 
-function replayEntries(
-  entries: EntryRow[],
-  store: GetGameStore,
-  sceneRef: SceneState,
-  replayState: ReplayState,
-): void {
-  for (const entry of entries) {
-    if (entry.kind === 'signal_input') {
-      appendSignalInput(entry, store, sceneRef, replayState);
-      continue;
-    }
-
-    if (entry.role === 'receive') {
-      appendPlayerInput(entry, store, sceneRef, replayState);
-      continue;
-    }
-
-    if (entry.role === 'generate') {
-      replayState.turnNumber++;
-      appendGeneratedNarrative(entry, store, sceneRef, replayState);
-    }
+function appendSentences(sentences: Sentence[], store: GetGameStore): void {
+  for (const sentence of sentences) {
+    store().appendSentence(sentence);
   }
-}
-
-function appendSignalInput(
-  entry: EntryRow,
-  store: GetGameStore,
-  sceneRef: SceneState,
-  replayState: ReplayState,
-): void {
-  store().appendSentence({
-    kind: 'signal_input',
-    hint: entry.content,
-    choices: readStringList(entry.payload?.choices),
-    sceneRef,
-    turnNumber: replayState.turnNumber,
-    index: replayState.globalIndex++,
-  });
-}
-
-function appendPlayerInput(
-  entry: EntryRow,
-  store: GetGameStore,
-  sceneRef: SceneState,
-  replayState: ReplayState,
-): void {
-  const selectedIndex = typeof entry.payload?.selectedIndex === 'number'
-    ? entry.payload.selectedIndex
-    : undefined;
-
-  store().appendSentence({
-    kind: 'player_input',
-    text: entry.content,
-    ...(selectedIndex !== undefined ? { selectedIndex } : {}),
-    sceneRef,
-    turnNumber: replayState.turnNumber,
-    index: replayState.globalIndex++,
-  });
-}
-
-function appendGeneratedNarrative(
-  entry: EntryRow,
-  store: GetGameStore,
-  sceneRef: SceneState,
-  replayState: ReplayState,
-): void {
-  const parser = new NarrativeParser({
-    onNarrationChunk: (text) => {
-      store().appendSentence({
-        kind: 'narration',
-        text,
-        sceneRef,
-        turnNumber: replayState.turnNumber,
-        index: replayState.globalIndex++,
-      });
-    },
-    onDialogueEnd: (pf, fullText, truncated) => {
-      store().appendSentence({
-        kind: 'dialogue',
-        text: fullText,
-        pf,
-        sceneRef,
-        turnNumber: replayState.turnNumber,
-        index: replayState.globalIndex++,
-        truncated,
-      });
-    },
-  });
-
-  parser.push(entry.content);
-  parser.finalize();
 }
 
 interface FetchRemainingEntriesOptions {
   baseUrl: string;
   playthroughId: string;
   offset: number;
-  replay: (entries: EntryRow[]) => void;
+  replay: (sentences: Sentence[]) => void;
   finalizeCursor: () => void;
 }
 
@@ -337,7 +240,7 @@ async function fetchRemainingEntries(options: FetchRemainingEntriesOptions): Pro
       break;
     }
 
-    let pageData: { entries: EntryRow[]; hasMore: boolean };
+    let pageData: { sentences: Sentence[]; hasMore: boolean; nextOffset: number };
     try {
       pageData = readEntryPage(await res.json());
     } catch (err) {
@@ -345,10 +248,10 @@ async function fetchRemainingEntries(options: FetchRemainingEntriesOptions): Pro
       break;
     }
 
-    if (pageData.entries.length === 0) break;
+    if (pageData.nextOffset <= offset) break;
 
-    options.replay(pageData.entries);
-    offset += pageData.entries.length;
+    options.replay(pageData.sentences);
+    offset = pageData.nextOffset;
 
     if (!pageData.hasMore) break;
   }
@@ -356,30 +259,17 @@ async function fetchRemainingEntries(options: FetchRemainingEntriesOptions): Pro
   options.finalizeCursor();
 }
 
-function readEntryPage(value: unknown): { entries: EntryRow[]; hasMore: boolean } {
-  if (!isRecord(value)) return { entries: [], hasMore: false };
+function readEntryPage(value: unknown): { sentences: Sentence[]; hasMore: boolean; nextOffset: number } {
+  if (!isRecord(value)) return { sentences: [], hasMore: false, nextOffset: 0 };
   return {
-    entries: readEntryRows(value.entries),
+    sentences: readSentences(value.sentences),
     hasMore: Boolean(value.hasMore),
+    nextOffset: readNumber(value.nextOffset) ?? 0,
   };
 }
 
-function readEntryRows(value: unknown): EntryRow[] {
-  if (!Array.isArray(value)) return [];
-
-  return value.flatMap((entry) => {
-    if (!isRecord(entry)) return [];
-    const role = readString(entry.role);
-    const content = readString(entry.content);
-    if (!role || content === null) return [];
-
-    return [{
-      role,
-      content,
-      kind: readString(entry.kind) ?? undefined,
-      payload: readRecord(entry.payload),
-    }];
-  });
+function readSentences(value: unknown): Sentence[] {
+  return Array.isArray(value) ? value as Sentence[] : [];
 }
 
 function readSceneState(value: unknown): SceneState | null {
@@ -436,6 +326,10 @@ function readNullableString(value: unknown): string | null {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {

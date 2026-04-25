@@ -37,6 +37,8 @@ export interface LegacyV1ReadbackResult {
   readonly protocolVersion: typeof LEGACY_PROTOCOL_VERSION;
   readonly sentences: readonly Sentence[];
   readonly finalScene: SceneState;
+  readonly nextTurn: number;
+  readonly nextIndex: number;
   readonly warnings: readonly LegacyV1ReadbackWarning[];
 }
 
@@ -76,6 +78,8 @@ class LegacyV1ReadbackRuntime {
       protocolVersion: LEGACY_PROTOCOL_VERSION,
       sentences: this.sentences.map(copySentence),
       finalScene: copyScene(this.currentScene),
+      nextTurn: this.currentTurn,
+      nextIndex: this.nextIndex,
       warnings: this.warnings.map((warning) => ({ ...warning })),
     };
   }
