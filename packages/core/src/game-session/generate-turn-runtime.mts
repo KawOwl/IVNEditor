@@ -18,7 +18,7 @@ import type {
 import type { StateStore } from '#internal/state-store';
 import type { Memory } from '#internal/memory/types';
 import { estimateTokens } from '#internal/tokens';
-import { assembleContext } from '#internal/context-assembler';
+import { assembleContext, evaluateCondition } from '#internal/context-assembler';
 import { computeFocus } from '#internal/focus';
 import { createTools, getEnabledTools } from '#internal/tool-executor';
 import type { SignalInputOptions } from '#internal/tool-executor';
@@ -504,22 +504,11 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   }
 
   private computeActiveSegmentIds(): string[] {
+    const vars = this.deps.stateStore.getAll();
     return this.deps.segments
-      .filter((segment) => {
-        if (!segment.injectionRule) return true;
-        try {
-          const vars = this.deps.stateStore.getAll();
-          const keys = Object.keys(vars);
-          const values = keys.map((key) => vars[key]);
-          const fn = new Function(
-            ...keys,
-            `try { return !!(${segment.injectionRule.condition}); } catch { return false; }`,
-          );
-          return fn(...values) as boolean;
-        } catch {
-          return false;
-        }
-      })
+      .filter((segment) =>
+        !segment.injectionRule || evaluateCondition(segment.injectionRule.condition, vars),
+      )
       .map((segment) => segment.id);
   }
 
