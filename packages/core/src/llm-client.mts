@@ -659,6 +659,89 @@ export class LLMClient {
       );
     }
 
+    // ─── empty-narrative 补刀（2026-04-26）────────────────────────────────
+    //
+    // 背景：LLM 偶尔整轮只输出 `<scratch>` 元叙述（典型 reasoning 模型在
+    // tool 调用复盘后觉得"想清楚了就行"，忘了真正写叙事），玩家端 parser-v2
+    // 解析出 0 个 Sentence → UI 一片空白，是严重的可见性 bug。prompt 已经
+    // 加了"每轮必须 ≥ 1 个 dialogue/narration"硬规则，但 prompt 不是 100%
+    // 可靠——这里做协议层兜底。
+    //
+    // 检测：fullText 里既没有 `<dialogue` 也没有 `<narration` 起始标签 ——
+    // v2 协议下"玩家可见叙事"的唯一来源，没有就一定空白。续写已经把
+    // truncated 情况处理掉了，这里看到的 fullText 是"LLM 自认为已完成"的
+    // 完整输出，所以直接看标签存在性就行。
+    //
+    // 策略（参照续写而非 signal 补刀）：
+    //   - **转发 text-delta**：补出来的叙事要走 onTextChunk 给 parser-v2 渲染
+    //   - **不强制 toolChoice**：让 LLM 自由叙事；turnEndStop 仍允许它自然
+    //     调用 signal_input_needed 收尾
+    //   - **单次重试**：和 signal 补刀一致，再失败就交给后续 signal 补刀和
+    //     game-session 的空叙事兜底（至少玩家能看到选项往前推进）
+    //
+    // 顺序：放在续写之后、signal 补刀之前。这样：
+    //   1. 续写先把 length 截断治掉，fullText 是 LLM 真正想说完的全部内容
+    //   2. empty-narrative 补刀让 LLM 把叙事补齐，且可能顺手 signal_input_needed
+    //   3. 如果上一步 LLM 仍没调收尾工具，下面 signal 补刀强制兜底
+    //
+    // 失败处理：异常只 warn/log，不冒到主 generate 影响整轮持久化。
+    const hasNarrativeTag = /<(dialogue|narration)\b/.test(fullText);
+    if (hasNarrativeTag) {
+      // ok
+    } else if (!(abortSignal?.aborted ?? false)) {
+      isFollowupRef.current = true;
+      try {
+        // 如果 main 已经调过 signal_input_needed / end_scenario（典型：
+        // LLM 输出 <scratch> 后直接 tool_call 收尾），就明确告诉它别再调
+        // 一次——recordPendingSignal 会被覆盖，但避免"重复调用收尾"的
+        // 困惑。如果还没调，照常引导自然收尾。
+        const hadTerminatingTool = toolCallLog.some(
+          (c) => c.name === 'signal_input_needed' || c.name === 'end_scenario',
+        );
+        const signalNote = hadTerminatingTool
+          ? '\n\n（你刚才已经调用过 signal_input_needed / end_scenario 收尾本轮，**不要再次调用**——只把叙事补完即可。）'
+          : '\n\n（叙事补完后，正常调用 signal_input_needed 提供 2-4 个推进选项收尾。）';
+        const emptyNarrativeNudge: ModelMessage = {
+          role: 'user',
+          content:
+            '[引擎提示] 你刚才整轮只输出了 <scratch>，没有任何 <dialogue> / <narration>。' +
+            '<scratch> 不会渲染给玩家，所以玩家端屏幕一片空白。' +
+            '现在立即补一段叙事：从你刚才在 <scratch> 里思考的那个方向出发，' +
+            '至少写一个 <dialogue> 或 <narration> 推进剧情。' +
+            '不要重复 <scratch> 的内容，也不要再写新的 <scratch>。' +
+            signalNote,
+        };
+        const emptyNarrativeStream = streamText({
+          ...baseStreamArgs,
+          messages: [
+            ...messages,
+            // 把当前 fullText（只含 scratch）作为 assistant message 塞回，
+            // 让 LLM 看到自己刚才的"思考"上下文 —— 续写时同款做法。
+            { role: 'assistant', content: fullText },
+            emptyNarrativeNudge,
+          ],
+          stopWhen: turnEndStop,
+          maxOutputTokens,
+        });
+        await consumeStream(emptyNarrativeStream, true);
+        finishReason = await (await emptyNarrativeStream).finishReason;
+        await addUsage(emptyNarrativeStream);
+
+        const stillEmpty = !/<(dialogue|narration)\b/.test(fullText);
+        if (stillEmpty) {
+          console.warn(
+            `[llm-client] empty-narrative follow-up did not produce any ` +
+              `<dialogue> / <narration>; player will see blank screen unless ` +
+              `signal_input follow-up provides choices.`,
+          );
+        }
+      } catch (err) {
+        console.error('[llm-client] empty-narrative follow-up threw:', err);
+      } finally {
+        isFollowupRef.current = false;
+      }
+    }
+
     // ─── post-step 补刀（方案 A，2026-04-24） ───────────────────────────────
     //
     // 背景：主 generate 结束时如果 LLM 没有调用 signal_input_needed /

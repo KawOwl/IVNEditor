@@ -20,6 +20,16 @@
 
 ## 最近完成
 
+**empty-narrative-turn 兜底 + prompt 硬规则（2026-04-26，本会话）**
+- 触发：langfuse trace `8fe54eea-a39d-44a4-80d8-f34ef98cc440` —— LLM 整轮只输出 `<scratch>`，玩家屏幕一片空白。`<scratch>` 是元叙述容器（V.x 设计），不渲染玩家可见，所以 sentences=0 → UI 空白。
+- 双层修复：
+  1. **Prompt 层**（[engine-rules.mts](packages/core/src/engine-rules.mts)）输出纪律加硬规则"每轮回复必须至少包含一个 `<dialogue>` 或 `<narration>`"；反面示范加 ❌/✅ 一对（"整轮只 scratch = 玩家空白"）。
+  2. **协议兜底层**（[llm-client.mts](packages/core/src/llm-client.mts)）在续写 follow-up 之后、signal_input follow-up 之前插入第三个 follow-up：检测 `fullText` 不含 `<(dialogue|narration)\b` 时重发一次 streamText，nudge 引导 LLM 补一段叙事。和续写同款（forward text-delta + 不强制 toolChoice + turnEndStop 允许自然 signal_input_needed 收尾），单次重试。根据 main 是否已调收尾工具调整 nudge 措辞避免重复调用；仍空时 console.warn。
+- 顺序：`main → 续写 loop（length，最多 3）→ empty-narrative 补刀（无 narrative tag，1 次）→ signal 补刀（无收尾 tool，1 次）→ return`
+- 守门：[engine-rules.test.mts](packages/core/src/__tests__/engine-rules.test.mts) 加 `v2 必须禁止整轮只输出 <scratch>` 三断言（硬规则文本 / 反面示范关键字 / 后果说明）。
+- 验证：`bun test packages/core` 全绿；`tsc --noEmit` exit 0。
+- 决策：选择"续写形态"而不是"signal 补刀形态"——前者转发 text-delta 让 parser-v2 渲染叙事，后者会吞掉 text 只为强制 tool_call。empty-narrative 的目的是把叙事补出来，必须转发；不强制 toolChoice 让 LLM 自由选择写完后是否调 signal_input_needed（turnEndStop 会接住）。
+
 **V.8 声明式视觉 IR：dialogue 容器边界 + 代词 ad-hoc speaker degrade（2026-04-26，本会话）**
 - 起因：用户审 trace（ivn-engine session c4b00c7c）怀疑 LLM 把第二人称代词"你"当成 NPC 写成 `__npc__你`，UI 因此渲染出名叫"你"的 NPC 气泡
 - 根因诊断：prompt 里 `__npc__` 后缀模板 few-shot 全是中文显示名（`__npc__保安`/`__npc__同事`/`__npc__店主`），玩家自身 reserved id `player` 是英文裸字符串，模式不对称——LLM 顺着中文显示名的模式套出 `__npc__你` 是合理误用
@@ -272,6 +282,7 @@
 | 2026-04-25 | 把 op-kit 这条线纳入 feature_list（OP.0-OP.7 + roadmap）；之前 op-kit 4 batch + first op 都没编号 | op-kit 是 platform refactor 不是 v2.0.md 列出的 product feature，CLAUDE.md 工作流默认通过 feature_list 接续上下文，没编号下次 context reset 看 feature_list 看不出 op-kit 在做什么 | feature_list.json +7 entries（OP.0-OP.4 done / OP.5-OP.7 pending）；docs/refactor/op-kit-roadmap.md 全貌；docs/refactor/op-a-extract-referenced-ids-plan.md self-contained 给 OP.5 开工 |
 | 2026-04-26 | `__npc__` 后缀禁代词 + parser 对代词后缀 emit `dialogue-pronoun-as-speaker`（**替代**而非追加 `dialogue-adhoc-speaker` 中性事件） | trace 复盘显示 LLM 把第二人称代词"你"套 NPC 显示名模式产出 `__npc__你`，UI 渲染出名叫"你"的 NPC 气泡。NPC few-shot 全是中文显示名 vs 玩家 reserved id `player` 是英文裸字符串，模式不对称促成误用；选"替代"是为了避免每个 dialogue 的 speaker 类信号在 trace 上双计数 | tag-schema 加 `PRONOUN_DISPLAY_NAMES` + `isPronounSpeaker`；reducer ad-hoc 分支分流；DegradeCode 加新值；v2 prompt `__npc__` 章节列禁词 + 反例 `__npc__你` vs `to="player"`。后续可能把 `player` 包成 `__player__` reserved id（双下划线对称）让 prompt 模式一致 |
 | 2026-04-26 | `<dialogue>` 正文边界教学只走 prompt，不做 parser 硬校验 | 引号检测启发式 false positive 高（中文 ""/英文 \"\" 混用 + 内心独白引号 + 角色嵌引语都常见），启发式信号噪比差；prompt 教学性价比明显更高 | engine-rules `<dialogue>` 容器解释加"正文只装直接引语，旁白动作走 `<narration>`"硬规则；反面示范段加用户 trace 截取的"俄罗斯？...大拇指..."三单元拆分案例 + LLM 自检启发（"用角色声音念这段会不会别扭"）。如果 trace 信号回来还是大量漏判，再考虑加软启发（例如 `<dialogue>` 正文里检测"他/她+动词"模式） |
+| 2026-04-26 | empty-narrative 整轮只输出 `<scratch>` 走双层兜底（prompt 硬规则 + llm-client follow-up），不在 game-session 层做 | prompt 不是 100% 可靠（reasoning 模型偶发"复盘完就停"），但又不想把"补一句叙事"硬塞到 game-session 让它知道 prompt 协议细节。llm-client 已经有续写 + signal 补刀两个 follow-up 模式，加第三个最对称、调用方无感 | llm-client.generate() 三 follow-up 串联 `续写 → empty-narrative → signal`；每个独立失败 warn/log 不冒异常；engine-rules.test.mts 加 prompt 守门测试避免硬规则被无意删除 |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |

@@ -166,6 +166,20 @@ describe('buildEngineRules', () => {
     expect(text).toContain('玩家看不到');
   });
 
+  it('v2 必须禁止整轮只输出 <scratch>（防止玩家屏幕空白）', () => {
+    const text = buildEngineRules({
+      protocolVersion: 'v2-declarative-visual',
+      characters: [],
+      backgrounds: [],
+    });
+    // 输出纪律里有"每轮必须至少一个 dialogue/narration"硬规则
+    expect(text).toMatch(/每轮.*至少.*一个.*<dialogue>.*<narration>/);
+    // 反面示范里有"整轮只有 <scratch>"的具体 ❌ 例子
+    expect(text).toMatch(/整轮只有.*<scratch>|整轮只输出.*<scratch>/);
+    // 解释了后果（玩家屏幕空白）
+    expect(text).toContain('屏幕一片空白');
+  });
+
   it('v2 必须包含继承规则四条（省略背景 / sprite 替换 / stage 清空 / 都无保持不变）', () => {
     const text = buildEngineRules({
       protocolVersion: 'v2-declarative-visual',
