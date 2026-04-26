@@ -195,6 +195,23 @@ export type InputCoreEvent =
       readonly snapshot: SessionSnapshot;
     };
 
+/**
+ * ANN.1：每次 Memory.retrieve 的结果通过 retrieval-logger 包成此事件。
+ * 客户端订阅后渲染 MemoryPanel。
+ *
+ * core 层只定义 shape，实际 emit 由 server 的 retrieval-logger 实现做。
+ */
+export interface MemoryRetrievalEntry {
+  readonly id: string;
+  readonly turn: number;
+  readonly role: 'generate' | 'receive' | 'system';
+  readonly content: string;
+  readonly tokenCount: number;
+  readonly timestamp: number;
+  readonly tags?: readonly string[];
+  readonly pinned?: boolean;
+}
+
 export type MemoryCoreEvent =
   | {
       readonly type: 'memory-compaction-started';
@@ -204,6 +221,15 @@ export type MemoryCoreEvent =
       readonly type: 'memory-compaction-completed';
       readonly turnId: TurnId;
       readonly snapshot: SessionSnapshot;
+    }
+  | {
+      readonly type: 'memory-retrieval';
+      readonly retrievalId: string;
+      readonly turn: number;
+      readonly source: 'context-assembly' | 'tool-call';
+      readonly query: string;
+      readonly entries: readonly MemoryRetrievalEntry[];
+      readonly summary: string;
     };
 
 export type DiagnosticCoreEvent = {

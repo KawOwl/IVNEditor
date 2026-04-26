@@ -180,6 +180,21 @@ const websocketCoreEventHandlers: WebSocketCoreEventHandlers = {
 
   'memory-compaction-completed': ignoreEvent,
 
+  /**
+   * ANN.1：把 retrieval 事件原样转发给客户端。client 的 ws-message-handlers
+   * 收到后塞进 game-store.memoryRetrievals，MemoryPanel 渲染。
+   */
+  'memory-retrieval': (event, context) => {
+    context.emit('memory-retrieval', {
+      retrievalId: event.retrievalId,
+      turn: event.turn,
+      source: event.source,
+      query: event.query,
+      entries: event.entries,
+      summary: event.summary,
+    });
+  },
+
   'diagnostics-updated': (event, context) => {
     emitDebug(context, { ...event.diagnostics });
   },

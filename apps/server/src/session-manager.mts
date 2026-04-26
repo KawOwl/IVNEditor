@@ -29,6 +29,7 @@ import { createCoreEventHistoryReader } from '#internal/services/core-event-hist
 import { coreEventLogService } from '#internal/services/core-event-log';
 import { createBoundTracing } from '#internal/tracing';
 import { getServerEnv } from '#internal/env';
+import { createMemoryDeletionFilter, createMemoryRetrievalLogger } from '#internal/services/memory-session-hooks';
 
 // ============================================================================
 // Config
@@ -168,6 +169,10 @@ export class GameSessionWrapper {
       // V.3：prompt 白名单。restore 路径同样透传。
       characters: base.characters,
       backgrounds: base.backgrounds,
+      // ANN.1：reconnect 也要 filter + logger，否则重连后 memory 不再过滤被标
+      // entries / 不落 retrieval 数据。
+      memoryDeletionFilter: base.memoryDeletionFilter,
+      memoryRetrievalLogger: base.memoryRetrievalLogger,
       ...snapshot,
       // M3: currentScene 从 snapshot 取，defaultScene 从 manifest 取（restore 时用作 fallback）
       defaultScene: base.defaultScene,
@@ -258,6 +263,14 @@ export class GameSessionWrapper {
       }),
       coreEventSink: this.coreEventSink ?? undefined,
       coreEventReader: createCoreEventHistoryReader(this.playthroughId),
+      // ANN.1：Memory 删除标注的 filter + retrieve 持久化 logger。
+      // adapter 在 retrieve 时按 filter 过滤已被标 entry；logger 把每次 retrieve
+      // 落 turn_memory_retrievals 表 + 通过 coreEventSink emit 给客户端。
+      memoryDeletionFilter: createMemoryDeletionFilter(this.playthroughId),
+      memoryRetrievalLogger: createMemoryRetrievalLogger({
+        playthroughId: this.playthroughId,
+        coreEventSink: this.coreEventSink ?? undefined,
+      }),
     };
   }
 }

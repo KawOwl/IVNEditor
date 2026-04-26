@@ -65,6 +65,9 @@ const projectionHandlers: ProjectionHandlers = {
   'player-input-recorded': projectPlayerInputRecorded,
   'memory-compaction-started': projectMemoryCompactionStarted,
   'memory-compaction-completed': ignoreEvent,
+  // ANN.1：legacy emitter 不消费 retrieval 事件 —— 直接由 ws-core-event-sink
+  // 转成 WS message 给客户端 game-store。
+  'memory-retrieval': ignoreEvent,
   'diagnostics-updated': projectDiagnosticsUpdated,
 };
 

@@ -9,6 +9,8 @@ import type {
 } from '#internal/types';
 import type { LLMConfig } from '#internal/llm-client';
 import type { CoreEventHistoryReader } from '#internal/game-session/core-event-history';
+import type { MemoryDeletionFilter } from '#internal/memory/types';
+import type { RetrievalLogger } from '#internal/memory/retrieval-logger';
 import type { ParserManifest } from '#internal/narrative-parser-v2';
 import type { CoreEventSink } from '#internal/game-session/core-events';
 
@@ -117,6 +119,9 @@ export interface RestoreConfig {
   parserManifest?: ParserManifest;
   characters?: ReadonlyArray<CharacterAsset>;
   backgrounds?: ReadonlyArray<BackgroundAsset>;
+  /** ANN.1：详见 GameSessionConfig 同名字段 */
+  memoryDeletionFilter?: MemoryDeletionFilter;
+  memoryRetrievalLogger?: RetrievalLogger;
 }
 
 export interface GameSessionConfig {
@@ -144,4 +149,14 @@ export interface GameSessionConfig {
   parserManifest?: ParserManifest;
   characters?: ReadonlyArray<CharacterAsset>;
   backgrounds?: ReadonlyArray<BackgroundAsset>;
+  /**
+   * ANN.1：Memory adapter 的删除过滤器。adapter retrieve 时会过滤掉
+   * 玩家标记"忘掉"的 entry。server 注入封装了 memory-annotation-service。
+   */
+  memoryDeletionFilter?: MemoryDeletionFilter;
+  /**
+   * ANN.1：每次 Memory.retrieve 后调用的日志 callback。server 注入实现：
+   * 把 retrieval 落 turn_memory_retrievals 表 + emit core event 给客户端。
+   */
+  memoryRetrievalLogger?: RetrievalLogger;
 }

@@ -30,6 +30,7 @@ import type {
 import { StateStore } from '#internal/state-store';
 import type { Memory } from '#internal/memory/types';
 import { createMemory } from '#internal/memory/factory';
+import { wrapMemoryWithRetrievalLogger } from '#internal/memory/retrieval-logger';
 import { estimateTokens } from '#internal/tokens';
 import { computeFocus } from '#internal/focus';
 import { LLMClient } from '#internal/llm-client';
@@ -418,7 +419,18 @@ export class GameSession {
       mem0ApiKey: config.mem0ApiKey,
       memoraxConfig: config.memoraxConfig,
       coreEventReader: config.coreEventReader,
+      // ANN.1：删除过滤器透传给 adapter，retrieve 时过滤被标 entries
+      deletionFilter: config.memoryDeletionFilter,
     });
+    // ANN.1：包一层 retrieval logger，每次 retrieve 后 fire-and-forget 落库 + 广播。
+    // batchId 在 context-assembly 阶段（retrieve 唯一 callsite）尚未分配，固定 null。
+    if (config.memoryRetrievalLogger) {
+      this.memory = wrapMemoryWithRetrievalLogger(this.memory, {
+        logger: config.memoryRetrievalLogger,
+        getTurn: () => this.stateStore.getTurn(),
+        getBatchId: () => null,
+      });
+    }
     this.segments = config.segments;
     this.enabledTools = config.enabledTools ?? [];
     this.tokenBudget = config.tokenBudget ?? 120000;
