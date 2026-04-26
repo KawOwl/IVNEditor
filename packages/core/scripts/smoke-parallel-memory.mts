@@ -18,7 +18,6 @@
  */
 
 import { createMemory } from '#internal/memory/factory';
-import type { Memory } from '#internal/memory/types';
 import type { MemoryConfig } from '#internal/types';
 
 const MEMORAX_BASE_URL = requireEnv('MEMORAX_BASE_URL');
@@ -182,7 +181,3 @@ function assert(cond: boolean, msg: string): void {
     process.exit(1);
   }
 }
-
-// keep tsc happy — Memory type is conceptually used via mem.kind but explicit
-// re-export for trace line clarity
-type _UnusedMemory = Memory;
