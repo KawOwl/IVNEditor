@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   rewriteNarrative,
+  buildRewriteSystemPrompt,
   type RewriteDeps,
   type RewriteInput,
   type RewriteInvoke,
@@ -9,6 +10,11 @@ import {
   type RewriteTraceHook,
   type RewriteTraceSpan,
 } from '#internal/narrative-rewrite';
+import {
+  ENGINE_RULES_CONTAINER_SPEC_V2,
+  ENGINE_RULES_ADHOC_SPEAKER_V2,
+  ENGINE_RULES_OUTPUT_DISCIPLINE_V2,
+} from '#internal/engine-rules';
 import type { ParserManifest } from '#internal/narrative-parser-v2';
 
 const EMPTY_MANIFEST: ParserManifest = {
@@ -287,5 +293,35 @@ describe('rewriteNarrative', () => {
     });
     expect(calls.filter((c) => c.phase === 'start')).toHaveLength(2);
     expect(calls.filter((c) => c.phase === 'end')).toHaveLength(2);
+  });
+});
+
+// 改进 A（2026-04-26）：rewriter system prompt 跟 engine-rules 同源
+describe('rewriter system prompt 同源 engine-rules', () => {
+  it('包含 engine-rules 容器规范子段（字节子串）', () => {
+    const sys = buildRewriteSystemPrompt();
+    expect(sys).toContain(ENGINE_RULES_CONTAINER_SPEC_V2);
+  });
+
+  it('包含 engine-rules ad-hoc speaker 子段（含三档分级）', () => {
+    const sys = buildRewriteSystemPrompt();
+    expect(sys).toContain(ENGINE_RULES_ADHOC_SPEAKER_V2);
+    // 三档关键字
+    expect(sys).toContain('推荐');
+    expect(sys).toContain('可接受但不理想');
+    expect(sys).toContain('另一人');
+    expect(sys).toContain('某人');
+  });
+
+  it('包含 engine-rules 输出纪律子段', () => {
+    const sys = buildRewriteSystemPrompt();
+    expect(sys).toContain(ENGINE_RULES_OUTPUT_DISCIPLINE_V2);
+  });
+
+  it('rewriter 专属硬约束（不补剧情等）保留', () => {
+    const sys = buildRewriteSystemPrompt();
+    expect(sys).toContain('不补剧情');
+    expect(sys).toContain('不改剧情走向');
+    expect(sys).toContain('允许微调措辞');
   });
 });

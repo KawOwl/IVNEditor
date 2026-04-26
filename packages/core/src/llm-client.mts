@@ -617,12 +617,17 @@ export class LLMClient {
       continuationAttempts += 1;
       isFollowupRef.current = true;
       try {
+        // 改进 A（2026-04-26）：分层文案，明确"先闭合再收尾"+ 标签内截断处理
         const continuationNudge: ModelMessage = {
           role: 'user',
           content:
-            '[引擎提示] 你的上一条输出被 token 上限截断。从你停下的位置**直接续写**，' +
-            '不要重复已经输出过的内容，不要加任何前缀说明或致歉。' +
-            '如果当前段落已完整收尾，直接调用 signal_input_needed 结束本轮。',
+            '[引擎提示] 你的上一条输出被 token 上限截断。\n\n' +
+            '从你停下的位置直接续写，**不要复述**已经输出过的整段或整句，**不要**加前缀说明或致歉。\n\n' +
+            '如果你停在了某个标签内部（例如 `<dialogue speaker="..."` 或 `<narration>...一句话写到一半`），' +
+            '先把当前这个标签的剩余部分写完整，再决定是否开新单元。\n\n' +
+            '如果你判断本轮要表达的内容已经全部说完，' +
+            '**先确保所有打开的 `<dialogue>` / `<narration>` / `<scratch>` 标签都已闭合**，' +
+            '再调用 `signal_input_needed` 结束本轮——不要在标签未闭合时直接调工具。',
         };
         const continuationStream = streamText({
           ...baseStreamArgs,

@@ -1,105 +1,77 @@
 /**
- * Narrative Rewrite — Prompt 构造
+ * Narrative Rewrite — Prompt 构造（同源 engine-rules.mts）
  *
- * 把 IVN XML 协议的核心规则 + parser 解读 hint + 原文打包成 system + user
- * 两段消息。规则段从 engine-rules.mts 抽取，但去掉跟剧本/工具/视觉子标签
- * 相关的部分——rewriter 只做"reformat 容器分配 + 微调措辞"，不改剧情。
+ * 把 IVN XML 协议的核心规则（容器规范 / ad-hoc speaker 三档分级 / 输出纪律 /
+ * 反面示范）从 engine-rules.mts **直接复用**——保证主路径跟 rewriter 看到的
+ * 协议字节同源。改进 A（2026-04-26）落地：trace bab24e15 / 227cb1d0 暴露的
+ * "rewriter prompt 跟主 prompt 漂移"问题（rewriter 不知道 ad-hoc 禁泛称等
+ * 新规则），通过共享子段 export 治掉。
  */
 
+import {
+  ENGINE_RULES_CONTAINER_SPEC_V2,
+  ENGINE_RULES_ADHOC_SPEAKER_V2,
+  ENGINE_RULES_NARRATION_FALLBACK_V2,
+  ENGINE_RULES_OUTPUT_DISCIPLINE_V2,
+  ENGINE_RULES_ANTI_EXAMPLES_V2,
+  buildEngineRulesWhitelistV2,
+} from '#internal/engine-rules';
 import type { RewriteInput } from '#internal/narrative-rewrite/types';
 
 // ============================================================================
-// System Prompt（静态规则段）
+// rewriter 专属段：任务定义 / 硬约束（不补剧情等）
+// ============================================================================
+
+/** rewriter 任务定义 + 硬约束。注意保持字节稳定，便于 prompt cache 复用。 */
+const REWRITER_TASK_INTRO =
+  `你是 IVN（Interactive Visual Novel）引擎的 narrative rewriter。\n` +
+  `\n` +
+  `# 任务\n` +
+  `\n` +
+  `下面会给你一份 GM（剧情主持）这一轮的**原稿**和 parser 的**解读结果**。\n` +
+  `判断原稿是否符合 IVN XML 协议；如果不符合，按规则**重写**这一轮的输出。\n`;
+
+const REWRITER_HARD_CONSTRAINTS =
+  `\n# 硬约束（违反会被 reject）\n` +
+  `\n` +
+  `1. **不补剧情**：不新增对白、动作、场景、角色。原稿里没有的内容**绝对不能**出现在你的输出。\n` +
+  `2. **不改剧情走向**：人物关系、情绪、决定都按原稿。\n` +
+  `3. **允许微调措辞**：拆"他说A，做了B，又说C"成 \`<dialogue>\` + \`<narration>\` + \`<dialogue>\` 时，可以小幅润色衔接，但不能改变意思。\n` +
+  `4. **第一个字符必须是 \`<\`**：不要任何前置说明、致歉、解释。\n` +
+  `5. **整段 IVN XML，不要任何注释/markdown 代码块/解释文字**。\n` +
+  `\n` +
+  `# IVN XML 协议\n`;
+
+const REWRITER_TASK_OUTRO =
+  `\n# 你的输出\n` +
+  `\n` +
+  `只输出 IVN XML，不要任何解释。如果原稿已经基本合规，可以做最小修改原样输出；` +
+  `如果发现 ad-hoc speaker 是禁止的关系代词（"另一人"/"某人"/"其中一个"等），把那段拆到 \`<narration>\`。\n`;
+
+// ============================================================================
+// System Prompt 构造
 // ============================================================================
 
 /**
- * rewriter 的 system prompt。设计原则：
- * - 简短（< 1500 token），让 LLM 聚焦在 reformat 任务
- * - 把"不要补剧情"等核心硬约束放在最前面
- * - IVN XML 协议规则用 RFC 风格清晰列出
- * - 反面示范贴近实际 production 出现的错误模式
+ * rewriter 的 system prompt。结构：
+ * - rewriter 专属任务说明 + 硬约束
+ * - 共享：容器规范 + ad-hoc speaker 三档分级 + narration fallback + 输出纪律 + 反面示范
+ *
+ * 跟主路径 engine-rules.mts 的 v2 narrative format 段**共享子段 const**，
+ * 修改一处两边同步。
  */
 export function buildRewriteSystemPrompt(): string {
-  return REWRITER_SYSTEM_PROMPT;
+  return (
+    REWRITER_TASK_INTRO +
+    REWRITER_HARD_CONSTRAINTS +
+    ENGINE_RULES_CONTAINER_SPEC_V2 +
+    ENGINE_RULES_ADHOC_SPEAKER_V2 +
+    ENGINE_RULES_NARRATION_FALLBACK_V2 +
+    ENGINE_RULES_OUTPUT_DISCIPLINE_V2 +
+    ENGINE_RULES_ANTI_EXAMPLES_V2 +
+    REWRITER_TASK_OUTRO
+  );
 }
-
-const REWRITER_SYSTEM_PROMPT = `你是 IVN（Interactive Visual Novel）引擎的 narrative rewriter。
-
-# 任务
-
-下面会给你一份 GM（剧情主持）这一轮的**原稿**和 parser 的**解读结果**。
-判断原稿是否符合 IVN XML 协议；如果不符合，按规则**重写**这一轮的输出。
-
-# 硬约束（违反会被 reject）
-
-1. **不补剧情**：不新增对白、动作、场景、角色。原稿里没有的内容**绝对不能**出现在你的输出。
-2. **不改剧情走向**：人物关系、情绪、决定都按原稿。
-3. **允许微调措辞**：拆"他说A，做了B，又说C"成 \`<dialogue>\` + \`<narration>\` + \`<dialogue>\` 时，可以小幅润色衔接，但不能改变意思。
-4. **第一个字符必须是 \`<\`**：不要任何前置说明、致歉、解释。
-5. **整段 IVN XML，不要任何注释/markdown 代码块/解释文字**。
-
-# IVN XML 协议（顶层容器三种）
-
-## \`<dialogue>\` —— 角色对白
-\`\`\`
-<dialogue speaker="<角色id>" to="<被说者id|*>" hear="<旁听者ids>">
-  正文只装该角色的直接引语
-</dialogue>
-\`\`\`
-- \`speaker\` 必填；id 必须在白名单内（见后面 manifest）；不在白名单的路人用 \`__npc__<显示名>\`（例：\`__npc__保安\`）
-- 任何旁白/动作/表情/第三人称描写**必须**拆出去走 \`<narration>\`
-- 不要把 \`你\` / \`我\` / \`他\` 等代词当 id
-
-## \`<narration>\` —— 旁白/描写
-\`\`\`
-<narration>
-  环境/动作/心理/第三人称描写
-</narration>
-\`\`\`
-- 没有具体说话人的内容（环境音、广播、旁白）一律走 \`<narration>\`
-- 第二人称"你"自由出现在正文里，**不能**当 id
-
-## \`<scratch>\` —— 内部思考（玩家看不到）
-\`\`\`
-<scratch>
-  我先查 state 然后决定方向
-</scratch>
-\`\`\`
-- 给自己看的元叙述、规划、状态报告
-- 玩家看不到，但保留在历史里
-- **rewriter 输出可以省略 scratch**——除非原稿的 scratch 内容对下一轮决策真有用
-
-# 输出纪律（硬性禁止）
-
-- 第一个字符必须是 \`<\`
-- 每轮回复必须至少包含**一个** \`<dialogue>\` 或 \`<narration>\`
-- 不要写容器之外的裸文本
-- 不要写 \`<scene>\` / \`<choice>\` 等其他标签
-- 不要在属性里填 \`?\` 占位符；想不出就省略
-
-# 反面示范
-
-❌ 把动作描写塞进 \`<dialogue>\`：
-\`\`\`
-<dialogue speaker="__npc__中年男人" to="player">
-  "俄罗斯？"他用大拇指指了指你，"那个方向来的？"
-</dialogue>
-\`\`\`
-
-✅ 拆三个单元（台词→动作→台词）：
-\`\`\`
-<dialogue speaker="__npc__中年男人" to="player">"俄罗斯？"</dialogue>
-<narration>他用大拇指指了指你。</narration>
-<dialogue speaker="__npc__中年男人" to="player">"那个方向来的？"</dialogue>
-\`\`\`
-
-❌ 写 \`<scratch>\` 然后没有任何 \`<dialogue>\` / \`<narration>\`：玩家看到空白屏幕。
-
-❌ 整段裸文本（没包在容器里）：玩家看不到，会被引擎降级丢弃。
-
-# 你的输出
-
-只输出 IVN XML，不要任何解释。如果原稿已经基本合规，可以做最小修改原样输出。`;
 
 // ============================================================================
 // User Message 构造
@@ -162,20 +134,12 @@ function formatSentenceMeta(s: { kind: string; pf?: { speaker?: string } }): str
 }
 
 function formatManifest(input: RewriteInput): string {
-  const m = input.manifest;
-  const lines: string[] = [];
-  lines.push(`- 角色 id: ${formatIdList(m.characterIds)}`);
-  lines.push(`- 背景 id: ${formatIdList(m.backgroundIds)}`);
-  if (Object.keys(m.moodsByCharacter).length > 0) {
-    lines.push('- 每角色情绪:');
-    for (const [charId, moods] of Object.entries(m.moodsByCharacter)) {
-      lines.push(`  · ${charId}: ${formatIdList([...moods])}`);
-    }
-  }
-  return lines.join('\n');
-}
-
-function formatIdList(ids: readonly string[]): string {
-  if (ids.length === 0) return '（空）';
-  return ids.map((id) => `\`${id}\``).join(', ');
+  // 把精简版 manifest 转成 main-path 同款的 buildEngineRulesWhitelistV2 输入
+  // 以便 prompt 里白名单段跟主路径**字节同款**——LLM 看到的格式完全一致。
+  const characters = input.manifest.characterIds.map((id) => ({
+    id,
+    sprites: (input.manifest.moodsByCharacter[id] ?? []).map((moodId) => ({ id: moodId })),
+  }));
+  const backgrounds = input.manifest.backgroundIds.map((id) => ({ id }));
+  return buildEngineRulesWhitelistV2(characters, backgrounds).trimStart();
 }

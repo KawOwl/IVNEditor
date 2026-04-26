@@ -192,6 +192,38 @@ describe('buildEngineRules', () => {
     expect(text).toContain('完全不变');
   });
 
+  // 改进 A（2026-04-26，trace 227cb1d0 触发）：ad-hoc speaker 三档分级
+  it('v2 必须包含 __npc__ 三档分级规则（推荐 / 可接受 / 禁止）', () => {
+    const text = buildEngineRules({
+      protocolVersion: 'v2-declarative-visual',
+      characters: [],
+      backgrounds: [],
+    });
+    // 三档标记
+    expect(text).toContain('推荐');
+    expect(text).toContain('可接受但不理想');
+    expect(text).toContain('禁止');
+    // 三档分别带例子
+    expect(text).toContain('__npc__保安');         // ✅ 具体身份
+    expect(text).toContain('__npc__陌生男声');     // ⚠️ 声音形容
+    // ❌ 关系代词扩展列表（trace 227cb1d0 触发）
+    for (const banned of ['另一人', '某人', '其中一个', '那个人', '谁']) {
+      expect(text).toContain(banned);
+    }
+  });
+
+  it('v2 反面示范必须含"关系代词当 ad-hoc"的 ❌ → ✅ 对', () => {
+    const text = buildEngineRules({
+      protocolVersion: 'v2-declarative-visual',
+      characters: [],
+      backgrounds: [],
+    });
+    // 反面：__npc__另一人 出现在 ❌ 例子里
+    expect(text).toMatch(/__npc__另一人/);
+    // 正面修复：拆到 narration
+    expect(text).toMatch(/另一个声音/);
+  });
+
   it('v2 白名单变化影响输出（插值不是 no-op）', () => {
     const a = buildEngineRules({
       protocolVersion: 'v2-declarative-visual',
