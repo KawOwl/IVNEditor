@@ -709,5 +709,15 @@
     "ref": "apps/ui/src/ui/play/vn/SpriteLayer.tsx",
     "verify": "pnpm typecheck 4 package 全绿（test:core 无需重跑——纯 UI 渲染层改动）。Browser：vite hot reload 后 fetch SpriteLayer 模块 transform 产物，确认 `const position = \"center\";` 字面量赋值 + sprite key 用 `${sprite.id}-center`，源码 0 处实际读取 `sprite.position`（仅注释里提到），console 0 error。",
     "note": "起因（2026-04-26）：用户原话'角色位置先暂时都改为显示在中间吧'——叠在 V.10 立绘绑定 dialogue / V.11 ad-hoc 占位之上的进一步简化。决策：(a) 改 UI 层而非 parser/persistence 层——UI 一行 const 赋值最小冲击，可逆；改 parser 会破坏 WS 协议 + 老存档兼容。(b) 保留 `POSITION_STYLES` 三 key 便于后续恢复，只是 lookup 不再走 left/right。(c) 占位卡片 + 真立绘两条路径都走同一 posClass，无需分别处理。影响：V.11 后 dialogue 立绘本来就 center 无视觉变化；老 playthrough sceneRef 含 left/right 立绘 restore 后也居中（边界角色消失）；编辑器 default scene 里配的 left/right 立绘运行时也居中。"
+  },
+  {
+    "id": "V.13",
+    "title": "声明式视觉 IR：turn 边界舞台清空（player_input.sceneRef.sprites=[]）",
+    "description": "在 V.10/V.11/V.12 之上修复 turn 边界视觉过渡问题：用户报实际跑下来发现 LLM 经常 emit `dialogue → dialogue` 没 narration 间隙，turn 之间立绘从上 turn speaker 直接被下 turn 第一个 dialogue 覆盖，玩家视觉上感受不到'轮叙事'切换。改动 [game-session.mts:595](packages/core/src/game-session.mts:595) 一处：`player_input.sceneRef = copyScene(this.currentScene)` → `sceneRef = { background: this.currentScene.background, sprites: [] }`。background 保留（场景不切，只清立绘）；`this.currentScene` 不动（retrieve query 的 char_ids 信号不退化，mem0/memorax 语义检索召回率不变）。边界保护通过 V.10 unit 独立 resolution 自动满足：下个 turn 第一个 unit 是 dialogue 时 sceneRef.sprites=[speaker] 自动重建，第一条立绘不会被'清空'操作误删。",
+    "status": "done",
+    "type": "logic",
+    "ref": "packages/core/src/game-session.mts",
+    "verify": "pnpm typecheck 4 package 全绿；pnpm test:core 320/320 不退化（单行 sceneRef shape 改动，TypeScript SceneState 类型严格保证形状正确；新 e2e 单测要 mock LLMClient/memory/WS 整套，工作量与改动不匹配）。E2E 留作者实际跑剧本时验证：玩家 click 经过 dialogue (A) → player_input → 下个 turn 第一个 unit。期望视觉：dialogue (A) 显示 A 立绘 → player_input 显示玩家输入气泡 + 立绘退场（空台） → 下个 unit 是 dialogue (B) 时 B 立绘 fade in / 是 narration 时仍空台。",
+    "note": "起因（2026-04-26）：V.10/V.11/V.12 落地后用户实际跑剧本观察到'dialogue 结束立绘不清，直到下次 dialogue 被覆盖'。诊断：V.10 parser 层 narration sceneRef.sprites=[] 是对的，但 LLM 行为常 emit dialogue→dialogue 序列没 narration 间隙；turn 边界的 player_input sceneRef 来自 currentScene snapshot，带着上 turn 最后立绘走到下 turn 入口。决策：(a) 修 player_input.sceneRef 而非 this.currentScene——this.currentScene reset 会让 buildRetrievalQuery 拿到空 char_ids，影响 mem0/memorax 语义检索召回率（'当前场景且这些角色在场时'是关键检索锚点）。(b) 不修 SpriteLayer 加 fade-out exit transition——视觉过渡是另一独立改进，先满足'清空'语义。(c) 不在 reducer 层 emit 隐式'清空' sentence——破坏现有 sentence stream 协议。(d) 边界保护无需额外条件：V.10 unit 独立 resolution 已经保证 dialogue 第一个 unit sceneRef.sprites=[speaker]，turn 边界清空 + V.10 重建是自然组合。同 speaker 跨 turn 视觉上'离场又上场'是符合 turn 边界清空语义的设计选择，不算 bug。"
   }
 ]

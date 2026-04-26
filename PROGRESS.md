@@ -33,6 +33,15 @@
 
 ## 最近完成
 
+**V.13 turn 边界舞台清空（2026-04-26，本会话）**
+- 用户原话："实际效果尝试下来，还是要再修改，dialogue 结束，立绘不清楚。直到下次遇到 dialogue 被覆盖。每一轮叙事开始之前先清空舞台上的立绘，再开始本轮叙事，注意边界情况，如果本轮叙事第一条就有立绘，不要被误清除。"
+- 现象诊断：V.10 unit 独立 resolution 让 narration sceneRef.sprites=[] 是对的，但 LLM 实际经常 emit `dialogue → dialogue` 没 narration 间隙。turn 间 player_input.sceneRef 来自 `copyScene(this.currentScene)`（[game-session.mts:595](packages/core/src/game-session.mts:595)），= 上 turn 最后 dialogue 的 [speaker]。下个 turn 第一个 dialogue 来时直接覆盖，玩家视觉上看到"立绘没清，被新 dialogue 覆盖"。
+- 改动：[game-session.mts:595](packages/core/src/game-session.mts:595) `sceneRef: copyScene(this.currentScene)` → `sceneRef: { background: this.currentScene.background, sprites: [] }`。background 保留（场景不切，只清立绘）；`this.currentScene` 不动，retrieve query 的 char_ids 信号不退化。
+- 行为：玩家 click 经过 dialogue (sakuya) → player_input → 下个 turn 第一个 narrative unit。player_input 渲染时立绘退场（"清空舞台"）；下个 turn 第一个 unit 是 dialogue 时由 V.10 unit-resolved sprites=[speaker] 自动重建（"开始本轮叙事，第一条立绘不被误清"由 V.10 单元独立 resolution 自动满足）。
+- 边界：(a) 第一条 narrative unit 是 narration → 仍然空台（V.10 行为）；(b) 第一条是 dialogue → speaker 立绘 fade in；(c) 第一条是 dialogue 同 speaker（上 turn 也是 sakuya）→ 视觉上 sakuya 离场又上场，符合 turn 边界清空语义；(d) 上 turn 全 narration 已经空台 → player_input 还是空台，一致；(e) default scene 配开场 sprite + turn 1 → player_input 时清空，符合"每轮清空"语义。
+- 验证：`pnpm typecheck` 4 package 全绿；`pnpm test:core` 320/320 不退化（V.13 是 server 端单行 sceneRef shape 改动，TypeScript SceneState 类型严格；新 e2e 单测要 mock LLMClient/memory/WS 整套，工作量与改动不匹配，留作者实际跑剧本时验证）。
+- 决策：(a) 修 player_input.sceneRef 而非动 this.currentScene——后者会让 retrieve query char_ids 失去"上一轮在场角色"信号，影响 mem0/memorax 语义检索召回率；(b) 不修 SpriteLayer 加 fade-out exit transition——视觉过渡是另一个独立改进，先满足"清空"语义；(c) 不在 reducer / game-session 层 emit 隐式"清空" sentence——破坏现有 sentence stream 协议；(d) 边界保护通过 V.10 unit 独立 resolution 自动满足，不需要额外条件。
+
 **V.12 SpriteLayer 强制立绘居中渲染（暂时简化版，2026-04-26，本会话）**
 - 用户原话："角色位置先暂时都改为显示在中间吧。"
 - 改动：[SpriteLayer.tsx](apps/ui/src/ui/play/vn/SpriteLayer.tsx) 两处
@@ -409,6 +418,7 @@
 | 2026-04-26 | V.10 立绘整体简化：dialogue → speaker only at center；非 dialogue → []；忽略 `<sprite>` / `<stage/>` 子标签 | 用户原话指令——dialogue 展示结束立绘退场 + 只显示说话人立绘。比 V.9 兜底 + 多角色并存 + 三 position 分配的整套机制简单 N 倍，prompt 也无需教 LLM 摆位。改动只在 inheritance.mts 一层，UI / WS 协议 / persistence 全不动 | 失去：多角色并存（无法表现"两人同框"）、explicit `<sprite>` 摆位、`<stage/>` 显式清场。这些场景如果用户要恢复，倒退也只是 inheritance.mts 几十行 + 测试。DegradeCode enum 旧成员保留便于平滑回滚。tag-schema 标注哪些事件被简化版 dormant |
 | 2026-04-26 | V.11 ad-hoc speaker 走 `__npc__` reserved character 占位立绘；已知 speaker 缺 sprite 也 emit 占位卡 | V.10 落地后讨论 ad-hoc 处理：当前空台 vs 显示什么。性别细分（`__npc__male`/`__npc__female`）LLM 协议负担可控但收益不清楚，先做最简单的"统一占位"（作者在编辑器配 `__npc__` 角色）。reserved id 用 `__npc__` 裸前缀和现有 ad-hoc 协议同源；走作者自配而非内建 SVG 避免跨剧本风格冲突。编辑器 ID_PATTERN 给 `__npc__` 单独豁免；emotion 缺 default mood 用空串让 UI 占位卡只显示 displayName 行更干净 | ad-hoc + 没配 `__npc__` 仍空台（作者主动配置才解锁）；已知 speaker 缺 sprite 由空台升级到占位卡（UI 早有占位逻辑，原本 parser 不 emit 数据触发不到，顺手收口）。后续可加：编辑器'添加 `__npc__` 角色'快捷按钮；按性别细分（先观察实际玩家反馈再决定） |
 | 2026-04-26 | V.12 SpriteLayer 强制立绘居中渲染，无视 `sprite.position` 字段 | 用户原话指令——立绘暂时都显示在中间。UI 层一行 const 赋值最小冲击，比 parser/persistence 抹掉 position 字段（影响 WS 协议 + 老存档兼容）轻得多；保留 `POSITION_STYLES` 常量左右两 key 便于后续恢复 | parser / 持久化 / WS 协议层 SpriteState.position 字段不动；老 playthrough sceneRef 含 left/right 立绘 restore 后也居中（视觉边界角色消失）；编辑器 default scene 配的 left/right 运行时也居中 |
+| 2026-04-26 | V.13 turn 边界舞台清空：player_input.sceneRef.sprites=[]，不动 this.currentScene | 用户报实际跑下来 dialogue→dialogue 没空台 transition，要求"每轮叙事开始前清空舞台"。修 player_input.sceneRef 而非 this.currentScene 因为后者影响 retrieve query 的 char_ids 信号（语义检索召回率）；边界保护通过 V.10 unit 独立 resolution 自动满足（dialogue 第一条 unit 总是输出 [speaker]） | 玩家 click 到 player_input 时立绘退场，下个 turn 第一个 narrative unit 按 V.10 规则重建立绘。同 speaker 跨 turn 视觉上"离场又上场"，符合 turn 边界清空语义。retrieve query / persistence / WS 协议都不动 |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |

@@ -592,7 +592,13 @@ export class GameSession {
           kind: 'player_input',
           text: inputText,
           ...(payload.selectedIndex !== undefined ? { selectedIndex: payload.selectedIndex } : {}),
-          sceneRef: copyScene(this.currentScene),
+          // V.13 turn 边界舞台清空：player_input.sceneRef.sprites=[] 让玩家输入
+          // 气泡渲染时立绘退场，UI 视觉上"上一轮叙事结束 → 舞台清空 → 下一轮
+          // 叙事开始"。下个 turn 第一个 unit 是 dialogue 时由 V.10 unit-resolved
+          // sprites=[speaker] 自动重建（边界保护通过 V.10 单元独立 resolution
+          // 满足）。background 保留：场景不切，只清立绘。`this.currentScene` 不
+          // 动 → retrieve query 的 char_ids 信号不退化。
+          sceneRef: { background: this.currentScene.background, sprites: [] },
           turnNumber: turn,
           index: Date.now(),
         },
