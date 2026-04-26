@@ -33,10 +33,11 @@ export async function createMemory(options: CreateMemoryOptions): Promise<Memory
 
   switch (kind) {
     case 'noop':
+      // noop adapter ignores deletionFilter（retrieve 永远空）
       return new NoopMemory(options.config, options.coreEventReader);
 
     case 'legacy':
-      return new LegacyMemory(options.config, truncatingCompressFn, options.coreEventReader);
+      return new LegacyMemory(options.config, truncatingCompressFn, options.coreEventReader, options.deletionFilter);
 
     case 'llm-summarizer':
       if (!options.llmClient) {
@@ -44,7 +45,7 @@ export async function createMemory(options: CreateMemoryOptions): Promise<Memory
           'Memory provider "llm-summarizer" requires llmClient (game-session 必须在 createMemory 前构造 LLMClient)',
         );
       }
-      return new LLMSummarizerMemory(options.config, options.llmClient, options.coreEventReader);
+      return new LLMSummarizerMemory(options.config, options.llmClient, options.coreEventReader, options.deletionFilter);
 
     case 'mem0':
       {
@@ -56,7 +57,7 @@ export async function createMemory(options: CreateMemoryOptions): Promise<Memory
             'Memory provider "mem0" requires mem0ApiKey or providerOptions.apiKey',
           );
         }
-        return new Mem0Memory(options.scope, options.config, apiKey);
+        return new Mem0Memory(options.scope, options.config, apiKey, options.deletionFilter);
       }
 
     case 'memorax':
@@ -71,7 +72,7 @@ export async function createMemory(options: CreateMemoryOptions): Promise<Memory
           baseUrl: cfg.baseUrl,
           apiKey: cfg.apiKey,
           appId: cfg.appId,
-        });
+        }, options.deletionFilter);
       }
 
     case 'parallel':

@@ -168,6 +168,34 @@ export interface Memory {
 }
 
 /**
+ * 删除过滤器 —— ANN.1 的核心防腐边界
+ *
+ * Memory adapter 在 retrieve 返回前调 listDeleted() 拿到 active 标注集合，
+ * 把被删 entry 从 entries[] / summary 中过滤掉。adapter 不需要知道标注表 /
+ * 服务 / 业务逻辑，只看到一个 ids 的 ReadonlySet。
+ *
+ * 实现方在生产环境通常封装 memory-annotation-service 的 listActiveByPlaythrough。
+ * 单元测试用 stub（in-memory Set）。
+ *
+ * 缺省（CreateMemoryOptions 不传 deletionFilter）= 不过滤 —— 保持向后兼容，
+ * 现存 adapter 单测无需改造。
+ *
+ * 内置 forward-compat：memorax adapter 早在 ANN.1 之前就 inline 了同形 type
+ * (DeletionFilterShape)，rebase 后换成正式 import。
+ */
+export interface MemoryDeletionFilter {
+  /**
+   * 返回当前所有 active（未撤销）的删除标注的 entry id。
+   *
+   * 调用时机：每次 retrieve 开头。
+   * 性能契约：实现方应做合理缓存（typical playthrough 内 < 几十条标注，
+   * SQL 查询本身已足够快，不强制加 in-memory 缓存）。
+   * 失败契约：抛错会被 adapter 视为"过滤失败" → 返回空 set（不阻塞 retrieve）。
+   */
+  listDeleted(): Promise<ReadonlySet<string>>;
+}
+
+/**
  * Factory options —— createMemory 的入参
  */
 export interface CreateMemoryOptions {
@@ -193,4 +221,12 @@ export interface CreateMemoryOptions {
    *
    */
   coreEventReader?: CoreEventHistoryReader;
+  /**
+   * ANN.1：删除过滤器。retrieve 返回前 filter 掉用户标记"忘掉"的 entries。
+   * 缺省 undefined = 不过滤（向后兼容老单测）。
+   *
+   * Parallel adapter 通过 factory 的递归 createMemory 把这个透传给每个 child，
+   * 不需要在 parallel 层自己处理。
+   */
+  deletionFilter?: MemoryDeletionFilter;
 }

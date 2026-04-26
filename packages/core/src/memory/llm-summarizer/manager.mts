@@ -19,6 +19,7 @@ import {
 import type { CoreEventHistoryReader } from '#internal/game-session/core-event-history';
 import type {
   Memory,
+  MemoryDeletionFilter,
   MemoryRetrieval,
   MemorySnapshot,
   RecentMessagesResult,
@@ -63,6 +64,8 @@ export class LLMSummarizerMemory implements Memory {
     private readonly config: MemoryConfig,
     llmClient: Pick<LLMClient, 'generate'>,
     private readonly coreEventReader?: CoreEventHistoryReader,
+    /** ANN.1：删除过滤器。详见 LegacyMemory 同名构造参数。*/
+    private readonly deletionFilter?: MemoryDeletionFilter,
   ) {
     this.compressFn = makeLLMCompressFn(llmClient);
   }
@@ -107,16 +110,38 @@ export class LLMSummarizerMemory implements Memory {
   // ─── Read ──────────────────────────────────────────────────────────
 
   async retrieve(query: string): Promise<MemoryRetrieval> {
+    const deletedIds = await this.loadDeletedIds();
+
+    const filteredPinned = deletedIds.size > 0
+      ? this.state.pinned.filter((e) => !deletedIds.has(e.id))
+      : this.state.pinned;
+
     const parts = [
       ...this.state.summaries,
-      ...this.state.pinned.map((entry) => `[重要] ${entry.content}`),
+      ...filteredPinned.map((entry) => `[重要] ${entry.content}`),
     ];
 
     const recent = await this.readRecentMemoryEntries();
+    const matched = this.keywordMatch(query, recent);
+    const filteredEntries = deletedIds.size > 0
+      ? matched.filter((e) => !deletedIds.has(e.id))
+      : matched;
+
     return {
       summary: parts.join('\n\n'),
-      entries: this.keywordMatch(query, recent),
+      entries: filteredEntries,
     };
+  }
+
+  /** ANN.1：失败静默返回空集合，详见 LegacyMemory 同名方法。*/
+  private async loadDeletedIds(): Promise<ReadonlySet<string>> {
+    if (!this.deletionFilter) return new Set();
+    try {
+      return await this.deletionFilter.listDeleted();
+    } catch (err) {
+      console.warn('[LLMSummarizerMemory] deletionFilter.listDeleted failed:', err);
+      return new Set();
+    }
   }
 
   async getRecentAsMessages(

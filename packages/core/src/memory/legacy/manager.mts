@@ -27,6 +27,7 @@ import {
 import type { CoreEventHistoryReader } from '#internal/game-session/core-event-history';
 import type {
   Memory,
+  MemoryDeletionFilter,
   MemoryRetrieval,
   MemorySnapshot,
   RecentMessagesResult,
@@ -85,6 +86,11 @@ export class LegacyMemory implements Memory {
      * maybeCompact 变成 no-op。生产路径 session-manager 必传。
      */
     private readonly coreEventReader?: CoreEventHistoryReader,
+    /**
+     * ANN.1：删除过滤器。retrieve 返回前过滤掉 active 标注的 entry。
+     * undefined = 不过滤（向后兼容）。失败时静默退化为不过滤（不阻塞主路径）。
+     */
+    private readonly deletionFilter?: MemoryDeletionFilter,
   ) {}
 
   // ─── Write ─────────────────────────────────────────────────────────
@@ -135,18 +141,44 @@ export class LegacyMemory implements Memory {
   /**
    * summary = summaries + pinned（同 v1 格式）
    * entries = 对 reader 返回的近期条目做 keyword match（同 v1 语义）
+   *
+   * ANN.1：deletionFilter 提供时，pinned + entries 中已被标注的 entry 被剔除。
+   * summaries 是 opaque 文本无法按 entry 粒度过滤 —— 留作 future work（极少
+   * 玩家会标 summary 内容，因为 summary 不直接展示给玩家）。
    */
   async retrieve(query: string): Promise<MemoryRetrieval> {
+    const deletedIds = await this.loadDeletedIds();
+
+    const filteredPinned = deletedIds.size > 0
+      ? this.state.pinned.filter((e) => !deletedIds.has(e.id))
+      : this.state.pinned;
+
     const parts = [
       ...this.state.summaries,
-      ...this.state.pinned.map((entry) => `[重要] ${entry.content}`),
+      ...filteredPinned.map((entry) => `[重要] ${entry.content}`),
     ];
 
     const recent = await this.readRecentMemoryEntries();
+    const matched = this.keywordMatch(query, recent);
+    const filteredEntries = deletedIds.size > 0
+      ? matched.filter((e) => !deletedIds.has(e.id))
+      : matched;
+
     return {
       summary: parts.join('\n\n'),
-      entries: this.keywordMatch(query, recent),
+      entries: filteredEntries,
     };
+  }
+
+  /** ANN.1：拉当前 active 的删除标注 ids。失败静默返回空集合，不阻塞 retrieve。*/
+  private async loadDeletedIds(): Promise<ReadonlySet<string>> {
+    if (!this.deletionFilter) return new Set();
+    try {
+      return await this.deletionFilter.listDeleted();
+    } catch (err) {
+      console.warn('[LegacyMemory] deletionFilter.listDeleted failed:', err);
+      return new Set();
+    }
   }
 
   /**

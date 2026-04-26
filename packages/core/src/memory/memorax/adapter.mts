@@ -23,6 +23,7 @@ import { estimateTokens } from '@ivn/core/tokens';
 import type { MemoryEntry, MemoryConfig } from '@ivn/core/types';
 import type {
   Memory,
+  MemoryDeletionFilter,
   MemoryRetrieval,
   MemorySnapshot,
   MemoryScope,
@@ -47,11 +48,6 @@ interface MemoraxState {
 let counter = 0;
 function generateId(): string {
   return `mem-memorax-${Date.now()}-${++counter}`;
-}
-
-/** Forward-compat：跟 ANN.1 (dreamy-germain) 的 MemoryDeletionFilter 同形。 */
-interface DeletionFilterShape {
-  listDeleted(): Promise<ReadonlySet<string>>;
 }
 
 export interface MemoraxAdapterOptions {
@@ -79,8 +75,11 @@ export class MemoraxMemory implements Memory {
     scope: MemoryScope,
     private readonly config: MemoryConfig,
     options: MemoraxAdapterOptions,
-    /** @deprecated forward-compat for ANN.1; 本 adapter 暂不使用，rebase 后接入 */
-    _deletionFilter?: DeletionFilterShape,
+    /**
+     * ANN.1：删除过滤器。retrieve 时过滤掉被标 memorax results。
+     * memorax 当前没有 memory-delete API；adapter 边界 filter 即可。
+     */
+    private readonly deletionFilter?: MemoryDeletionFilter,
   ) {
     this.client =
       options.client ??
@@ -178,6 +177,8 @@ export class MemoraxMemory implements Memory {
       return { summary: '', entries: [], meta: { skipped: 'empty-query' } };
     }
 
+    const deletedIds = await this.loadDeletedIds();
+
     // 强制按 playthroughId 隔离：哪怕 user_id 跨多 playthrough，也只看本档的
     const filters: { and: MemoraxFilterCondition[] } = {
       and: [{ agent_id: { eq: this.agentId } }],
@@ -195,13 +196,40 @@ export class MemoraxMemory implements Memory {
         return { summary: '', entries: [], meta: { topK: this.retrieveTopK, returned: 0 } };
       }
 
-      const summary = ['[Relevant Memories]', ...results.map((r) => `- ${r.memory}`)].join('\n');
+      // ANN.1：用 memorax result.id 做 filter；同时投影成 MemoryEntry 让客户端
+      // UI 拿到稳定 id 标删。memorax cloud 数据本身不删，adapter 边界 filter 即可。
+      const filtered = deletedIds.size > 0
+        ? results.filter((r) => !deletedIds.has(r.id))
+        : results;
+
+      if (filtered.length === 0) {
+        return {
+          summary: '',
+          entries: [],
+          meta: {
+            topK: this.retrieveTopK,
+            returned: results.length,
+            filteredOut: deletedIds.size > 0 ? results.length : 0,
+          },
+        };
+      }
+
+      const summary = ['[Relevant Memories]', ...filtered.map((r) => `- ${r.memory}`)].join('\n');
+      const entries: MemoryEntry[] = filtered.map((r) => ({
+        id: r.id,
+        turn: -1,
+        role: 'system',
+        content: r.memory,
+        tokenCount: estimateTokens(r.memory),
+        timestamp: r.created_at ? Date.parse(r.created_at) : Date.now(),
+      }));
       return {
         summary,
-        entries: [],
+        entries,
         meta: {
           topK: this.retrieveTopK,
           returned: results.length,
+          filteredOut: deletedIds.size > 0 ? results.length - filtered.length : 0,
         },
       };
     } catch (err) {
@@ -209,6 +237,17 @@ export class MemoraxMemory implements Memory {
       const reason = err instanceof MemoraxError ? `${err.reason}: ${err.message}` : String(err);
       console.error('[MemoraxMemory] retrieve failed:', reason);
       return { summary: '', entries: [], meta: { error: reason } };
+    }
+  }
+
+  /** ANN.1：失败静默返回空集合，详见 LegacyMemory 同名方法。*/
+  private async loadDeletedIds(): Promise<ReadonlySet<string>> {
+    if (!this.deletionFilter) return new Set();
+    try {
+      return await this.deletionFilter.listDeleted();
+    } catch (err) {
+      console.warn('[MemoraxMemory] deletionFilter.listDeleted failed:', err);
+      return new Set();
     }
   }
 

@@ -39,6 +39,7 @@ import { estimateTokens } from '@ivn/core/tokens';
 import type { MemoryEntry, MemoryConfig } from '@ivn/core/types';
 import type {
   Memory,
+  MemoryDeletionFilter,
   MemoryRetrieval,
   MemorySnapshot,
   MemoryScope,
@@ -91,6 +92,11 @@ export class Mem0Memory implements Memory {
     scope: MemoryScope,
     private readonly config: MemoryConfig,
     apiKey: string,
+    /**
+     * ANN.1：删除过滤器。retrieve 时过滤掉被标 mem0 results。
+     * mem0 cloud 数据不真删（保留作标注源数据），只在 adapter 边界 filter。
+     */
+    private readonly deletionFilter?: MemoryDeletionFilter,
   ) {
     this.client = new MemoryClient({ apiKey });
     this.userId = playthroughToMem0UserId(scope.playthroughId);
@@ -189,6 +195,8 @@ export class Mem0Memory implements Memory {
       return { summary: '', entries: [], meta: { skipped: 'empty-query' } };
     }
 
+    const deletedIds = await this.loadDeletedIds();
+
     try {
       const { results } = await this.client.search(query, {
         // mem0 SDK 的 search / getAll / deleteAll 不接受顶层 userId，
@@ -201,22 +209,57 @@ export class Mem0Memory implements Memory {
         return { summary: '', entries: [], meta: { topK: this.retrieveTopK } };
       }
 
-      // 把相关 memory 条目拼成一段 summary 喂进 _engine_memory section
+      // ANN.1：把 mem0 的 results 投影成 MemoryEntry 形态（玩家 UI 要稳定 id），
+      // 并在投影后过滤被标的 entry。mem0 cloud 数据本身不删 —— 只在 adapter
+      // 边界过滤，保留 cloud 原始数据作为后续训练集导出来源。
+      type Mem0Result = (typeof results)[number];
+      const projected: Array<{ id: string; text: string; score?: number; raw: Mem0Result }> = results
+        .map((result, idx) => ({
+          id: (result as { id?: string }).id ?? `mem0-${this.userId}-${idx}`,
+          text: result.memory ?? result.data?.memory ?? '',
+          score: result.score,
+          raw: result,
+        }))
+        .filter((p) => p.text.length > 0);
+
+      const filtered = deletedIds.size > 0
+        ? projected.filter((p) => !deletedIds.has(p.id))
+        : projected;
+
+      if (filtered.length === 0) {
+        return {
+          summary: '',
+          entries: [],
+          meta: {
+            topK: this.retrieveTopK,
+            returned: results.length,
+            filteredOut: deletedIds.size > 0 ? projected.length : 0,
+          },
+        };
+      }
+
       const summaryParts = [
         '[Relevant Memories]',
-        ...results
-          .map((result) => result.memory ?? result.data?.memory ?? '')
-          .filter(Boolean)
-          .map((text) => `- ${text}`),
+        ...filtered.map((p) => `- ${p.text}`),
       ];
+
+      const entries: MemoryEntry[] = filtered.map((p) => ({
+        id: p.id,
+        turn: -1,
+        role: 'system',
+        content: p.text,
+        tokenCount: estimateTokens(p.text),
+        timestamp: Date.now(),
+      }));
 
       return {
         summary: summaryParts.join('\n'),
-        entries: [],  // mem0 的 memory 不是 MemoryEntry 格式，query_memory tool 只用 summary
+        entries,
         meta: {
           topK: this.retrieveTopK,
           returned: results.length,
-          scores: results.map((r) => r.score).filter((s) => s !== undefined),
+          filteredOut: deletedIds.size > 0 ? projected.length - filtered.length : 0,
+          scores: filtered.map((p) => p.score).filter((s): s is number => s !== undefined),
         },
       };
     } catch (err) {
@@ -226,6 +269,17 @@ export class Mem0Memory implements Memory {
         entries: [],
         meta: { error: String(err) },
       };
+    }
+  }
+
+  /** ANN.1：失败静默返回空集合，详见 LegacyMemory 同名方法。*/
+  private async loadDeletedIds(): Promise<ReadonlySet<string>> {
+    if (!this.deletionFilter) return new Set();
+    try {
+      return await this.deletionFilter.listDeleted();
+    } catch (err) {
+      console.warn('[Mem0Memory] deletionFilter.listDeleted failed:', err);
+      return new Set();
     }
   }
 
