@@ -20,6 +20,19 @@
 
 ## 最近完成
 
+**新增 op `script.patch_manifest_structure`（2026-04-26，本会话）**
+- 起因：用户提 manifest 太大，agent 改结构字段时要把所有 segment.content 回传太重；问能不能加"只改结构字段、不动 segments"的接口
+- 新 op：[apps/server/src/operations/script/patch-manifest-structure.mts](apps/server/src/operations/script/patch-manifest-structure.mts)
+  - 5 个可选字段：`characters` / `backgrounds` / `stateSchema` / `memoryConfig` / `promptAssemblyOrder`；整体替换语义（不做 by-id upsert）；至少一个字段否则 INVALID_INPUT
+  - 沿用 `replace_script_manifest` 的最少校验（`z.unknown()` + 浅形状判断），不深 zod 让 schema 自由演进
+  - exec：`getBaselineVersion + cloneManifest` → `applyStructuralPatch` → `scriptVersionService.create(status:'draft')`；hash 去重沿用 service 默认
+  - 纯 patch 逻辑 `applyStructuralPatch` 通过 `_internal` export 给单测
+- 注册：[registry.mts](apps/server/src/operations/registry.mts) ALL_OPS 写 batch 段加一行
+- 守门：[__tests__/patch-manifest-structure.test.mts](apps/server/src/operations/__tests__/patch-manifest-structure.test.mts) 21 用例，重点 invariant **chapters/segments 在任何 patch 路径下都不被改写**
+- 验证：`pnpm typecheck` 4 个 package 全绿；`bun --env-file=.env.test test` 138/138（含新增 21）
+- 范围决策：用户原话列了 4 字段（characters / backgrounds / stateSchema / promptAssemblyOrder），加 memoryConfig 因为和 stateSchema 同属"运行时结构"且体量小。**未包含** `enabledTools` / `disabledAssemblySections` / `defaultScene` / 展示元数据 —— 后续如有需求扩 `PATCHABLE_FIELDS` + 加分支即可（每字段独立 if 块互不影响）
+- 未做：worktree 第一次开工漏跑 `pnpm setup:env`，已补；无需改 v2.0.md（这是 platform tooling 不是 product feature）
+
 **Memory eval infra 全套（2026-04-26，本会话）**
 - 用户目标：搭对比评测 noop / mem0 / DeepSeek thinking 模式的 harness
 - 一波 13 commit 在 `claude/compassionate-goodall-1acdca` 上演化，最后做 clean replay 重新落到 main 上变成 1 个大 feat commit

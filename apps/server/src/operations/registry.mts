@@ -15,6 +15,7 @@ import { getFullManifestOp } from '#internal/operations/script/get-full-manifest
 import { listAssetsOp } from '#internal/operations/script/list-assets';
 import { updateSegmentContentOp } from '#internal/operations/script/update-segment-content';
 import { replaceManifestOp } from '#internal/operations/script/replace-manifest';
+import { patchManifestStructureOp } from '#internal/operations/script/patch-manifest-structure';
 import { publishVersionOp } from '#internal/operations/script/publish-version';
 import { uploadAssetOp } from '#internal/operations/script/upload-asset';
 import { addBackgroundOp } from '#internal/operations/script/add-background';
@@ -34,6 +35,7 @@ export const ALL_OPS = [
   // script.* —— 写
   updateSegmentContentOp,
   replaceManifestOp,
+  patchManifestStructureOp,
   publishVersionOp,
   // script.* —— 资产写
   uploadAssetOp,
