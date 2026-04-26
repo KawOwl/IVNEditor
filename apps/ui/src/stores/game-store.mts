@@ -328,9 +328,20 @@ export const useGameStore = create<GameState>((set) => ({
 
       // 关掉 catch-up：无论 pending 状态、玩家是否在末端，新 Sentence 到达不自动推进。
       // 仅追加 Sentence，游标不动。玩家通过点击 / 空格 / DialogBox 的 ▼ 提示手动推进。
+      //
+      // 例外：**player_input 类型的 sentence 永远自动推进游标到自己上面**。
+      //   理由：player_input 是玩家刚提交的回复（点选项 / 自由输入），
+      //   不存在 LLM 打字机内容，应该立刻可见，不该让玩家再点一下才看到。
+      //   2026-04-23 关 catch-up 是为了保护"LLM 吐新内容时不要跳过正在打字的那条"，
+      //   player_input 不在该问题域内（玩家不会跳过自己的话），单独豁免。
+      //
+      //   边界：restore 回放时每条历史 player_input 也会触发这条；
+      //   但 restored 流程结束时 finalizeCursor 会强制把游标定到末位
+      //   （ws-message-handlers.mts:226-229），中间过程对玩家不可见。
+      const isPlayerInput = sentence.kind === 'player_input';
       return {
         parsedSentences: next,
-        visibleSentenceIndex: vsi,
+        visibleSentenceIndex: isPlayerInput ? next.length - 1 : vsi,
         catchUpPending: state.catchUpPending,
         currentScene: nextScene,
         lastSceneTransition: nextTransition,

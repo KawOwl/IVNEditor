@@ -106,11 +106,12 @@ function renderBody(
   }
 
   if (sentence.kind === 'player_input') {
-    // 玩家的回复气泡 —— speaker 显示"我"，右对齐区分来自角色的对话
+    // 玩家的回复——和 Backlog 中 player_input 的样式保持一致：左侧细 border
+    // + 小号"我"标题 + 左对齐文字。原来的右对齐蓝色大标题样式被替换。
     return (
-      <div aria-label="dialog-player-input">
-        <div className="mb-2 flex justify-end text-sm font-semibold text-sky-300">我</div>
-        <p className="text-base leading-relaxed text-sky-100/90 whitespace-pre-wrap text-right">
+      <div className="border-l-2 border-sky-400/40 pl-3" aria-label="dialog-player-input">
+        <div className="mb-1 text-xs font-semibold text-sky-300/90">我</div>
+        <p className="text-base leading-relaxed text-sky-100/80 whitespace-pre-wrap">
           {textToShow}
           {isTyping && <span className="ml-0.5 inline-block h-4 w-[0.5ch] animate-pulse bg-sky-300/60 align-text-bottom" />}
         </p>
