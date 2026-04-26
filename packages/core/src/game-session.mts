@@ -127,6 +127,7 @@ export { createRecordingCoreEventSink } from '#internal/game-session/recording-c
 export type {
   GameSessionConfig,
   GenerateTraceHandle,
+  NestedGenerationTraceHandle,
   RestoreConfig,
   SessionPersistence,
   SessionTracing,
@@ -495,11 +496,12 @@ export class GameSession {
   }
 
   private async runGeneratePhase(turn: number): Promise<{ stopped: boolean }> {
+    const llmClient = this.llmClient;
     const runtime = createGenerateTurnRuntime({
       turn,
       stateStore: this.stateStore,
       memory: this.memory,
-      llmClient: this.llmClient,
+      llmClient,
       segments: this.segments,
       enabledTools: this.enabledTools,
       tokenBudget: this.tokenBudget,
@@ -513,6 +515,23 @@ export class GameSession {
       characters: this.characters,
       backgrounds: this.backgrounds,
       currentScene: this.currentScene,
+      // narrative-rewrite invoke：默认走 GameSession 自己的 LLMClient.simpleGenerate
+      // （单轮、无 tools、无 followup）。session-manager 不需要额外注入。
+      rewriter: async (opts) => {
+        const out = await llmClient.simpleGenerate({
+          systemPrompt: opts.systemPrompt,
+          userMessage: opts.userMessage,
+          abortSignal: opts.abortSignal,
+          onTextChunk: opts.onTextChunk,
+        });
+        return {
+          text: out.text,
+          finishReason: out.finishReason,
+          model: out.model,
+          inputTokens: out.inputTokens,
+          outputTokens: out.outputTokens,
+        };
+      },
       buildRetrievalQuery: () => this.buildRetrievalQuery(),
       isActive: () => this.active,
       onScenarioEnd: (reason) => {

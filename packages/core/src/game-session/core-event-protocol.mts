@@ -335,6 +335,17 @@ export function reduceCoreEventProtocol(
       }
       break;
 
+    case 'rewrite-attempted':
+    case 'rewrite-completed':
+      requireTurn();
+      // rewrite 在 generate 完成 + assistant message 闭合后触发，phase 应当
+      // 是 'generated'。但允许 'generating'（极限情况：rewrite 在 phase
+      // 转移之前 emit）以避免误报。
+      if (state.phase !== 'generated' && state.phase !== 'generating') {
+        errors.push(`${event.type} outside generated/generating phase (${state.phase})`);
+      }
+      break;
+
     case 'diagnostics-updated':
       break;
 

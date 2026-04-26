@@ -14,7 +14,7 @@
  * 详见 .claude/plans/turn-bounded-generate.md 和 .claude/plans/messages-model.md。
  */
 
-import { streamText, stepCountIs, hasToolCall, tool, zodSchema, type ToolSet, type ModelMessage } from 'ai';
+import { streamText, generateText, stepCountIs, hasToolCall, tool, zodSchema, type ToolSet, type ModelMessage } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import type { ToolHandler } from '#internal/tool-executor';
@@ -869,6 +869,78 @@ export class LLMClient {
       toolCalls: toolCallLog,
       finishReason,
       usage,
+    };
+  }
+
+  /**
+   * 简化版 LLM 调用——单轮 system + user message，无 tools / 无 followup /
+   * 无 step 协议。给辅助任务（typical: narrative-rewrite）用。
+   *
+   * 跟 generate() 共享 model + config，但路径独立——不影响主路径的 followup
+   * 链。streaming 版本 PR3 加（在 onTextChunk 启用时切到 streamText）。
+   */
+  async simpleGenerate(opts: {
+    systemPrompt: string;
+    userMessage: string;
+    abortSignal?: AbortSignal;
+    maxOutputTokens?: number;
+    onTextChunk?: (chunk: string) => void;
+  }): Promise<{
+    text: string;
+    finishReason: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    model: string;
+  }> {
+    const messages: ModelMessage[] = [{ role: 'user', content: opts.userMessage }];
+    const maxOutputTokens = opts.maxOutputTokens ?? this.config.maxOutputTokens;
+
+    if (opts.onTextChunk) {
+      // 流式路径——PR3 触发，把 chunk 同步给上游 (UI reveal)
+      const stream = streamText({
+        model: this.getModel(),
+        system: opts.systemPrompt,
+        messages,
+        abortSignal: opts.abortSignal,
+        maxOutputTokens,
+      });
+      let fullText = '';
+      for await (const part of stream.fullStream) {
+        if (part.type === 'text-delta') {
+          const delta = (part as { text?: string; delta?: string }).text
+            ?? (part as { text?: string; delta?: string }).delta
+            ?? '';
+          if (delta) {
+            fullText += delta;
+            opts.onTextChunk(delta);
+          }
+        }
+      }
+      const finishReason = await stream.finishReason;
+      const usage = await stream.usage;
+      return {
+        text: fullText,
+        finishReason: String(finishReason),
+        inputTokens: usage?.inputTokens,
+        outputTokens: usage?.outputTokens,
+        model: this.config.model,
+      };
+    }
+
+    // 终态版本——PR1/PR2 走这条
+    const result = await generateText({
+      model: this.getModel(),
+      system: opts.systemPrompt,
+      messages,
+      abortSignal: opts.abortSignal,
+      maxOutputTokens,
+    });
+    return {
+      text: result.text,
+      finishReason: String(result.finishReason),
+      inputTokens: result.usage?.inputTokens,
+      outputTokens: result.usage?.outputTokens,
+      model: this.config.model,
     };
   }
 

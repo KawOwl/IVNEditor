@@ -8,6 +8,8 @@
   "imports": {
     "#internal/narrative-parser-v2": "./src/narrative-parser-v2/index.mts",
     "#internal/narrative-parser-v2/*": "./src/narrative-parser-v2/*.mts",
+    "#internal/narrative-rewrite": "./src/narrative-rewrite/index.mts",
+    "#internal/narrative-rewrite/*": "./src/narrative-rewrite/*.mts",
     "#internal/*": "./src/*.mts"
   },
   "exports": {
@@ -25,6 +27,16 @@
       "types": "./src/narrative-parser-v2/*.mts",
       "import": "./src/narrative-parser-v2/*.mts",
       "default": "./src/narrative-parser-v2/*.mts"
+    },
+    "./narrative-rewrite": {
+      "types": "./src/narrative-rewrite/index.mts",
+      "import": "./src/narrative-rewrite/index.mts",
+      "default": "./src/narrative-rewrite/index.mts"
+    },
+    "./narrative-rewrite/*": {
+      "types": "./src/narrative-rewrite/*.mts",
+      "import": "./src/narrative-rewrite/*.mts",
+      "default": "./src/narrative-rewrite/*.mts"
     },
     "./evaluation/*": {
       "types": "./src/evaluation/*.mts",

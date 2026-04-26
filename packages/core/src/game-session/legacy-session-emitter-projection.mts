@@ -68,6 +68,10 @@ const projectionHandlers: ProjectionHandlers = {
   // ANN.1：legacy emitter 不消费 retrieval 事件 —— 直接由 ws-core-event-sink
   // 转成 WS message 给客户端 game-store。
   'memory-retrieval': ignoreEvent,
+  // PR1：rewrite 事件仅 observability，legacy emitter 不消费。PR2 起会用
+  // 这两个事件驱动 UI 遮罩 / reveal 状态。
+  'rewrite-attempted': ignoreEvent,
+  'rewrite-completed': ignoreEvent,
   'diagnostics-updated': projectDiagnosticsUpdated,
 };
 

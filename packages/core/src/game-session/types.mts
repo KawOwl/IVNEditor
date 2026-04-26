@@ -71,6 +71,17 @@ export interface GenerateTraceHandle {
   }): void;
 
   startToolCall(name: string, args: unknown): ToolCallTraceHandle;
+  /**
+   * 开一个 child generation observation，挂在主 generate trace 下。
+   * 用于记录主 LLM 路径之外的辅助 LLM call（典型：narrative-rewrite）。
+   * Langfuse UI 里这些 call 跟主 step 在同一 trace 时间线上可见。
+   */
+  startNestedGeneration(opts: {
+    name: string;
+    model?: string;
+    input?: unknown;
+    metadata?: Record<string, unknown>;
+  }): NestedGenerationTraceHandle;
   event(name: string, input?: unknown, metadata?: Record<string, unknown>): void;
   error(message: string, phase: string): void;
   end(finalOutput?: unknown): void;
@@ -78,6 +89,17 @@ export interface GenerateTraceHandle {
 
 export interface ToolCallTraceHandle {
   end(output: unknown, error?: string): void;
+}
+
+export interface NestedGenerationTraceHandle {
+  end(opts: {
+    text?: string;
+    finishReason?: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    error?: string;
+    metadata?: Record<string, unknown>;
+  }): void;
 }
 
 export interface SessionTracing {

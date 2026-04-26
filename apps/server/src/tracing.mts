@@ -17,6 +17,7 @@ import type {
   SessionTracing,
   GenerateTraceHandle,
   ToolCallTraceHandle,
+  NestedGenerationTraceHandle,
 } from '@ivn/core/game-session';
 import { getServerEnv } from '#internal/env';
 
@@ -285,6 +286,62 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
     }
   }
 
+  startNestedGeneration(opts: {
+    name: string;
+    model?: string;
+    input?: unknown;
+    metadata?: Record<string, unknown>;
+  }): NestedGenerationTraceHandle {
+    try {
+      const startTime = new Date();
+      const gen = this.trace.generation({
+        name: opts.name,
+        model: opts.model,
+        input: opts.input,
+        startTime,
+        metadata: opts.metadata,
+      });
+      return {
+        end: (endOpts: {
+          text?: string;
+          finishReason?: string;
+          inputTokens?: number;
+          outputTokens?: number;
+          error?: string;
+          metadata?: Record<string, unknown>;
+        }) => {
+          try {
+            const usage = endOpts.inputTokens != null || endOpts.outputTokens != null
+              ? { input: endOpts.inputTokens, output: endOpts.outputTokens }
+              : undefined;
+            if (endOpts.error) {
+              gen.end({
+                output: endOpts.text,
+                level: 'ERROR',
+                statusMessage: endOpts.error,
+                usage,
+                metadata: endOpts.metadata,
+              });
+            } else {
+              gen.end({
+                output: endOpts.text != null
+                  ? { text: endOpts.text, finishReason: endOpts.finishReason }
+                  : undefined,
+                usage,
+                metadata: endOpts.metadata,
+              });
+            }
+          } catch (err) {
+            console.error('[Tracing] nested generation end failed:', err);
+          }
+        },
+      };
+    } catch (err) {
+      console.error('[Tracing] startNestedGeneration failed:', err);
+      return NOOP_NESTED_GEN_HANDLE;
+    }
+  }
+
   event(name: string, input?: unknown, metadata?: Record<string, unknown>): void {
     try {
       this.trace.event({
@@ -327,10 +384,15 @@ const NOOP_TOOL_HANDLE: ToolCallTraceHandle = {
   end: () => {},
 };
 
+const NOOP_NESTED_GEN_HANDLE: NestedGenerationTraceHandle = {
+  end: () => {},
+};
+
 const NOOP_TRACE_HANDLE: GenerateTraceHandle = {
   setInput: () => {},
   recordStep: () => {},
   startToolCall: () => NOOP_TOOL_HANDLE,
+  startNestedGeneration: () => NOOP_NESTED_GEN_HANDLE,
   event: () => {},
   error: () => {},
   end: () => {},

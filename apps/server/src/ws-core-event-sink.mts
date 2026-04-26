@@ -180,6 +180,11 @@ const websocketCoreEventHandlers: WebSocketCoreEventHandlers = {
 
   'memory-compaction-completed': ignoreEvent,
 
+  // PR1：rewrite 事件仅 trace + harness 用，UI 暂不消费。PR2 起会用 status
+  // 信号 + rewrite-completed 触发遮罩切换。
+  'rewrite-attempted': ignoreEvent,
+  'rewrite-completed': ignoreEvent,
+
   /**
    * ANN.1：把 retrieval 事件原样转发给客户端。client 的 ws-message-handlers
    * 收到后塞进 game-store.memoryRetrievals，MemoryPanel 渲染。

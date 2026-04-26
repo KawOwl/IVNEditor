@@ -193,6 +193,11 @@ export function createRecordingSessionOutputSink(): RecordingSessionOutputSink {
         return;
       case 'memory-compaction-completed':
         return;
+      case 'rewrite-attempted':
+      case 'rewrite-completed':
+        // PR1：rewrite 是 observability-only，不影响 recording session output。
+        // PR2 起需要在这里把 narrative-segment-finalized 重投影成 rewrite 后的版本。
+        return;
       case 'diagnostics-updated':
         output.debugSnapshots.push(copyDebugSnapshot(event.diagnostics));
         return;
