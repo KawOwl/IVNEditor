@@ -9,7 +9,7 @@
  * 和"正式玩家"（走 scriptId + kind=production）。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { InputPanel } from '#internal/ui/InputPanel';
 import { VNStageContainer } from '#internal/ui/play/vn/VNStageContainer';
 import { useGameStore } from '@/stores/game-store';
@@ -20,6 +20,7 @@ import {
   clearStoredPlaythroughId,
   type RemoteSession,
 } from '@/stores/ws-client-emitter';
+import { fetchWithAuth } from '@/stores/player-session-store';
 import type { ScriptManifest } from '@ivn/core/types';
 import { getBackendUrl } from '@/lib/backend-url';
 import { cn } from '@/lib/utils';
@@ -234,9 +235,8 @@ export function PlayPanel({
   }, []);
 
   const handleOpenFeedback = useCallback(() => {
-    if (!currentPlaythroughId) return;
     setFeedbackOpen(true);
-  }, [currentPlaythroughId]);
+  }, []);
 
   const handleCloseFeedback = useCallback(() => setFeedbackOpen(false), []);
 
@@ -344,13 +344,8 @@ export function PlayPanel({
           </button>
           <button
             onClick={handleOpenFeedback}
-            disabled={!currentPlaythroughId}
-            title={
-              currentPlaythroughId
-                ? '查看并复制当前 playthroughId 用于反馈'
-                : '游戏未开始，无 playthroughId 可复制'
-            }
-            className="text-[11px] px-2 py-0.5 rounded text-zinc-600 hover:text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="提交问卷反馈"
+            className="text-[11px] px-2 py-0.5 rounded text-zinc-600 hover:text-zinc-400 transition-colors"
           >
             反馈
           </button>
@@ -375,7 +370,7 @@ export function PlayPanel({
       {/* Input area */}
       <InputPanel onSubmit={handlePlayerInput} />
 
-      {feedbackOpen && currentPlaythroughId && (
+      {feedbackOpen && (
         <FeedbackModal
           playthroughId={currentPlaythroughId}
           onClose={handleCloseFeedback}
@@ -386,88 +381,233 @@ export function PlayPanel({
 }
 
 // ============================================================================
-// FeedbackModal — 显示当前 playthroughId 供用户复制贴到反馈渠道
+// FeedbackModal — 5 题问卷直接落 /api/feedback (PFB.1)
 //
-// 不只走 navigator.clipboard.writeText：那个 API 在 http / 焦点不在 / 沙箱
-// iframe 等场景会静默失败。Modal 里同时 render 一个 readOnly input + autoFocus
-// + select()，用户即便复制按钮失败也能 ⌘C 兜底。
+// 选项原文必须与后端 routes/feedback.mts FEEDBACK_OPTIONS 同步发布；后端用
+// zod enum 严格校验，前端漂移时 400 拦截。
 // ============================================================================
+
+const Q4_OTHER_LABEL = '其他';
+
+const QUESTIONS = [
+  {
+    key: 'q1' as const,
+    title: '您平时看剧情最常玩/用什么？',
+    options: [
+      '橙光/易次元等互动小说',
+      '底特律变人、隐形守护者等单机剧情游戏',
+      '线下剧本杀 / 跑团（TRPG） / 语C聊天',
+      '基本只看纯文本的网文/传统小说',
+    ],
+  },
+  {
+    key: 'q2' as const,
+    title: '您以前玩互动故事（或看小说）时，最让你受不了的点是什么？',
+    options: [
+      '角色像鱼的记忆，前面的选择后面全忘了',
+      '剧情逻辑崩坏，角色强行降智',
+      '选项全是假的，选什么最后结局都一样',
+      '必须自己动脑子做选择，感觉太累了',
+    ],
+  },
+  {
+    key: 'q3' as const,
+    title: '在体验《潜台词》这款产品时，你觉得哪个功能/体验最吸引你？',
+    options: [
+      '给我一个输入框自由打字，AI真的能懂我的意思并接上剧情',
+      '生成的剧情文本质量很高，逻辑严密不降智',
+      '既有现成的选项，关键时候也能自己打字，两不误',
+    ],
+  },
+  {
+    key: 'q4' as const,
+    title: '在以往使用同类AI或互动App时，你曾经为了什么内容付费？',
+    options: [
+      '购买体力/次数：为了能继续和AI对话或开启新剧情',
+      '购买"后悔药"：为了回溯剧情，修改之前选错的决定',
+      '解锁内容：为了看隐藏结局、番外或精美角色立绘',
+      '尚未付费过，通常只体验免费部分',
+      Q4_OTHER_LABEL,
+    ],
+  },
+  {
+    key: 'q5' as const,
+    title: '您能接受AI参与互动小说创作到哪种程度？',
+    options: [
+      '仅辅助生成选项文案',
+      '生成次要支线/NPC的实时互动',
+      '生成主线关键剧情',
+      '完全不接受AI，纯人工创作最好',
+    ],
+  },
+] as const;
+
+type AnswerKey = typeof QUESTIONS[number]['key'];
+type Answers = Partial<Record<AnswerKey, string>>;
 
 function FeedbackModal({
   playthroughId,
   onClose,
 }: {
-  playthroughId: string;
+  playthroughId: string | null;
   onClose: () => void;
 }) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [answers, setAnswers] = useState<Answers>({});
+  const [q4Other, setQ4Other] = useState('');
+  const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    inputRef.current?.select();
+  const showQ4Other = answers.q4 === Q4_OTHER_LABEL;
+
+  const canSubmit = useMemo(() => {
+    if (submitState === 'submitting' || submitState === 'success') return false;
+    if (QUESTIONS.some((q) => !answers[q.key])) return false;
+    if (showQ4Other && q4Other.trim().length === 0) return false;
+    return true;
+  }, [answers, q4Other, showQ4Other, submitState]);
+
+  const handleSelect = useCallback((key: AnswerKey, value: string) => {
+    setAnswers((prev) => ({ ...prev, [key]: value }));
+    if (key === 'q4' && value !== Q4_OTHER_LABEL) {
+      setQ4Other('');
+    }
   }, []);
 
-  const handleCopy = useCallback(async () => {
+  const handleSubmit = useCallback(async () => {
+    if (!canSubmit) return;
+    setSubmitState('submitting');
+    setErrorMsg(null);
     try {
-      await navigator.clipboard.writeText(playthroughId);
-      setCopyState('copied');
-    } catch {
-      // clipboard API 没权限：input 已经 select，提示用户 ⌘C
-      inputRef.current?.select();
-      setCopyState('failed');
+      const res = await fetchWithAuth(`${getBackendUrl()}/api/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playthroughId,
+          q1: answers.q1,
+          q2: answers.q2,
+          q3: answers.q3,
+          q4: answers.q4,
+          q4Other: showQ4Other ? q4Other.trim() : null,
+          q5: answers.q5,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: '提交失败' }));
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      setSubmitState('success');
+      // 1.5s 后自动关
+      setTimeout(onClose, 1500);
+    } catch (err) {
+      setSubmitState('error');
+      setErrorMsg(err instanceof Error ? err.message : String(err));
     }
-  }, [playthroughId]);
+  }, [answers, canSubmit, onClose, playthroughId, q4Other, showQ4Other]);
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
       onClick={onClose}
     >
       <div
-        className="w-[28rem] max-w-[90vw] bg-zinc-900 border border-zinc-700 rounded p-5 space-y-4 shadow-2xl"
+        className="w-full max-w-2xl max-h-[85vh] flex flex-col bg-zinc-900 border border-zinc-700 rounded shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="text-sm font-medium text-zinc-200">反馈 · 当前游玩 ID</h2>
-        <p className="text-[11px] text-zinc-400 leading-relaxed">
-          把下面这串 ID 一起发给开发者，方便定位你这局的日志和数据库记录。
-        </p>
-        <input
-          ref={inputRef}
-          type="text"
-          value={playthroughId}
-          readOnly
-          onFocus={(e) => e.currentTarget.select()}
-          style={{ fontSize: 12 }}
-          className="w-full font-mono px-3 py-2 rounded bg-zinc-800 border border-zinc-700 text-zinc-200 focus:outline-none focus:border-zinc-500 select-all"
-        />
-        <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              'text-[11px] flex-1',
-              copyState === 'copied' && 'text-emerald-400',
-              copyState === 'failed' && 'text-amber-400',
-              copyState === 'idle' && 'text-zinc-500',
-            )}
-          >
-            {copyState === 'copied' && '已复制到剪贴板'}
-            {copyState === 'failed' && '剪贴板失败，请手动 ⌘C / Ctrl+C 复制'}
-            {copyState === 'idle' && ''}
-          </span>
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="text-xs px-3 py-1.5 rounded bg-emerald-700 text-white hover:bg-emerald-600 transition-colors"
-          >
-            复制
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-xs px-3 py-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors"
-          >
-            关闭
-          </button>
+        <div className="flex-none px-5 py-4 border-b border-zinc-800">
+          <h2 className="text-sm font-medium text-zinc-200">反馈问卷（5 题）</h2>
+          <p className="text-[11px] text-zinc-500 mt-1">
+            谢谢你的参与。每题只需选一个选项，全部填完后即可提交。
+          </p>
         </div>
+
+        {submitState === 'success' ? (
+          <div className="flex-1 flex items-center justify-center px-5 py-12">
+            <p className="text-sm text-emerald-400">已收到，谢谢你的反馈 🎉</p>
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
+            {QUESTIONS.map((q, idx) => (
+              <fieldset key={q.key} className="space-y-2">
+                <legend className="text-xs text-zinc-300 leading-relaxed">
+                  <span className="text-zinc-500 mr-1">{idx + 1}.</span>
+                  <span className="text-red-400 mr-1">*</span>
+                  {q.title}
+                </legend>
+                <div className="space-y-1.5 pl-4">
+                  {q.options.map((opt) => {
+                    const checked = answers[q.key] === opt;
+                    return (
+                      <label
+                        key={opt}
+                        className={cn(
+                          'flex items-start gap-2 px-2 py-1.5 rounded cursor-pointer text-xs leading-relaxed',
+                          checked
+                            ? 'bg-emerald-900/30 text-zinc-100'
+                            : 'text-zinc-400 hover:bg-zinc-800/60',
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name={q.key}
+                          value={opt}
+                          checked={checked}
+                          onChange={() => handleSelect(q.key, opt)}
+                          disabled={submitState === 'submitting'}
+                          className="mt-0.5 accent-emerald-600"
+                        />
+                        <span>{opt}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {q.key === 'q4' && showQ4Other && (
+                  <div className="pl-4">
+                    <input
+                      type="text"
+                      value={q4Other}
+                      onChange={(e) => setQ4Other(e.target.value)}
+                      maxLength={500}
+                      placeholder="请填写你付费过的内容（≤ 500 字）"
+                      disabled={submitState === 'submitting'}
+                      className="w-full px-3 py-1.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs focus:outline-none focus:border-emerald-600"
+                      autoFocus
+                    />
+                  </div>
+                )}
+              </fieldset>
+            ))}
+          </div>
+        )}
+
+        {submitState !== 'success' && (
+          <div className="flex-none px-5 py-3 border-t border-zinc-800 flex items-center gap-2">
+            <span
+              className={cn(
+                'text-[11px] flex-1',
+                submitState === 'error' ? 'text-red-400' : 'text-zinc-500',
+              )}
+            >
+              {submitState === 'error' && (errorMsg ?? '提交失败，请重试')}
+              {submitState === 'submitting' && '提交中…'}
+            </span>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitState === 'submitting'}
+              className="text-xs px-3 py-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 disabled:opacity-50 transition-colors"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!canSubmit}
+              className="text-xs px-3 py-1.5 rounded bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              提交
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

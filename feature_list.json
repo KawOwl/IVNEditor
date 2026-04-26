@@ -639,5 +639,15 @@
     "ref": "packages/core/src/narrative-parser-v2/{state.mts,index.mts,tag-schema.mts,inheritance.mts}",
     "verify": "pnpm typecheck 4 个 package 全绿；pnpm test:core 323/323（从 308 涨 15：inheritance 11 个新兜底场景测 + reducer 1 个 trace 复现集成测 + parser buildParserManifest 1 个新断言 + buildParserManifest 'character 没 sprites' 1 个边界测 + 改动现有 2 个 dialogue 测断言）。trace 端验证：Langfuse 里 grep `dialogue-speaker-sprite-fallback` 量化 LLM 漏摆 speaker 的频率；如果某 speaker 的 detail 长期为 `no-position`，说明该场景台上立绘多到挤不下，可作为 prompt 调优信号。",
     "note": "起因：用户报 trace `784ab8fc-3915-47f0-b757-f7feae0604df`（ivn-engine） —— `<dialogue speaker=\"carina\" to=\"player\" mood=\"curious\">` 没有 <sprite> 子标签且 prev 不在台上，玩家屏幕没看到 carina 立绘。dialogue 上的 mood=\"curious\" 是 silent tolerance 忽略（dialogue 白名单只认 speaker/to/hear/eavesdroppers），所以靠 mood 属性自动补 sprite 不可行；用户决策走 fallback。设计上有两个微决策：(a) 触发条件是'speaker 不在 resolved sprites'而不是用户字面的'pendingSprites 为空'——更覆盖 `<stage/>` 清场后忘补 + LLM 只放配角忘 speaker 两类 case；只字面看就只能修最浅一层。(b) 兜底事件归在 degrades 通道（与 V.8 dialogue-pronoun-as-speaker 同模式），不算降级只是中性观测，方便 Langfuse 直接 grep 同前缀。Prompt 不改，让 fallback 是纯协议层安全网，不是 LLM 偷懒的借口。"
+  },
+  {
+    "id": "PFB.1",
+    "title": "玩家游玩内问卷反馈：5 题问卷直接落库",
+    "description": "把玩家游玩界面右上角现有'反馈'按钮（之前只是显示 playthroughId 让用户复制粘贴到外部飞书表单）改造成 5 题问卷 modal，提交后直接 POST 到 /api/feedback 落到我们自己的 DB，不走 iframe / 跳转外部表单（避免移动端切 tab 后 WS 断开 + 飞书表单 X-Frame-Options 风险）。问题来源：飞书表单原版的 5 道单选题。Q1 看剧情偏好 / Q2 互动小说痛点 / Q3 《潜台词》最吸引点 / Q4 付费过的内容（含'其他'自填）/ Q5 AI 接受度。改动：(1) schema.mts 加 `feedback` 表（id / userId FK users / playthroughId FK playthroughs nullable set null / q1-q5 text NOT NULL / q4Other text nullable / createdAt）；(2) drizzle-kit 生成首条新 baseline migration `0000_add_feedback`；(3) feedback-service.mts create 方法；(4) routes/feedback.mts POST /api/feedback，requireAnyIdentity 拿 userId，zod-style enum 校验防前端漂移，q4='其他' 时 q4Other 必填非空，可选 playthroughId 校验 ownership；(5) index.mts 挂路由；(6) PlayPanel.tsx FeedbackModal 重写：5 个 radio group + Q4 其他 输入框 + 提交按钮 disabled until 全填，提交成功显示'已收到，谢谢' 1.5s 后自动关 modal；(7) 反馈按钮不再 disable 在 'currentPlaythroughId 为空' 上——没开始游戏也能反馈，传 playthroughId: null。",
+    "status": "pending",
+    "type": "e2e",
+    "ref": "apps/server/src/db/schema.mts + apps/server/drizzle/0000_*.sql + apps/server/src/{services/feedback-service.mts,routes/feedback.mts,index.mts} + apps/ui/src/ui/play/PlayPanel.tsx",
+    "verify": "pnpm typecheck 4 package 全绿；apps/server bun --env-file ../../.env.test test 全绿（含新增 feedback service / route 单测）；浏览器端到端：玩家页点反馈 → 5 题填完 → 提交 → DB 出现一行 `feedback` 含 userId / playthroughId / q1-q5 / q4Other（仅当选'其他'）/ createdAt；漏填提交按钮 disabled；选'其他'但未填时提交 disabled。",
+    "note": "选型决策：飞书表单 iframe 嵌入风险高（X-Frame-Options / CSP frame-ancestors 大概率挡住 + 移动端嵌入体验差 + 跨域 iframe 拿不到提交完成事件），跳新 tab 在手机端切走 30s+ WS 大概率断（onclose 直接 setStatus('idle') 不自动重连，玩家要手点'继续'重连）。直接落自家 DB 完全绕开这两条。userId 用 Identity.userId 而非 sessionId 沿用 playthroughs idiom（用户原话'user_id 用 session_id 占位'是为飞书 prefill 字段服务，自家表已无此约束）。playthroughId 设 nullable + onDelete: 'set null'（玩家在没有 playthrough 上下文时也能反馈；剧本如果删掉，反馈仍保留）。问卷字段直接存中文选项原文（不做 enum slug 化），简化前后端，未来题目改文案就改前后端常量同步发布；后端 zod enum 严格校验防漂移。drizzle 走 baseline reset 后第一条新 migration 0000_*.sql。"
   }
 ]

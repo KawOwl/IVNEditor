@@ -9,12 +9,17 @@
 
 ## 当前任务
 
-**OP.5 = Op A: `script.extract_referenced_ids`**（暂停，等下一会话恢复）
+**PFB.1 玩家游玩内问卷反馈：5 题问卷直接落库**（in-progress）
+- 类型：实现（产品 feature，e2e）
+- 来源：用户临时插入。原诉求是把玩家页右上角"反馈"按钮接入飞书表单（prefill playthrough_id / user_id），讨论中权衡 iframe vs 跳转 vs 自家落库后选 D = 自家 `feedback` 表
+- 目标：5 题问卷 modal + POST /api/feedback 直接写自家 DB；规避 iframe（X-Frame-Options）+ 跳转新 tab（手机端切走 WS 大概率断 + 现状 onclose 不自动重连）双重风险
+- 进展：选型已定 + main 同步完成（fast-forward 拉入 700addd `feat(mcp): add script.patch_manifest_structure op`）+ feature_list.json 加 PFB.1 entry。下一步：schema.mts 加 feedback 表 → drizzle-kit generate 0000 baseline 后第一条 migration → feedback-service + route → PlayPanel.tsx FeedbackModal 重写 → typecheck + tests + 浏览器 smoke
+
+**OP.5 = Op A: `script.extract_referenced_ids`**（暂停，PFB.1 完了再回来）
 - 类型：实现（op-kit 业务能力扩展）
 - 来源：op-kit roadmap 下一批 P0 lint 套件首个
 - 目标：补完"修复型 agent"工具链中的"知道剧本实际引用了什么"这块拼图，作为 OP.7 propose_manifest_alignment 的纯函数上游
 - 进展：**plan 已就绪，未开工**。完整 plan + 恢复指令模板见 `docs/refactor/op-a-extract-referenced-ids-plan.md`（顶部"恢复上下文指令"段直接 copy 给新会话即可开工）
-- 状态：本会话用户临时插入了 EUX.1（编辑器试玩 tab 接入存档列表），已完成；OP.5 仍是下一个待开工项
 
 **辅助任务（待评估）**：V.x 这条线的"本地连 ivn-test 跑 E2E 验证"还没跑。是否在 OP.5 之前 / 之后 / 并行做，看用户指示。
 

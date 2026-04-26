@@ -342,3 +342,38 @@ export const scriptAssets = pgTable('script_assets', {
 }, (table) => [
   index('idx_script_assets_script').on(table.scriptId),
 ]);
+
+// ============================================================================
+// Feedback — 玩家游玩内问卷反馈（PFB.1）
+// ============================================================================
+//
+// 玩家页右上角"反馈"按钮的 5 题问卷答案。直接落自家 DB，不再走外部表单。
+// 选项原文（中文）直接存 text 列，简化前后端；后端用 zod enum 严格校验防漂移。
+// q4 选 '其他' 时 q4_other 必填（非空 trim 后非空字符串），其余情况下 q4_other 为 null。
+// playthroughId 可空：玩家在没启动游戏时也允许反馈；剧本被软删时反馈记录保留。
+export const feedback = pgTable('feedback', {
+  id: text('id').primaryKey(),
+  userId: text('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  /** 提交时的当前 playthrough（如果有）。剧本删除不级联删反馈，置 null 即可 */
+  playthroughId: text('playthrough_id')
+    .references(() => playthroughs.id, { onDelete: 'set null' }),
+  /** Q1 看剧情偏好 */
+  q1: text('q1').notNull(),
+  /** Q2 互动小说痛点 */
+  q2: text('q2').notNull(),
+  /** Q3 《潜台词》最吸引点 */
+  q3: text('q3').notNull(),
+  /** Q4 付费过的内容（含 '其他' 选项） */
+  q4: text('q4').notNull(),
+  /** Q4 选 '其他' 时的自填内容（其它选项时为 null） */
+  q4Other: text('q4_other'),
+  /** Q5 AI 接受度 */
+  q5: text('q5').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_feedback_user_id').on(table.userId),
+  index('idx_feedback_playthrough_id').on(table.playthroughId),
+  index('idx_feedback_created_at').on(table.createdAt),
+]);
