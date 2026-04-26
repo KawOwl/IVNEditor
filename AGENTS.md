@@ -137,6 +137,13 @@ All DB schema changes must go through Drizzle's migration workflow.
   then edit only the generated SQL file.
 - Commit the generated SQL, `drizzle/meta/_journal.json`, and the generated
   `drizzle/meta/*_snapshot.json` together.
+- Before committing migration files, fetch `origin/main` and compare the local
+  `_journal.json` against `git show origin/main:apps/server/drizzle/meta/_journal.json`.
+  If `main` already contains a migration whose `idx` is the same as (or newer
+  than) the one you just generated, a parallel worktree raced you. Fast-forward
+  `main` (`git merge --ff-only origin/main`), delete the generated SQL +
+  snapshot, then re-run `drizzle-kit generate` so your new migration's `idx`
+  follows the latest entry on `main`. Re-run `drizzle-kit check` afterwards.
 - Do not hand-create migration SQL files, hand-edit `_journal.json`, or omit
   snapshots. A one-off repair may touch metadata only when the repair itself is
   scripted, reviewed, and documented.
