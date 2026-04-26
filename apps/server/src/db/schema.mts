@@ -377,3 +377,82 @@ export const feedback = pgTable('feedback', {
   index('idx_feedback_playthrough_id').on(table.playthroughId),
   index('idx_feedback_created_at').on(table.createdAt),
 ]);
+
+// ============================================================================
+// Memory deletion annotation tables（ANN.1 Step 1）
+// ============================================================================
+//
+// 见 docs/refactor/ann-1-memory-deletion-annotation-plan.md。
+//
+// turn_memory_retrievals      —— 每次 Memory.retrieve 的结果落盘
+// memory_deletion_annotations —— 用户标记"忘掉"某条 memory 的标注
+//
+// 不改 playthroughs.memory_snapshot：tombstone 在 retrieve 边界做 filter。
+
+/**
+ * MemoryEntry 的 JSON 兼容子集，避开 core 类型在 server schema 引入的循环。
+ * 字段对齐 packages/core/src/types.mts 的 MemoryEntry。
+ */
+export interface MemoryEntrySnapshot {
+  id: string;
+  turn: number;
+  role: 'generate' | 'receive' | 'system';
+  content: string;
+  tokenCount: number;
+  timestamp: number;
+  tags?: string[];
+  pinned?: boolean;
+}
+
+export const turnMemoryRetrievals = pgTable('turn_memory_retrievals', {
+  id: text('id').primaryKey(),
+  playthroughId: text('playthrough_id')
+    .notNull()
+    .references(() => playthroughs.id, { onDelete: 'cascade' }),
+  turn: integer('turn').notNull(),
+  /** 关联 batch_id（CoreEvent batchId）；context-assembly 早于 batch 分配时为 null */
+  batchId: text('batch_id'),
+  /** 'context-assembly' | 'tool-call' */
+  source: text('source').notNull(),
+  query: text('query').notNull().default(''),
+  /** MemoryEntry[] 完整快照（含 stable id / role / content / pinned / tags） */
+  entries: jsonb('entries').$type<MemoryEntrySnapshot[]>().notNull(),
+  /** adapter 返回的 summary 文本（mem0 / memorax 时是相关记忆 bullet list） */
+  summary: text('summary').notNull().default(''),
+  /** adapter meta（mem0 topK / scores / error 等）*/
+  meta: jsonb('meta').$type<Record<string, unknown>>(),
+  retrievedAt: timestamp('retrieved_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_turn_memory_retrievals_playthrough_turn').on(table.playthroughId, table.turn),
+  index('idx_turn_memory_retrievals_batch_id').on(table.playthroughId, table.batchId),
+]);
+
+/**
+ * reason_code 枚举（runtime 校验在 service / op 层做，这里只声明）：
+ *   'character-broken' | 'memory-confused' | 'logic-error' | 'other'
+ */
+export const memoryDeletionAnnotations = pgTable('memory_deletion_annotations', {
+  id: text('id').primaryKey(),
+  turnMemoryRetrievalId: text('turn_memory_retrieval_id')
+    .notNull()
+    .references(() => turnMemoryRetrievals.id, { onDelete: 'restrict' }),
+  /** 冗余字段，便于按 playthrough 直接聚合查询 */
+  playthroughId: text('playthrough_id')
+    .notNull()
+    .references(() => playthroughs.id, { onDelete: 'cascade' }),
+  memoryEntryId: text('memory_entry_id').notNull(),
+  /** 删除时刻完整 MemoryEntry 内容（防止源条目漂移 / 被压缩 / 被淘汰）*/
+  memoryEntrySnapshot: jsonb('memory_entry_snapshot').$type<MemoryEntrySnapshot>().notNull(),
+  reasonCode: text('reason_code').notNull(),
+  /** 仅 reason_code='other' 时填，玩家自由文本（短）*/
+  reasonText: text('reason_text'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  /** 5s 撤销窗内取消填值；NULL 表示该标注 active */
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+}, (table) => [
+  index('idx_memory_deletion_annotations_playthrough_created')
+    .on(table.playthroughId, table.createdAt),
+  index('idx_memory_deletion_annotations_memory_entry_id').on(table.memoryEntryId),
+  // 同一 (playthrough, memory_entry_id) 只能有一条 active（cancelled_at IS NULL）的标注。
+  // partial unique index — drizzle-kit schema 不支持 WHERE 子句，由 migration SQL 手写。
+]);

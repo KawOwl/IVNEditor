@@ -8,6 +8,13 @@
       "when": 1777210822912,
       "tag": "0000_add_feedback",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777214440523,
+      "tag": "0001_add_memory_deletion_annotations",
+      "breakpoints": true
     }
   ]
 }
