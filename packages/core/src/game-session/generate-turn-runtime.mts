@@ -163,6 +163,53 @@ function toTraceStepRecord(step: StepInfo): TraceStepRecord {
 }
 
 /**
+ * 禁止用作 ad-hoc speaker 后缀的代词 / 关系代词列表。跟 engine-rules.mts
+ * ADHOC_SPEAKER_RULES_V2 段保持同源——但因为 engine-rules 把列表写在 prompt
+ * 文本里没单独 export，这里复制一份。
+ *
+ * 改动这里时同步更新 engine-rules.mts ADHOC_SPEAKER_RULES_V2 段的禁止列表。
+ */
+export const FORBIDDEN_ADHOC_SUFFIXES: ReadonlySet<string> = new Set([
+  '你', '我', '他', '她', '它', '他们', '她们', '咱', '自己', '主角',
+  '另一人', '某人', '其中一个', '那个人', '谁',
+]);
+
+/**
+ * 判断 ad-hoc dialogue speaker 的 detail 是不是禁止的关系代词后缀。
+ * detail 形如 \`__npc__陌生男声\` 或 \`__npc__另一人\`——剥掉 \`__npc__\` 前缀
+ * 后比对禁止列表。
+ */
+export function isForbiddenAdhocSuffix(detail: string | undefined): boolean {
+  if (!detail) return false;
+  const suffix = detail.startsWith('__npc__') ? detail.slice('__npc__'.length) : detail;
+  return FORBIDDEN_ADHOC_SUFFIXES.has(suffix);
+}
+
+/**
+ * 一条 degrade 是不是 rewriter 应该处理的"actionable"问题。
+ *
+ * - **non-actionable**（rewrite skip）：
+ *   - \`dialogue-adhoc-speaker\` 且 detail 不是禁止代词后缀（合规身份描述）
+ *   - \`container-truncated\`（rewriter 不能补内容，违反"不补剧情"硬约束）
+ * - **actionable**（rewrite 应处理）：
+ *   - \`dialogue-adhoc-speaker\` 且 detail 是禁止代词后缀 → 拆 narration
+ *   - 其他所有 degrade（unknown-toplevel-tag / bare-text-outside-container 等）
+ *
+ * trace f6a68324 (session 25c6863d turn 5) 触发：合规 ad-hoc speaker 触发 rewrite
+ * 后 rewriter 凭空补 \`<background scene="dark_s01" />\`——这种 rewrite 是 false
+ * positive，本可以 skip。
+ */
+export function isActionableDegrade(d: DegradeEventV2): boolean {
+  if (d.code === 'dialogue-adhoc-speaker') {
+    return isForbiddenAdhocSuffix(d.detail);
+  }
+  if (d.code === 'container-truncated') {
+    return false;
+  }
+  return true;
+}
+
+/**
  * narrative-rewrite 用的二次校验 helper。新建一个 parser-v2 实例 feed 一遍
  * rewrite 输出，统计 sentence/scratch 数和 degrade。纯函数（构造一次性 parser
  * 不修改任何外部 state），可以反复调用。
@@ -560,6 +607,38 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       this.sentenceCountThisTurn === 0 ||
       this.degradesThisTurn.length > 0 ||
       (this.scratchCountThisTurn > 0 && this.sentenceCountThisTurn === 0);
+
+    // 改进 D（2026-04-26，trace f6a68324 触发）：sentenceCount > 0 + 所有
+    // degrade 都 non-actionable（合规 ad-hoc speaker / container-truncated）
+    // → skip rewrite。这种 case rewriter 实际无修可做，调一次只会浪费 LLM
+    // call + 可能引入"主动补 background"这类幻觉副作用。
+    const hasActionableProblem =
+      this.sentenceCountThisTurn === 0 ||
+      this.degradesThisTurn.some(isActionableDegrade);
+
+    if (!hasActionableProblem) {
+      this.publish({
+        type: 'rewrite-attempted',
+        turnId: this.turnId,
+        rawTextLength: rawText.length,
+        looksBroken,
+      });
+      this.publish({
+        type: 'rewrite-completed',
+        turnId: this.turnId,
+        status: 'skipped-non-actionable',
+        fallbackReason: null,
+        attempts: 0,
+        latencyMs: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        model: null,
+        outputTextLength: rawText.length,
+        verifiedSentenceCount: null,
+        applied: false,
+      });
+      return;
+    }
 
     this.publish({
       type: 'rewrite-attempted',

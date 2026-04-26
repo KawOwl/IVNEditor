@@ -167,10 +167,11 @@ export type RewriteFallbackReason =
   | 'aborted';
 
 export type RewriteStatus =
-  | 'ok'                // rewrite 完成 + 二次校验通过
-  | 'skipped-empty'     // input.rawText 为空白 → skip
-  | 'skipped-aborted'   // abort signal 已 abort
-  | 'fallback';         // rewrite 失败或二次校验未通过；caller 应当沿用 raw
+  | 'ok'                       // rewrite 完成 + 二次校验通过
+  | 'skipped-empty'            // input.rawText 为空白 → skip
+  | 'skipped-aborted'          // abort signal 已 abort
+  | 'skipped-non-actionable'   // 仅有 non-actionable degrade（如合规 ad-hoc speaker / truncated），无需 rewrite
+  | 'fallback';                // rewrite 失败或二次校验未通过；caller 应当沿用 raw
 
 export interface RewriteResult {
   readonly status: RewriteStatus;

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { StateStore } from '#internal/state-store';
-import { createGenerateTurnRuntime } from '#internal/game-session/generate-turn-runtime';
+import {
+  createGenerateTurnRuntime,
+  isActionableDegrade,
+  isForbiddenAdhocSuffix,
+} from '#internal/game-session/generate-turn-runtime';
 import {
   createRecordingSessionOutputSink,
   type RecordingSessionOutputSink,
@@ -493,3 +497,66 @@ function stepInfo(
     ...(patch.reasoning !== undefined ? { reasoning: patch.reasoning } : {}),
   };
 }
+
+// 改进 D（trace f6a68324 触发）：actionable degrade 分类逻辑
+describe('isForbiddenAdhocSuffix', () => {
+  it('合规身份描述 / 形容词 → false', () => {
+    expect(isForbiddenAdhocSuffix('__npc__保安')).toBe(false);
+    expect(isForbiddenAdhocSuffix('__npc__老板')).toBe(false);
+    expect(isForbiddenAdhocSuffix('__npc__红衣男人')).toBe(false);
+    expect(isForbiddenAdhocSuffix('__npc__陌生男声')).toBe(false);
+    expect(isForbiddenAdhocSuffix('__npc__戴眼镜的女学生')).toBe(false);
+    expect(isForbiddenAdhocSuffix('__npc__裁缝女人')).toBe(false);
+  });
+
+  it('关系代词后缀 → true', () => {
+    expect(isForbiddenAdhocSuffix('__npc__另一人')).toBe(true);
+    expect(isForbiddenAdhocSuffix('__npc__某人')).toBe(true);
+    expect(isForbiddenAdhocSuffix('__npc__其中一个')).toBe(true);
+    expect(isForbiddenAdhocSuffix('__npc__那个人')).toBe(true);
+    expect(isForbiddenAdhocSuffix('__npc__谁')).toBe(true);
+  });
+
+  it('人称代词后缀 → true', () => {
+    for (const p of ['你', '我', '他', '她', '它', '他们', '她们', '咱', '自己', '主角']) {
+      expect(isForbiddenAdhocSuffix(`__npc__${p}`)).toBe(true);
+    }
+  });
+
+  it('不带 __npc__ 前缀的纯后缀也判定（防御性）', () => {
+    expect(isForbiddenAdhocSuffix('另一人')).toBe(true);
+    expect(isForbiddenAdhocSuffix('保安')).toBe(false);
+  });
+
+  it('空 / undefined → false', () => {
+    expect(isForbiddenAdhocSuffix(undefined)).toBe(false);
+    expect(isForbiddenAdhocSuffix('')).toBe(false);
+  });
+});
+
+describe('isActionableDegrade', () => {
+  it('dialogue-adhoc-speaker + 合规身份 → 不 actionable（rewrite skip）', () => {
+    expect(isActionableDegrade({ code: 'dialogue-adhoc-speaker', detail: '__npc__保安' })).toBe(false);
+    expect(isActionableDegrade({ code: 'dialogue-adhoc-speaker', detail: '__npc__陌生男声' })).toBe(false);
+    expect(isActionableDegrade({ code: 'dialogue-adhoc-speaker', detail: '__npc__裁缝女人' })).toBe(false);
+  });
+
+  it('dialogue-adhoc-speaker + 关系代词后缀 → actionable', () => {
+    expect(isActionableDegrade({ code: 'dialogue-adhoc-speaker', detail: '__npc__另一人' })).toBe(true);
+    expect(isActionableDegrade({ code: 'dialogue-adhoc-speaker', detail: '__npc__某人' })).toBe(true);
+    expect(isActionableDegrade({ code: 'dialogue-adhoc-speaker', detail: '__npc__你' })).toBe(true);
+  });
+
+  it('container-truncated → 不 actionable（rewriter 不能补内容）', () => {
+    expect(isActionableDegrade({ code: 'container-truncated', detail: 'narration' })).toBe(false);
+    expect(isActionableDegrade({ code: 'container-truncated', detail: 'dialogue' })).toBe(false);
+  });
+
+  it('其他 degrade code → actionable', () => {
+    expect(isActionableDegrade({ code: 'bare-text-outside-container', detail: 'some text' })).toBe(true);
+    expect(isActionableDegrade({ code: 'unknown-toplevel-tag', detail: 'signal_input_needed' })).toBe(true);
+    expect(isActionableDegrade({ code: 'unknown-close-tag', detail: 'narrtion' })).toBe(true);
+    expect(isActionableDegrade({ code: 'sprite-unknown-char', detail: 'ghost' })).toBe(true);
+    expect(isActionableDegrade({ code: 'sprite-invalid-position', detail: 'top' })).toBe(true);
+  });
+});

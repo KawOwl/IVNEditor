@@ -286,7 +286,7 @@ export type RewriteCoreEvent =
   | {
       readonly type: 'rewrite-completed';
       readonly turnId: TurnId;
-      readonly status: 'ok' | 'skipped-empty' | 'skipped-aborted' | 'fallback';
+      readonly status: 'ok' | 'skipped-empty' | 'skipped-aborted' | 'skipped-non-actionable' | 'fallback';
       readonly fallbackReason: 'api-error' | 'second-parse-failed' | 'rewrite-still-empty' | 'aborted' | null;
       readonly attempts: number;
       readonly latencyMs: number;
