@@ -24,6 +24,11 @@ const MANIFEST: ParserManifest = {
     ['karina', new Set(['serious', 'smile'])],
     ['mc', new Set(['neutral'])],
   ]),
+  defaultMoodByChar: new Map([
+    ['sakuya', 'neutral'],
+    ['karina', 'serious'],
+    ['mc', 'neutral'],
+  ]),
   backgrounds: new Set(['cafe_interior', 'plaza_day']),
 };
 
@@ -198,7 +203,10 @@ describe('createParser · stream truncation', () => {
     const { sentences, degrades } = p.finalize();
     expect(sentences).toHaveLength(1);
     expect(sentences[0]!.truncated).toBe(true);
+    // V.9 兜底：speaker 没立绘 → 自动补一条 + emit fallback 事件，
+    // 然后才是 truncated 事件
     expect(degrades).toMatchObject([
+      { code: 'dialogue-speaker-sprite-fallback' },
       { code: 'container-truncated', detail: 'dialogue' },
     ]);
   });
@@ -418,12 +426,24 @@ describe('buildParserManifest', () => {
     expect(manifest.backgrounds.has('cafe')).toBe(true);
     expect(manifest.backgrounds.has('park')).toBe(true);
     expect(manifest.backgrounds.has('mars')).toBe(false);
+    // defaultMoodByChar 取每个角色 sprites 数组里的第一个
+    expect(manifest.defaultMoodByChar.get('sakuya')).toBe('smile');
+    expect(manifest.defaultMoodByChar.get('karina')).toBe('serious');
   });
 
   it('空输入 → 空 manifest', () => {
     const manifest = buildParserManifest({});
     expect(manifest.characters.size).toBe(0);
     expect(manifest.backgrounds.size).toBe(0);
+    expect(manifest.defaultMoodByChar.size).toBe(0);
+  });
+
+  it('character 没有 sprites → defaultMoodByChar 不含该 key', () => {
+    const manifest = buildParserManifest({
+      characters: [{ id: 'voice_only', sprites: [] }],
+    });
+    expect(manifest.characters.has('voice_only')).toBe(true);
+    expect(manifest.defaultMoodByChar.has('voice_only')).toBe(false);
   });
 });
 
@@ -469,6 +489,16 @@ describe('createParser · 综合场景', () => {
     // 最后 narration 因为 <stage/> 清空了 sprites
     expect(sentences[3]!.sceneRef.sprites).toEqual([]);
     expect(sentences[3]!.sceneRef.background).toBe('cafe_interior'); // bg 继承
-    expect(degrades).toHaveLength(0);
+    // V.9 兜底：第二条 dialogue speaker=mc 时 mc 不在台上，自动补 mc 默认
+    // sprite 在第一个空闲位置（左 / 右；center 已被 sakuya 占）
+    expect(degrades).toMatchObject([
+      { code: 'dialogue-speaker-sprite-fallback', detail: 'mc:neutral@left' },
+    ]);
+    const mcDialogue = sentences[2]!;
+    expect(mcDialogue.sceneRef.sprites).toContainEqual({
+      id: 'mc',
+      emotion: 'neutral',
+      position: 'left',
+    });
   });
 });

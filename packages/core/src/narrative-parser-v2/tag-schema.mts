@@ -204,6 +204,9 @@ export function isPronounSpeaker(speakerId: string): boolean {
  * `dialogue-adhoc-speaker` 是中性事件（量化用，非降级）。
  * `dialogue-pronoun-as-speaker` 是 ad-hoc 的细分子类——后缀是中文代词
  * （"你"/"我"/...），表明 LLM 把第二人称代词错当成 ad-hoc 显示名。
+ * `dialogue-speaker-sprite-fallback` 是中性事件——dialogue speaker 没有立绘
+ * 在台上时 parser 自动补一个 manifest 的默认 sprite（量化 LLM 漏摆 speaker
+ * 的频率，UI 仍正常渲染）。
  */
 export type DegradeCode =
   | 'sprite-missing-attr'
@@ -220,4 +223,5 @@ export type DegradeCode =
   | 'dialogue-unknown-speaker'
   | 'dialogue-adhoc-speaker'
   | 'dialogue-pronoun-as-speaker'
+  | 'dialogue-speaker-sprite-fallback'
   | 'bare-text-outside-container';

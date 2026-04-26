@@ -187,11 +187,16 @@ export interface ScriptManifestLike {
 export function buildParserManifest(script: ScriptManifestLike): ParserManifest {
   const characters = new Set<string>();
   const moodsByChar = new Map<string, Set<string>>();
+  const defaultMoodByChar = new Map<string, string>();
   for (const char of script.characters ?? []) {
     characters.add(char.id);
     const moods = new Set<string>();
     for (const s of char.sprites ?? []) moods.add(s.id);
     moodsByChar.set(char.id, moods);
+    // 取数组里第一个有效 id 作为默认 mood（dialogue speaker 缺立绘时的兜底）。
+    // 编辑器维护的 sprites 数组顺序就是"作者意图的默认排序"，第一个最常用。
+    const firstSprite = (char.sprites ?? []).find((s) => s.id.length > 0);
+    if (firstSprite) defaultMoodByChar.set(char.id, firstSprite.id);
   }
   const backgrounds = new Set<string>();
   for (const bg of script.backgrounds ?? []) backgrounds.add(bg.id);
@@ -199,6 +204,7 @@ export function buildParserManifest(script: ScriptManifestLike): ParserManifest 
   return {
     characters,
     moodsByChar: moodsByChar as ReadonlyMap<string, ReadonlySet<string>>,
+    defaultMoodByChar,
     backgrounds,
   };
 }

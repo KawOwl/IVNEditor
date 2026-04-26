@@ -17,6 +17,11 @@ const MANIFEST: ParserManifest = {
     ['karina', new Set(['serious', 'smile'])],
     ['mc', new Set(['neutral'])],
   ]),
+  defaultMoodByChar: new Map([
+    ['sakuya', 'neutral'],
+    ['karina', 'serious'],
+    ['mc', 'neutral'],
+  ]),
   backgrounds: new Set(['cafe_interior', 'plaza_day', 'street_shadow']),
 };
 
@@ -24,6 +29,15 @@ const EMPTY_SCENE: SceneState = { background: null, sprites: [] };
 
 function unitWith(patch: Partial<PendingUnit>): PendingUnit {
   return emptyPendingUnit('dialogue', patch);
+}
+
+function dialogueWith(speaker: string, patch: Partial<PendingUnit> = {}): PendingUnit {
+  return emptyPendingUnit('dialogue', {
+    pf: { speaker },
+    rawSpeaker: speaker,
+    speakerMissing: false,
+    ...patch,
+  });
 }
 
 describe('resolveScene · 继承', () => {
@@ -210,5 +224,140 @@ describe('resolveScene · sprites', () => {
       MANIFEST,
     );
     expect(result.spritesChanged).toBe(true);
+  });
+});
+
+describe('resolveScene · dialogue speaker 立绘兜底', () => {
+  it('空台 + dialogue speaker 是已知角色 + 无 <sprite> → 自动补默认 sprite 在 center', () => {
+    const result = resolveScene(EMPTY_SCENE, dialogueWith('karina'), MANIFEST);
+    expect(result.scene.sprites).toEqual([
+      { id: 'karina', emotion: 'serious', position: 'center' },
+    ]);
+    expect(result.spritesChanged).toBe(true);
+    expect(result.degrades).toMatchObject([
+      { code: 'dialogue-speaker-sprite-fallback', detail: 'karina:serious@center' },
+    ]);
+  });
+
+  it('prev 已含 speaker（继承路径）→ 不补，不 emit', () => {
+    const prev: SceneState = {
+      background: null,
+      sprites: [{ id: 'karina', emotion: 'smile', position: 'left' }],
+    };
+    const result = resolveScene(prev, dialogueWith('karina'), MANIFEST);
+    expect(result.scene.sprites).toEqual(prev.sprites);
+    expect(result.spritesChanged).toBe(false);
+    expect(result.degrades).toHaveLength(0);
+  });
+
+  it('prev 含其他角色 + dialogue speaker 不在 prev → 补到第一个空闲 position', () => {
+    const prev: SceneState = {
+      background: null,
+      sprites: [{ id: 'sakuya', emotion: 'smile', position: 'center' }],
+    };
+    const result = resolveScene(prev, dialogueWith('karina'), MANIFEST);
+    // center 已被 sakuya 占，karina 落到 left（VALID_POSITIONS 第二个）
+    expect(result.scene.sprites).toEqual([
+      { id: 'sakuya', emotion: 'smile', position: 'center' },
+      { id: 'karina', emotion: 'serious', position: 'left' },
+    ]);
+    expect(result.degrades).toMatchObject([
+      { code: 'dialogue-speaker-sprite-fallback', detail: 'karina:serious@left' },
+    ]);
+  });
+
+  it('LLM <sprite> 写了配角但漏 speaker → 在替换之上仍补 speaker', () => {
+    const result = resolveScene(
+      EMPTY_SCENE,
+      dialogueWith('karina', {
+        pendingSprites: [{ id: 'sakuya', emotion: 'smile', position: 'center' }],
+      }),
+      MANIFEST,
+    );
+    expect(result.scene.sprites).toEqual([
+      { id: 'sakuya', emotion: 'smile', position: 'center' },
+      { id: 'karina', emotion: 'serious', position: 'left' },
+    ]);
+  });
+
+  it('<stage/> 清场后没补 sprite → fallback 补 speaker 到 center', () => {
+    const prev: SceneState = {
+      background: null,
+      sprites: [{ id: 'sakuya', emotion: 'smile', position: 'center' }],
+    };
+    const result = resolveScene(
+      prev,
+      dialogueWith('karina', { pendingClearStage: true }),
+      MANIFEST,
+    );
+    expect(result.scene.sprites).toEqual([
+      { id: 'karina', emotion: 'serious', position: 'center' },
+    ]);
+  });
+
+  it('narration（非 dialogue）→ 不触发兜底', () => {
+    const result = resolveScene(EMPTY_SCENE, emptyPendingUnit('narration'), MANIFEST);
+    expect(result.scene.sprites).toEqual([]);
+    expect(result.degrades).toHaveLength(0);
+  });
+
+  it('speakerMissing dialogue（已降级 narration）→ 不触发兜底', () => {
+    const unit = emptyPendingUnit('dialogue', { speakerMissing: true });
+    const result = resolveScene(EMPTY_SCENE, unit, MANIFEST);
+    expect(result.scene.sprites).toEqual([]);
+    expect(result.degrades).toHaveLength(0);
+  });
+
+  it('ad-hoc speaker（__npc__保安）→ 不触发兜底', () => {
+    const result = resolveScene(EMPTY_SCENE, dialogueWith('__npc__保安'), MANIFEST);
+    expect(result.scene.sprites).toEqual([]);
+    expect(result.degrades).toHaveLength(0);
+  });
+
+  it('speaker 不在白名单（杜撰）→ 不触发兜底', () => {
+    const result = resolveScene(EMPTY_SCENE, dialogueWith('mystery_man'), MANIFEST);
+    expect(result.scene.sprites).toEqual([]);
+    expect(result.degrades).toHaveLength(0);
+  });
+
+  it('speaker 在白名单但 manifest 没给 sprite → 不触发兜底', () => {
+    const manifestNoSprites: ParserManifest = {
+      characters: new Set(['voice_only']),
+      moodsByChar: new Map([['voice_only', new Set()]]),
+      defaultMoodByChar: new Map(), // 没条目
+      backgrounds: new Set(),
+    };
+    const result = resolveScene(EMPTY_SCENE, dialogueWith('voice_only'), manifestNoSprites);
+    expect(result.scene.sprites).toEqual([]);
+    expect(result.degrades).toHaveLength(0);
+  });
+
+  it('三个 position 全占满 → emit no-position event 且不补', () => {
+    const prev: SceneState = {
+      background: null,
+      sprites: [
+        { id: 'sakuya', emotion: 'smile', position: 'left' },
+        { id: 'mc', emotion: 'neutral', position: 'center' },
+        { id: 'karina', emotion: 'smile', position: 'right' },
+      ],
+    };
+    // 加一个新角色 dialogue 但他没有立绘空位
+    const manifestPlus: ParserManifest = {
+      ...MANIFEST,
+      characters: new Set([...MANIFEST.characters, 'extra']),
+      moodsByChar: new Map([
+        ...MANIFEST.moodsByChar.entries(),
+        ['extra', new Set(['neutral'])],
+      ]),
+      defaultMoodByChar: new Map([
+        ...MANIFEST.defaultMoodByChar.entries(),
+        ['extra', 'neutral'],
+      ]),
+    };
+    const result = resolveScene(prev, dialogueWith('extra'), manifestPlus);
+    expect(result.scene.sprites).toEqual(prev.sprites);
+    expect(result.degrades).toMatchObject([
+      { code: 'dialogue-speaker-sprite-fallback', detail: 'extra:no-position' },
+    ]);
   });
 });

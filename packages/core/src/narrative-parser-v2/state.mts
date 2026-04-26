@@ -30,6 +30,12 @@ export interface ParserManifest {
   readonly characters: ReadonlySet<string>;
   /** char id → 合法 mood id set */
   readonly moodsByChar: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * char id → 默认 mood id（manifest 里该角色 sprites 数组的第一个）。
+   * 用于 dialogue speaker 缺 sprite 时自动补一个立绘（inheritance 阶段的兜底）。
+   * 角色没有 sprites 时 key 缺失。
+   */
+  readonly defaultMoodByChar: ReadonlyMap<string, string>;
   /** 合法的 background scene id */
   readonly backgrounds: ReadonlySet<string>;
 }

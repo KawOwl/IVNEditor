@@ -9,6 +9,18 @@
 
 import type { SceneState, SpriteState } from '#internal/types';
 import type { PendingUnit, ParserManifest, DegradeEvent } from '#internal/narrative-parser-v2/state';
+import { isAdhocSpeaker } from '#internal/narrative-parser-v2/tag-schema';
+
+/**
+ * Speaker fallback 注入新 sprite 时的 position 优先顺序：center 最自然
+ * （单角色对话默认居中），其次 left / right。和 tag-schema 的 VALID_POSITIONS
+ * 不同——后者按属性值字母序声明，这里按"美术意图"优先级。
+ */
+const FALLBACK_POSITION_PREFERENCE: ReadonlyArray<'center' | 'left' | 'right'> = [
+  'center',
+  'left',
+  'right',
+];
 
 // ============================================================================
 // 输出形状
@@ -43,6 +55,12 @@ export interface ResolvedScene {
  *   - sprite mood 不在该 char 的白名单 → drop，产出 `sprite-unknown-mood`
  *   - stage 和 sprite 同时出现 → stage 优先清场，sprite 全部 drop，
  *     产出 `stage-and-sprite-conflict`
+ *
+ * 上述完成后还有一层 dialogue speaker 兜底：dialogue 容器结束时如果 speaker
+ * 是 manifest 已知角色但当前台上没有该 speaker 的立绘（无论是 LLM 没写
+ * `<sprite>`、清场后没补、或者只放了配角的立绘），自动在第一个空闲位置补
+ * 一个 manifest 里该角色的默认 sprite，并 emit `dialogue-speaker-sprite-fallback`
+ * 中性事件供 trace 量化。
  */
 export function resolveScene(
   prev: SceneState,
@@ -52,7 +70,8 @@ export function resolveScene(
   const degrades: DegradeEvent[] = [];
 
   const nextBg = resolveBackground(prev.background, pending, manifest, degrades);
-  const nextSprites = resolveSprites(prev.sprites, pending, manifest, degrades);
+  const baseSprites = resolveSprites(prev.sprites, pending, manifest, degrades);
+  const nextSprites = applySpeakerSpriteFallback(baseSprites, pending, manifest, degrades);
 
   const bgChanged = nextBg !== prev.background;
   const spritesChanged = !spritesEqual(nextSprites, prev.sprites);
@@ -140,6 +159,65 @@ function validateSprite(
     };
   }
   return { ok: true };
+}
+
+// ============================================================================
+// Dialogue speaker 立绘兜底
+// ============================================================================
+
+/**
+ * 给 `<dialogue>` 兜底：speaker 是 manifest 已知角色但台上没有 speaker 的
+ * 立绘时，自动在第一个空闲位置补一个 manifest 默认 sprite。
+ *
+ * 触发条件（全部满足）：
+ *   1. unit.kind === 'dialogue' 且 speaker 完整（speakerMissing=false）
+ *   2. speaker 不是 ad-hoc（`__npc__保安`、`__npc__你` 等都没立绘）
+ *   3. speaker 在 manifest.characters 白名单内
+ *   4. manifest 给该 speaker 配过至少一个 sprite（defaultMoodByChar 有 key）
+ *   5. 当前 resolved sprites 里没有任何条目 id === speaker
+ *   6. 三个 position（center / left / right）至少有一个空闲
+ *
+ * 满足 1-5 但 6 不满足（台上 3 个角色全占满）→ 跳过，emit
+ * `dialogue-speaker-sprite-fallback` 但保留 detail 注明 'no-position'，
+ * UI 行为和原来一致（speaker 不上台），但 trace 能区分。
+ *
+ * Position 选择：依次尝试 center → left → right，第一个空闲就用。
+ * center 优先因为它是单角色对话最自然的位置。
+ *
+ * 注意：这不是降级，是补全。speaker 已经能正常说话，UI 只是缺立绘；
+ * 兜底之后玩家看到的才是符合 VN 直觉的画面。
+ */
+function applySpeakerSpriteFallback(
+  resolved: SpriteState[],
+  pending: PendingUnit,
+  manifest: ParserManifest,
+  degrades: DegradeEvent[],
+): SpriteState[] {
+  if (pending.kind !== 'dialogue') return resolved;
+  if (pending.speakerMissing) return resolved;
+  const speaker = pending.pf?.speaker;
+  if (!speaker) return resolved;
+  if (isAdhocSpeaker(speaker)) return resolved;
+  if (!manifest.characters.has(speaker)) return resolved;
+  const defaultMood = manifest.defaultMoodByChar.get(speaker);
+  if (!defaultMood) return resolved;
+  if (resolved.some((s) => s.id === speaker)) return resolved;
+
+  const used = new Set(resolved.map((s) => s.position).filter(Boolean));
+  const free = FALLBACK_POSITION_PREFERENCE.find((p) => !used.has(p));
+  if (!free) {
+    degrades.push({
+      code: 'dialogue-speaker-sprite-fallback',
+      detail: `${speaker}:no-position`,
+    });
+    return resolved;
+  }
+
+  degrades.push({
+    code: 'dialogue-speaker-sprite-fallback',
+    detail: `${speaker}:${defaultMood}@${free}`,
+  });
+  return [...resolved, { id: speaker, emotion: defaultMood, position: free }];
 }
 
 // ============================================================================

@@ -629,5 +629,15 @@
     "ref": "packages/core/src/narrative-parser-v2/{tag-schema.mts,reducer.mts} + packages/core/src/engine-rules.mts",
     "verify": "pnpm typecheck 4 个 package 全绿；pnpm test:core 308/308（从 292 涨 16：reducer pronoun it.each 10 + adhoc 边界 2 + engine-rules 教学条款校验 4）。trace 端验证：Langfuse trace 里 grep `dialogue-pronoun-as-speaker` 事件可量化代词误用频率；`__npc__你的`（后缀含代词字符但整体不等于代词）仍走 adhoc 路径，边界正确。",
     "note": "起因：用户审 trace（http://39.108.85.114:30080 ivn-engine session c4b00c7c）怀疑 LLM 把'你'当成 NPC 写成 `__npc__你`，UI 渲染出名叫'你'的 NPC 气泡。原因分析：prompt 里 NPC 后缀模式全是中文显示名（__npc__保安/__npc__同事/__npc__店主），玩家自身 reserved id `player` 是英文裸字符串，模式不对称；LLM 顺着中文显示名套出 `__npc__你` 是合理误用。两个微决策：(a) pronoun emit 新 degrade 替代而非追加 adhoc-speaker，避免 trace 双计数；(b) <dialogue> 正文边界不做 parser 硬校验只走 prompt，因为引号检测不可靠（中文'\"'/英文 \\\"' 混用 + 内心独白引号 + 角色嵌引语）启发式 false positive 高。后续待评估：把 `player` reserved id 包成 `__player__`（双下划线对称）+ manifest character.id 校验拒绝该 reserved id；当前未做，等 trace 信号回来评估。"
+  },
+  {
+    "id": "V.9",
+    "title": "声明式视觉 IR：dialogue speaker 立绘兜底",
+    "description": "`<dialogue>` 关闭时如果 speaker 是 manifest 已知角色但当前 resolved sprites 不含 speaker 的立绘（无论是 LLM 没写 `<sprite>`、`<stage/>` 清场后没补、或者只放了配角的立绘），自动在第一个空闲 position 注入一个 manifest 默认 sprite，并 emit `dialogue-speaker-sprite-fallback` 中性事件供 trace 量化。Position 优先顺序 center → left → right；3 个位置全占满则 emit `<speaker>:no-position` 事件后跳过（不阻断生成）。Manifest 默认 sprite 取该角色 sprites 数组第一个（编辑器维护的顺序就是作者意图的默认）。改动：(1) state.mts ParserManifest 加 `defaultMoodByChar: ReadonlyMap<string, string>`；(2) index.mts buildParserManifest 填充该字段，过滤空 id；(3) tag-schema.mts DegradeCode 加 `dialogue-speaker-sprite-fallback`；(4) inheritance.mts resolveScene 走完原 bg / sprite 解析后追加 applySpeakerSpriteFallback 一层（纯函数，模式和原 resolveSprites 对称）。Skip 条件：narration / speakerMissing / ad-hoc speaker / 不在白名单 / manifest 没该角色 sprite / speaker 已在台。Ad-hoc 路径自带 skip（这些角色本就没立绘），prompt 不需要改。",
+    "status": "done",
+    "type": "logic",
+    "ref": "packages/core/src/narrative-parser-v2/{state.mts,index.mts,tag-schema.mts,inheritance.mts}",
+    "verify": "pnpm typecheck 4 个 package 全绿；pnpm test:core 323/323（从 308 涨 15：inheritance 11 个新兜底场景测 + reducer 1 个 trace 复现集成测 + parser buildParserManifest 1 个新断言 + buildParserManifest 'character 没 sprites' 1 个边界测 + 改动现有 2 个 dialogue 测断言）。trace 端验证：Langfuse 里 grep `dialogue-speaker-sprite-fallback` 量化 LLM 漏摆 speaker 的频率；如果某 speaker 的 detail 长期为 `no-position`，说明该场景台上立绘多到挤不下，可作为 prompt 调优信号。",
+    "note": "起因：用户报 trace `784ab8fc-3915-47f0-b757-f7feae0604df`（ivn-engine） —— `<dialogue speaker=\"carina\" to=\"player\" mood=\"curious\">` 没有 <sprite> 子标签且 prev 不在台上，玩家屏幕没看到 carina 立绘。dialogue 上的 mood=\"curious\" 是 silent tolerance 忽略（dialogue 白名单只认 speaker/to/hear/eavesdroppers），所以靠 mood 属性自动补 sprite 不可行；用户决策走 fallback。设计上有两个微决策：(a) 触发条件是'speaker 不在 resolved sprites'而不是用户字面的'pendingSprites 为空'——更覆盖 `<stage/>` 清场后忘补 + LLM 只放配角忘 speaker 两类 case；只字面看就只能修最浅一层。(b) 兜底事件归在 degrades 通道（与 V.8 dialogue-pronoun-as-speaker 同模式），不算降级只是中性观测，方便 Langfuse 直接 grep 同前缀。Prompt 不改，让 fallback 是纯协议层安全网，不是 LLM 偷懒的借口。"
   }
 ]

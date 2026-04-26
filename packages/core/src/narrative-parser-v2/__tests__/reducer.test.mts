@@ -26,6 +26,11 @@ const MANIFEST: ParserManifest = {
     ['karina', new Set(['serious', 'smile'])],
     ['mc', new Set(['neutral'])],
   ]),
+  defaultMoodByChar: new Map([
+    ['sakuya', 'neutral'],
+    ['karina', 'serious'],
+    ['mc', 'neutral'],
+  ]),
   backgrounds: new Set(['cafe_interior', 'plaza_day']),
 };
 
@@ -83,7 +88,14 @@ describe('reduce · dialogue 容器', () => {
       expect(s.text).toBe('hello world');
       expect(s.index).toBe(0);
     }
-    expect(outputs.degrades).toHaveLength(0);
+    // speaker 漏 sprite + 不在 prev 台上 → 兜底补 sakuya 默认 sprite，emit
+    // dialogue-speaker-sprite-fallback 中性事件（不算降级，仅供 trace 量化）
+    expect(outputs.degrades).toMatchObject([
+      { code: 'dialogue-speaker-sprite-fallback', detail: 'sakuya:neutral@center' },
+    ]);
+    expect(s.sceneRef.sprites).toEqual([
+      { id: 'sakuya', emotion: 'neutral', position: 'center' },
+    ]);
   });
 
   it('<dialogue> 缺 speaker → 降级 narration + degrade', () => {
@@ -222,6 +234,31 @@ describe('reduce · dialogue 容器', () => {
     if (s.kind !== 'dialogue') throw new Error('expected dialogue');
     expect(s.pf.addressee).toEqual(['karina', 'mc']);
     expect(s.pf.overhearers).toEqual(['*']);
+  });
+
+  it('LLM 漏 sprite 真实 trace 复现：<dialogue speaker="karina" mood="curious"> 自动补 karina 默认立绘', () => {
+    // trace 784ab8fc 现场：LLM 把 mood 写到 dialogue 上（被 silent 忽略），
+    // 没有 <sprite> 子标签且 prev 不在台上，玩家屏幕看不到 karina 立绘。
+    // V.9 兜底：speaker 在白名单 + 不在台上 → 自动补 manifest 默认 sprite。
+    const { outputs } = run([
+      {
+        type: 'opentag',
+        name: 'dialogue',
+        attrs: { speaker: 'karina', to: 'player', mood: 'curious' },
+      },
+      { type: 'text', data: '"不过你刚才也看到了..."' },
+      { type: 'closetag', name: 'dialogue' },
+    ]);
+    expect(outputs.sentences).toHaveLength(1);
+    const s = outputs.sentences[0]!;
+    if (s.kind !== 'dialogue') throw new Error('expected dialogue');
+    expect(s.sceneRef.sprites).toEqual([
+      { id: 'karina', emotion: 'serious', position: 'center' },
+    ]);
+    expect(s.spritesChanged).toBe(true);
+    expect(outputs.degrades).toMatchObject([
+      { code: 'dialogue-speaker-sprite-fallback', detail: 'karina:serious@center' },
+    ]);
   });
 });
 
@@ -749,7 +786,9 @@ describe('reduce · finalize / truncation', () => {
     const s = outputs.sentences[0]!;
     expect(s.kind).toBe('dialogue');
     expect(s.truncated).toBe(true);
+    // sceneDegrades 先 emit（含 fallback），然后是 truncDegrade
     expect(outputs.degrades).toMatchObject([
+      { code: 'dialogue-speaker-sprite-fallback' },
       { code: 'container-truncated', detail: 'dialogue' },
     ]);
     expect(state.finalized).toBe(true);

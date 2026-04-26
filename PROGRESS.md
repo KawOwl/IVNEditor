@@ -20,6 +20,16 @@
 
 ## 最近完成
 
+**V.9 dialogue speaker 立绘兜底（2026-04-26，本会话）**
+- 起因：用户报 trace `784ab8fc-3915-47f0-b757-f7feae0604df`（ivn-engine）—— `<dialogue speaker="carina" to="player" mood="curious">` 没 `<sprite>` 子标签 + 上一句也没 carina，玩家屏幕看不到 carina 立绘。dialogue 上的 `mood="curious"` 是 silent tolerance 忽略（白名单只认 speaker/to/hear/eavesdroppers），不能靠它自动补 sprite。
+- 触发条件（全部满足才补）：`<dialogue>` 关闭时 + speaker 是 manifest 已知角色 + speaker 不是 ad-hoc + manifest 给该角色配过至少一个 sprite + 当前 resolved sprites 不含 speaker 立绘 + 三个 position 至少一个空闲。
+- 注入：speaker + manifest 默认 mood（sprites 数组第一个）+ 第一个空闲 position（依次试 center / left / right）。Position 优先顺序在 inheritance.mts 内单独定义（不复用 tag-schema.VALID_POSITIONS 的字母序），center 优先因为最贴单角色对话直觉。
+- 三个位置全占满 → emit `<speaker>:no-position` 事件后跳过（不阻断生成，trace 能区分这种场景）。
+- 改动：(1) [state.mts](packages/core/src/narrative-parser-v2/state.mts) ParserManifest 加 `defaultMoodByChar: ReadonlyMap<string, string>`；(2) [index.mts](packages/core/src/narrative-parser-v2/index.mts) buildParserManifest 填充该字段（sprites 数组第一个有效 id）；(3) [tag-schema.mts](packages/core/src/narrative-parser-v2/tag-schema.mts) DegradeCode 加 `dialogue-speaker-sprite-fallback`（同 V.8 pronoun degrade 同模式，挂在 degrades 通道但是中性事件）；(4) [inheritance.mts](packages/core/src/narrative-parser-v2/inheritance.mts) resolveScene 走完原 bg / sprite 解析后追加 `applySpeakerSpriteFallback` 一层（纯函数，输入 unit pf.speaker + manifest，输出 SpriteState[] + 可能的 degrade）。
+- 守门：[inheritance.test.mts](packages/core/src/narrative-parser-v2/__tests__/inheritance.test.mts) 加 11 个兜底场景（空台 / prev 已含 / `<sprite>` 替换 / `<stage/>` 清场 / narration 跳过 / speakerMissing 跳过 / ad-hoc 跳过 / 杜撰跳过 / 没 sprite 配置跳过 / 三位全满 no-position）；[reducer.test.mts](packages/core/src/narrative-parser-v2/__tests__/reducer.test.mts) 加 trace 复现集成测；[parser.test.mts](packages/core/src/narrative-parser-v2/__tests__/parser.test.mts) buildParserManifest 加 defaultMoodByChar 断言 + character 无 sprites 边界。
+- 验证：`pnpm typecheck` 4 个 package 全绿；`pnpm test:core` 323/323（从 308 涨 15）。
+- 决策：触发条件用 "speaker 不在 resolved sprites"（更宽）而不是用户字面 "pendingSprites 为空"（更窄）。前者覆盖 `<stage/>` 清场后忘补 + LLM 只摆配角忘 speaker 两类额外 case；只字面看就只能修最浅一层。Prompt 不改——fallback 是纯协议层安全网，不能让 LLM 知道 / 偷懒。Ad-hoc 自动 skip（白名单外没 sprite 配置），不需要分流。
+
 **修复 signal_input choices 泄漏到 LLM 上下文（2026-04-26，本会话）**
 - 触发：用户报 trace `f6859a87`（session ece7e31d turn 5→6）。turn 5 LLM emit `signal_input_needed(choices=["我是路过的","我是被这根线拽过来的","你蹲在这里挺显眼","你应该问你自己是谁才对吧"])`，玩家走 freetext 答 `"哦，是人啊，还以为是哪里来的没见过的流浪猫呢..."`，turn 6 LLM 让夏荧说 `"你刚才不是说'被这根线拽过来的'吗"` —— 把 `choices[1]` 当成玩家发言。用户报"已经多次出现类似情况"。
 - 根因：[messages-builder.mts](packages/core/src/messages-builder.mts:214) 投影 `signal_input` entry 时把 `choices` 数组完整塞进 assistant `tool-call.input`。AI SDK 序列化到 chat-completions 后 LLM 在自己上轮的 `tool_calls.arguments` JSON 里看到全部 4 条候选，玩家 freetext 时易把"摆桌上没被选的某条"当成玩家说过的话。系统性 leak，不是偶发。
@@ -292,6 +302,7 @@
 | 2026-04-26 | `<dialogue>` 正文边界教学只走 prompt，不做 parser 硬校验 | 引号检测启发式 false positive 高（中文 ""/英文 \"\" 混用 + 内心独白引号 + 角色嵌引语都常见），启发式信号噪比差；prompt 教学性价比明显更高 | engine-rules `<dialogue>` 容器解释加"正文只装直接引语，旁白动作走 `<narration>`"硬规则；反面示范段加用户 trace 截取的"俄罗斯？...大拇指..."三单元拆分案例 + LLM 自检启发（"用角色声音念这段会不会别扭"）。如果 trace 信号回来还是大量漏判，再考虑加软启发（例如 `<dialogue>` 正文里检测"他/她+动词"模式） |
 | 2026-04-26 | empty-narrative 整轮只输出 `<scratch>` 走双层兜底（prompt 硬规则 + llm-client follow-up），不在 game-session 层做 | prompt 不是 100% 可靠（reasoning 模型偶发"复盘完就停"），但又不想把"补一句叙事"硬塞到 game-session 让它知道 prompt 协议细节。llm-client 已经有续写 + signal 补刀两个 follow-up 模式，加第三个最对称、调用方无感 | llm-client.generate() 三 follow-up 串联 `续写 → empty-narrative → signal`；每个独立失败 warn/log 不冒异常；engine-rules.test.mts 加 prompt 守门测试避免硬规则被无意删除 |
 | 2026-04-26 | signal_input 历史回放给 LLM 时 strip `choices`，只留 `prompt_hint` | trace ece7e31d turn 5→6 实锤：玩家 freetext 答非选项时，LLM 把上轮 `tool_calls.arguments` 里的"未被选中候选"当成玩家说过的话写进了 NPC 引用台词。choices 是 UI 渲染参数不是叙事 ground truth；prompt_hint 是 LLM 自己写的局面总结不易被误读 | persistence 层 / current-readback / tracing 全不动，DB 仍保留 choices；LLM 失去"我上轮提了哪 4 个选项"的记忆，但这不是叙事推进所需信息。如果将来要 LLM 记得，可改成只回放"被选中的那条 + selectedIndex" |
+| 2026-04-26 | dialogue speaker 立绘兜底触发条件用"speaker 不在 resolved sprites"（更宽），不用用户字面的"pendingSprites 为空"（更窄） | trace 784ab8fc 现场是字面规则就够用的浅 case，但同源问题还有两类更深：(a) LLM `<stage/>` 清场后忘了补 speaker；(b) LLM 摆了配角立绘但忘了主对话角。窄规则只修第一类；宽规则三类都覆盖且实现成本一样 | 极少数边缘情形（LLM 故意要"voice from offstage"叙事效果）会被兜底覆盖，但 LLM 表达这种意图本就该用 `<narration>` 而不是 `<dialogue>`。Position 优先 center → left → right；3 个全满 emit `no-position` 事件后跳过不阻断 |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |
