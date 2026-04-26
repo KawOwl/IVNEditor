@@ -166,6 +166,29 @@ export async function requireAnyIdentity(request: Request): Promise<Identity | R
   return identity;
 }
 
+/**
+ * 要求非匿名身份（registered 或 admin）。
+ *
+ * PFB.3 起反馈 / bug 报告类接口用这个 —— 匿名用户走 RegistrationGate
+ * 注册升级后才能提交，后端拒匿名作为 defense-in-depth。
+ */
+export async function requireNonAnonymous(request: Request): Promise<Identity | Response> {
+  const identity = await resolveIdentity(request);
+  if (!identity) {
+    return new Response(JSON.stringify({ error: 'Authentication required' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (identity.kind === 'anonymous') {
+    return new Response(
+      JSON.stringify({ error: '请先注册后再提交', reason: 'anonymous-not-allowed' }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+  return identity;
+}
+
 /** 判断是不是 Response（类型守卫） */
 export function isResponse(v: unknown): v is Response {
   return v instanceof Response;

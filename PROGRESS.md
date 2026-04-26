@@ -9,16 +9,21 @@
 
 ## 当前任务
 
-**PFB.2 反馈前置匿名注册 + 用户画像（in-progress）**
+**PFB.3 Bug 反馈 tab + 首页身份徽章 + 后端拒匿名（in-progress）**
 - 类型：实现（产品 feature，e2e）
-- 来源：用户临时插入。PFB.1 完工后用户希望反馈样本带身份 + 画像，匿名玩家先做"简单注册"（邮箱 + 密码 + 6 题画像）才能进反馈问卷
-- 目标：反馈 modal 两阶段路由——`identity.kind === 'anonymous'` 先弹注册（升级当前匿名 user → 填 email + passwordHash + 写 user_profiles），其他直接进反馈问卷；不换 sessionId（同一行 user 升级），auth-store `checkMe()` 刷新 identity 即可
-- 进展：选型 + 6 个决策（升级而非新建 user / email unique / pwd ≥ 8 / 不发验证邮件 / 单位学号 free text / hobbies 限 1-2）已对齐。当前在探索完 routes/auth.mts + user-service + auth-identity 后开工 schema 改造
+- 来源：用户临时插入。PFB.2 完工后澄清需求 + 加新维度
+- 目标：(1) FeedbackModal 加 tab 切换：默认"问卷"+"Bug 反馈"（独立表 bug_reports，自由文本，跟 playthroughId+turn 配对，靠 trace 重放定位）；(2) HomePage 右上角显示身份徽章（anonymous→未注册 / registered→email / admin→email+admin）；(3) 后端 /api/feedback + /api/bug-reports 都改 requireNonAnonymous 拒匿名（前端 RegistrationGate 已拦，后端 defense-in-depth）
+- 进展：schema bug_reports 表 + 0004 migration / auth-identity requireNonAnonymous helper / bug-report-service + route / FeedbackModal tab + BugReportForm / HomePage 身份徽章 + 匿名兜底拦截 全做完。typecheck 4 全绿；server tests 150/150；core tests 320/320；UI build 干净；0004 push 到 ivn_test
+- 待办（独立 PR）：`RUN_MIGRATIONS_ON_START` env gate 让本地 dev 起 server 时跳过 migrator（避免破坏共享 RDS），跟 PFB.3 解耦
+
+**PFB.2 反馈前置匿名注册 + 用户画像（done）**
+- 已合入 main（10fa03c fix + 3b7934a/edc4daf feat），RegistrationGate 全局拦截 anonymous + RegisterForm 邮箱密码 6 题画像
+- staging RDS 0000 已手动标 applied + INSERT __drizzle_migrations，0001/0002/0003 等 deploy 时 migrator 自动跑
 
 **PFB.1 玩家游玩内问卷反馈：5 题问卷直接落库**（done）
-- 已合入 main（67ae46b feat(feedback)），feedback 表 + POST /api/feedback + 5 题 FeedbackModal 全套上线，等 ops 在 RDS 加表后端到端测
+- 已合入 main（67ae46b feat(feedback)），feedback 表 + POST /api/feedback + 5 题 FeedbackModal 全套上线
 
-**OP.5 = Op A: `script.extract_referenced_ids`**（暂停，PFB.2 完了再回来）
+**OP.5 = Op A: `script.extract_referenced_ids`**（暂停，PFB.3 完了再回来）
 - 类型：实现（op-kit 业务能力扩展）
 - 来源：op-kit roadmap 下一批 P0 lint 套件首个
 - 目标：补完"修复型 agent"工具链中的"知道剧本实际引用了什么"这块拼图，作为 OP.7 propose_manifest_alignment 的纯函数上游

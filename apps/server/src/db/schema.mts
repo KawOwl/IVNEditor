@@ -489,3 +489,30 @@ export const memoryDeletionAnnotations = pgTable('memory_deletion_annotations', 
   // 同一 (playthrough, memory_entry_id) 只能有一条 active（cancelled_at IS NULL）的标注。
   // partial unique index — drizzle-kit schema 不支持 WHERE 子句，由 migration SQL 手写。
 ]);
+
+// ============================================================================
+// Bug Reports — 游玩内 bug 反馈（PFB.3）
+// ============================================================================
+//
+// 跟 feedback 表平行：同一玩家可以同时提"问卷"和"bug 反馈"。
+// 不存截图——playthroughId 已能 join 出完整 trace 用于重放。
+// 后端要求 requireNonAnonymous，匿名用户拒（前端 RegistrationGate 已经
+// 全屏拦截，这一层是 defense-in-depth）。
+export const bugReports = pgTable('bug_reports', {
+  id: text('id').primaryKey(),
+  userId: text('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  /** 提交时的当前 playthrough（可空：玩家在没启动游戏时也能反馈 bug） */
+  playthroughId: text('playthrough_id')
+    .references(() => playthroughs.id, { onDelete: 'set null' }),
+  /** 提交时的 turn（与 playthroughId 配对定位 trace 重放点；playthroughId 为 null 时也为 null） */
+  turn: integer('turn'),
+  /** bug 描述自由文本，最大长度由 route 层 zod 限（5000 char） */
+  description: text('description').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_bug_reports_user_id').on(table.userId),
+  index('idx_bug_reports_playthrough_id').on(table.playthroughId),
+  index('idx_bug_reports_created_at').on(table.createdAt),
+]);

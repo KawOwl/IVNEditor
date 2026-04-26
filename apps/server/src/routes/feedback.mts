@@ -11,7 +11,7 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod/v4';
 import { feedbackService } from '#internal/services/feedback-service';
-import { requireAnyIdentity, isResponse } from '#internal/auth-identity';
+import { requireNonAnonymous, isResponse } from '#internal/auth-identity';
 
 const Q4_OTHER = '其他' as const;
 
@@ -66,7 +66,7 @@ export const feedbackRoutes = new Elysia({ prefix: '/api/feedback' })
 
   // POST / — 提交一份问卷
   .post('/', async ({ body, request }) => {
-    const id = await requireAnyIdentity(request);
+    const id = await requireNonAnonymous(request);
     if (isResponse(id)) return id;
 
     const parsed = feedbackInputSchema.safeParse(body);

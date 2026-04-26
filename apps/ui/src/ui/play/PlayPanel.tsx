@@ -458,6 +458,7 @@ function FeedbackModal({
   playthroughId: string | null;
   onClose: () => void;
 }) {
+  const [tab, setTab] = useState<'survey' | 'bug'>('survey');
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
@@ -467,9 +468,150 @@ function FeedbackModal({
         className="w-full max-w-2xl max-h-[85vh] flex flex-col bg-zinc-900 border border-zinc-700 rounded shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <FeedbackForm playthroughId={playthroughId} onClose={onClose} />
+        {/* Tab bar */}
+        <div className="flex-none flex border-b border-zinc-800">
+          <button
+            type="button"
+            onClick={() => setTab('survey')}
+            className={cn(
+              'flex-1 px-4 py-2.5 text-xs font-medium transition-colors',
+              tab === 'survey'
+                ? 'text-zinc-100 border-b-2 border-emerald-600'
+                : 'text-zinc-500 hover:text-zinc-300',
+            )}
+          >
+            问卷
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('bug')}
+            className={cn(
+              'flex-1 px-4 py-2.5 text-xs font-medium transition-colors',
+              tab === 'bug'
+                ? 'text-zinc-100 border-b-2 border-emerald-600'
+                : 'text-zinc-500 hover:text-zinc-300',
+            )}
+          >
+            Bug 反馈
+          </button>
+        </div>
+
+        {tab === 'survey' ? (
+          <FeedbackForm playthroughId={playthroughId} onClose={onClose} />
+        ) : (
+          <BugReportForm playthroughId={playthroughId} onClose={onClose} />
+        )}
       </div>
     </div>
+  );
+}
+
+// ============================================================================
+// BugReportForm — 单个 textarea → POST /api/bug-reports（PFB.3）
+// ============================================================================
+
+const BUG_DESCRIPTION_MAX_LEN = 5000;
+
+function BugReportForm({
+  playthroughId,
+  onClose,
+}: {
+  playthroughId: string | null;
+  onClose: () => void;
+}) {
+  // turn 跟 useGameStore 走 canonical 来源；不做 'playthroughId 为 null
+  // 时清 turn' 的转换 —— stop / unmount 后 useGameStore.totalTurns 留着上
+  // 一轮数字是已知行为，分析时 join 到 playthrough 即可定位上下文
+  const turn = useGameStore((s) => s.totalTurns);
+  const [description, setDescription] = useState('');
+  const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const trimmed = description.trim();
+  const canSubmit =
+    submitState !== 'submitting' && submitState !== 'success' && trimmed.length > 0;
+
+  const handleSubmit = useCallback(async () => {
+    if (!canSubmit) return;
+    setSubmitState('submitting');
+    setErrorMsg(null);
+    try {
+      const res = await fetchWithAuth(`${getBackendUrl()}/api/bug-reports`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playthroughId, turn, description: trimmed }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: '提交失败' }));
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      setSubmitState('success');
+      setTimeout(onClose, 1500);
+    } catch (err) {
+      setSubmitState('error');
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+    }
+  }, [canSubmit, onClose, playthroughId, trimmed, turn]);
+
+  if (submitState === 'success') {
+    return (
+      <div className="flex-1 flex items-center justify-center px-5 py-12">
+        <p className="text-sm text-emerald-400">已收到，谢谢你的反馈 🎉</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex-none px-5 py-4 border-b border-zinc-800">
+        <p className="text-[11px] text-zinc-500 leading-relaxed">
+          描述一下你遇到的 bug——我们会用当前游玩 ID 关联到完整 trace
+          重放。复现步骤、预期效果、实际效果一起写更好。
+        </p>
+      </div>
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          maxLength={BUG_DESCRIPTION_MAX_LEN}
+          disabled={submitState === 'submitting'}
+          placeholder="请描述你遇到的 bug…"
+          rows={10}
+          className="w-full px-3 py-2 rounded bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs leading-relaxed focus:outline-none focus:border-emerald-600 resize-y"
+          autoFocus
+        />
+        <p className="mt-1 text-right text-[11px] text-zinc-600">
+          {description.length}/{BUG_DESCRIPTION_MAX_LEN}
+        </p>
+      </div>
+      <div className="flex-none px-5 py-3 border-t border-zinc-800 flex items-center gap-2">
+        <span
+          className={cn(
+            'text-[11px] flex-1',
+            submitState === 'error' ? 'text-red-400' : 'text-zinc-500',
+          )}
+        >
+          {submitState === 'error' && (errorMsg ?? '提交失败，请重试')}
+          {submitState === 'submitting' && '提交中…'}
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={submitState === 'submitting'}
+          className="text-xs px-3 py-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 disabled:opacity-50 transition-colors"
+        >
+          取消
+        </button>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+          className="text-xs px-3 py-1.5 rounded bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          提交
+        </button>
+      </div>
+    </>
   );
 }
 

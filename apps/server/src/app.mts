@@ -23,6 +23,7 @@ import { playthroughRoutes } from '#internal/routes/playthroughs';
 import { assetRoutes } from '#internal/routes/assets';
 import { mcpRoutes } from '#internal/routes/mcp';
 import { feedbackRoutes } from '#internal/routes/feedback';
+import { bugReportRoutes } from '#internal/routes/bug-reports';
 import { buildOpRouter } from '#internal/operations/adapters/http';
 import { ALL_OPS } from '#internal/operations/registry';
 
@@ -39,6 +40,7 @@ export function buildApp() {
     .use(assetRoutes)
     .use(mcpRoutes)
     .use(feedbackRoutes)
+    .use(bugReportRoutes)
     .use(buildOpRouter(ALL_OPS))
     .get('/health', () => ({ ok: true, timestamp: Date.now() }));
 }
