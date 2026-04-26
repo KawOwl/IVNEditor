@@ -689,5 +689,15 @@
     "ref": "packages/core/src/narrative-parser-v2/{tag-schema.mts,inheritance.mts,index.mts} + apps/ui/src/ui/editor/ScriptInfoPanel.tsx",
     "verify": "pnpm typecheck 4 个 package 全绿；pnpm test:core 273/273（V.10 时 269；净 +4：ad-hoc → __npc__ lookup 4 用例：作者没配 [] / 配了+sprite / 配了+无 sprite emotion 空串 / 多 ad-hoc 共用一立绘不抖动 / 裸 __npc__ 等价；外加'已知但没配'测断言从 [] 改成占位 sprite）。Browser 验证：vite 动态 import ScriptInfoPanel.tsx 模块成功 + console 0 error，证明 `import { NPC_RESERVED_CHARACTER_ID } from '@ivn/core/narrative-parser-v2'` cross-package 解析无误；form 校验是单行字符串字面量比较，单测充分覆盖语义。E2E（admin 登录 → 编辑器加 `__npc__` character → ad-hoc dialogue 看占位卡）留作者手动验证。",
     "note": "起因（2026-04-26）：用户问 V.10 简化版下 ad-hoc speaker（`__npc__保安`）现在怎么处理 → 当前是空台。讨论后选方案 1 = 作者在编辑器配 `__npc__` reserved character + 上传通用占位立绘，所有 ad-hoc 共享。**两个微决策**：(a) 用什么 reserved id？选 `__npc__`（裸前缀），和 ad-hoc 协议同源便于作者直觉理解；字面量恰等于 `NPC_SPEAKER_PREFIX` 这个老常量但语义不同，加 `NPC_RESERVED_CHARACTER_ID` alias 区分。(b) 占位剪影怎么来？走作者自配（编辑器豁免双下划线 id 校验即可），不内建 SVG（避免风格跨剧本统一不贴合）。(c) emotion 字段缺 default mood 用空串而非 'default'——空串让 UI 占位卡片只显示 displayName 行，最干净。**两个边界 case**：(a) ad-hoc + 作者完全没配 `__npc__` → 仍然空台（和'杜撰角色'一致，作者主动配置才解锁此功能）；(b) 已知 speaker + 作者配了 character 但没上传 sprite → V.10 是空台，V.11 改为占位卡（一致性：UI 已有占位卡逻辑，原本 parser 不 emit 数据导致触发不到）。**未做**（list 给后续）：编辑器里加'添加 `__npc__` 角色'快捷按钮 / 占位提示文案；按性别细分 (`__npc__male` / `__npc__female`) → 用户先验性方决定不做，等运行体验决定要不要加维度。"
+  },
+  {
+    "id": "V.12",
+    "title": "声明式视觉 IR：SpriteLayer 强制立绘居中渲染（暂时简化版）",
+    "description": "把 UI 层立绘渲染强制走 center 位置，无视 `SpriteState.position` 字段。改动只在 [apps/ui/src/ui/play/vn/SpriteLayer.tsx](apps/ui/src/ui/play/vn/SpriteLayer.tsx) 两处：(1) `SpriteLayer` 父组件 sprite key 从 `${sprite.id}-${sprite.position ?? 'center'}` 改成 `${sprite.id}-center`；(2) `Sprite` 子组件 `const position = sprite.position ?? 'center'` 改成 `const position: 'center' = 'center'`。`POSITION_STYLES` 常量保留三 key（left/center/right）但 lookup 永远走 'center'（`left-1/2 -translate-x-1/2`）。Parser / persistence / WS 协议层 `SpriteState.position` 字段一律不动——只 UI 渲染层不读。",
+    "status": "done",
+    "type": "ui",
+    "ref": "apps/ui/src/ui/play/vn/SpriteLayer.tsx",
+    "verify": "pnpm typecheck 4 package 全绿（test:core 无需重跑——纯 UI 渲染层改动）。Browser：vite hot reload 后 fetch SpriteLayer 模块 transform 产物，确认 `const position = \"center\";` 字面量赋值 + sprite key 用 `${sprite.id}-center`，源码 0 处实际读取 `sprite.position`（仅注释里提到），console 0 error。",
+    "note": "起因（2026-04-26）：用户原话'角色位置先暂时都改为显示在中间吧'——叠在 V.10 立绘绑定 dialogue / V.11 ad-hoc 占位之上的进一步简化。决策：(a) 改 UI 层而非 parser/persistence 层——UI 一行 const 赋值最小冲击，可逆；改 parser 会破坏 WS 协议 + 老存档兼容。(b) 保留 `POSITION_STYLES` 三 key 便于后续恢复，只是 lookup 不再走 left/right。(c) 占位卡片 + 真立绘两条路径都走同一 posClass，无需分别处理。影响：V.11 后 dialogue 立绘本来就 center 无视觉变化；老 playthrough sceneRef 含 left/right 立绘 restore 后也居中（边界角色消失）；编辑器 default scene 里配的 left/right 立绘运行时也居中。"
   }
 ]

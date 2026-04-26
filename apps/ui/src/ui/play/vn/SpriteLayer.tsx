@@ -35,7 +35,8 @@ export function SpriteLayer({ sprites, characters }: SpriteLayerProps) {
   return (
     <div className="pointer-events-none absolute inset-0" aria-label="sprite-layer">
       {sprites.map((sprite) => (
-        <Sprite key={`${sprite.id}-${sprite.position ?? 'center'}`} sprite={sprite} characters={characters} />
+        // V.12 暂时简化：所有立绘强制居中渲染，sprite.position 字段不读
+        <Sprite key={`${sprite.id}-center`} sprite={sprite} characters={characters} />
       ))}
     </div>
   );
@@ -47,7 +48,8 @@ interface SpriteProps {
 }
 
 function Sprite({ sprite, characters }: SpriteProps) {
-  const position = sprite.position ?? 'center';
+  // V.12 暂时简化：所有立绘强制居中渲染，sprite.position 字段不读
+  const position: 'center' = 'center';
   const character = characters.find((c) => c.id === sprite.id);
   const spriteAsset = character?.sprites.find((s) => s.id === sprite.emotion);
   const assetUrl = spriteAsset?.assetUrl;

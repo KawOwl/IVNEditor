@@ -28,6 +28,16 @@
 
 ## 最近完成
 
+**V.12 SpriteLayer 强制立绘居中渲染（暂时简化版，2026-04-26，本会话）**
+- 用户原话："角色位置先暂时都改为显示在中间吧。"
+- 改动：[SpriteLayer.tsx](apps/ui/src/ui/play/vn/SpriteLayer.tsx) 两处
+  - SpriteLayer 父组件 sprite key 从 `${sprite.id}-${sprite.position ?? 'center'}` 改成 `${sprite.id}-center`
+  - Sprite 子组件 `const position = sprite.position ?? 'center'` 改成 `const position: 'center' = 'center'`
+- 行为：UI 渲染时完全无视 `sprite.position` 字段，所有立绘永远走 `POSITION_STYLES.center`（`left-1/2 -translate-x-1/2`），显示在画面正中。`SpriteState.position` 字段在 parser / 持久化 / WS 协议层保留不动，只是 UI 不读。
+- 影响：(a) V.11 后 dialogue 立绘本来就 center，无视觉变化；(b) 老 playthrough 持久化的 sceneRef 含 left/right 立绘 restore 后也会居中（不再出现边界角色）；(c) 编辑器 default scene 配的 left/right 立绘运行时也居中。
+- 验证：`pnpm typecheck` 4 package 全绿（test:core 不需重跑——纯 UI 渲染层改动）。Browser：vite hot reload 后 fetch SpriteLayer 模块的 transform 产物，确认 `const position = "center";` 字面量赋值 + key 用 `${sprite.id}-center`，源码 0 处实际读取 `sprite.position`（仅注释里提到），console 0 error。
+- 决策：(a) UI 层强制 center 而非 parser/persistence 层抹掉 position 字段——UI 改动可逆（一行 const 赋值）+ 不破坏数据形状；(b) 不动 `POSITION_STYLES` 常量也不删 left/right key——保留映射给后续恢复，只是不再被 lookup。
+
 **V.11 ad-hoc speaker 走 `__npc__` reserved character 占位立绘 + 已知 speaker 缺图占位（2026-04-26，本会话）**
 - 起因：V.10 落地后用户问 ad-hoc（`__npc__保安`）当前怎么处理 → 答"空台"。用户决策"不空台已经很好"，方案：作者在编辑器配 `__npc__` reserved character + 上传通用占位立绘，所有 ad-hoc 共享。
 - 改动：
@@ -393,6 +403,7 @@
 | 2026-04-26 | Memorax adapter `appendTurn` 用 `async_mode=true`（fire-and-forget），`pin` 用 `async_mode=false`（同步等服务端确认） | Memorax 的 add 内部跑 LLM 抽取最坏 5-30s，同步会卡住每轮 generate。但 pin 是显式"重要记忆"语义，不能容忍丢失（pin 频次低 + 一次额外 HTTP 成本可接受）。同 mem0 adapter 同模式 | appendTurn 失败靠服务端 PENDING 队列重试 + console.error log；pin 失败立刻 console.error 但仍返回 entry（caller 不感知，重启时 pin 再发即可） |
 | 2026-04-26 | V.10 立绘整体简化：dialogue → speaker only at center；非 dialogue → []；忽略 `<sprite>` / `<stage/>` 子标签 | 用户原话指令——dialogue 展示结束立绘退场 + 只显示说话人立绘。比 V.9 兜底 + 多角色并存 + 三 position 分配的整套机制简单 N 倍，prompt 也无需教 LLM 摆位。改动只在 inheritance.mts 一层，UI / WS 协议 / persistence 全不动 | 失去：多角色并存（无法表现"两人同框"）、explicit `<sprite>` 摆位、`<stage/>` 显式清场。这些场景如果用户要恢复，倒退也只是 inheritance.mts 几十行 + 测试。DegradeCode enum 旧成员保留便于平滑回滚。tag-schema 标注哪些事件被简化版 dormant |
 | 2026-04-26 | V.11 ad-hoc speaker 走 `__npc__` reserved character 占位立绘；已知 speaker 缺 sprite 也 emit 占位卡 | V.10 落地后讨论 ad-hoc 处理：当前空台 vs 显示什么。性别细分（`__npc__male`/`__npc__female`）LLM 协议负担可控但收益不清楚，先做最简单的"统一占位"（作者在编辑器配 `__npc__` 角色）。reserved id 用 `__npc__` 裸前缀和现有 ad-hoc 协议同源；走作者自配而非内建 SVG 避免跨剧本风格冲突。编辑器 ID_PATTERN 给 `__npc__` 单独豁免；emotion 缺 default mood 用空串让 UI 占位卡只显示 displayName 行更干净 | ad-hoc + 没配 `__npc__` 仍空台（作者主动配置才解锁）；已知 speaker 缺 sprite 由空台升级到占位卡（UI 早有占位逻辑，原本 parser 不 emit 数据触发不到，顺手收口）。后续可加：编辑器'添加 `__npc__` 角色'快捷按钮；按性别细分（先观察实际玩家反馈再决定） |
+| 2026-04-26 | V.12 SpriteLayer 强制立绘居中渲染，无视 `sprite.position` 字段 | 用户原话指令——立绘暂时都显示在中间。UI 层一行 const 赋值最小冲击，比 parser/persistence 抹掉 position 字段（影响 WS 协议 + 老存档兼容）轻得多；保留 `POSITION_STYLES` 常量左右两 key 便于后续恢复 | parser / 持久化 / WS 协议层 SpriteState.position 字段不动；老 playthrough sceneRef 含 left/right 立绘 restore 后也居中（视觉边界角色消失）；编辑器 default scene 配的 left/right 运行时也居中 |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |
