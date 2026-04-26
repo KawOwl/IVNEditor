@@ -21,6 +21,12 @@ import { truncatingCompressFn } from '#internal/memory/legacy/compress';
 import { LLMSummarizerMemory } from '#internal/memory/llm-summarizer/manager';
 import { Mem0Memory } from '#internal/memory/mem0/adapter';
 import { MemoraxMemory } from '#internal/memory/memorax/adapter';
+import { ParallelMemory, type ParallelMemoryChild } from '#internal/memory/parallel/adapter';
+
+/** parallel provider 的 children，缺省 memorax 优先 mem0 兜底 */
+const DEFAULT_PARALLEL_CHILDREN = ['memorax', 'mem0'] as const;
+type ParallelChildName = 'mem0' | 'memorax';
+const PARALLEL_CHILD_NAMES: ReadonlySet<string> = new Set(['mem0', 'memorax']);
 
 export async function createMemory(options: CreateMemoryOptions): Promise<Memory> {
   const kind = options.config.provider ?? 'legacy';
@@ -66,6 +72,41 @@ export async function createMemory(options: CreateMemoryOptions): Promise<Memory
           apiKey: cfg.apiKey,
           appId: cfg.appId,
         });
+      }
+
+    case 'parallel':
+      {
+        const requested = (options.config.providerOptions?.children as
+          | readonly string[]
+          | undefined) ?? DEFAULT_PARALLEL_CHILDREN;
+        const seen = new Set<string>();
+        const childNames: ParallelChildName[] = [];
+        for (const name of requested) {
+          if (!PARALLEL_CHILD_NAMES.has(name)) {
+            throw new Error(
+              `parallel.providerOptions.children: unknown child "${name}". Allowed: mem0, memorax.`,
+            );
+          }
+          if (seen.has(name)) continue;
+          seen.add(name);
+          childNames.push(name as ParallelChildName);
+        }
+        if (childNames.length === 0) {
+          throw new Error('parallel.providerOptions.children must list at least one child');
+        }
+
+        // 递归用 createMemory 构造每个 child（按 name override provider）。
+        // providerOptions 不递归传 —— children 字段是 parallel 自己的扩展。
+        const childOptions = { ...options, config: { ...options.config, providerOptions: undefined } };
+        const children: ParallelMemoryChild[] = [];
+        for (const name of childNames) {
+          const memory = await createMemory({
+            ...childOptions,
+            config: { ...childOptions.config, provider: name },
+          });
+          children.push({ name, memory });
+        }
+        return new ParallelMemory(options.config, children, options.coreEventReader);
       }
 
     default:
