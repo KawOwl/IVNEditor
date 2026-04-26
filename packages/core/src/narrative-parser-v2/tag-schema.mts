@@ -189,10 +189,13 @@ export function adhocDisplayName(speakerId: string): string {
  * 中文代词 / 泛称黑名单。LLM 容易把 prompt 里 "`__npc__<显示名>`" 模板
  * 套用到第二人称代词上（典型错误：`speaker="__npc__你"`），结果 UI 渲染
  * 出一个名字叫"你"的 NPC 气泡。这些后缀都不是合法显示名。
+ *
+ * 注：'我' 不在列表里——某些剧本里"我"可以是 NPC 自述场景的合法称呼
+ * （罕见但允许）。其他 first/third-person 代词（你/他/她）当 ad-hoc
+ * speaker 仍然没意义，禁止。
  */
 export const PRONOUN_DISPLAY_NAMES: ReadonlySet<string> = new Set([
   '你',
-  '我',
   '他',
   '她',
   '它',

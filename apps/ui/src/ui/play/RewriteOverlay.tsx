@@ -12,7 +12,8 @@ import { useEffect, useState } from 'react';
 
 import { useGameStore } from '#internal/stores/game-store';
 
-const REWRITING_LABEL = '小齿轮正在调整格式…';
+const REWRITING_LABEL = '小齿轮正在调整格式';
+const REWRITING_HINT = '稍后会重新呈现这一段';
 const FADE_OUT_MS = 240;
 
 export function RewriteOverlay(): React.ReactElement | null {
@@ -52,15 +53,18 @@ export function RewriteOverlay(): React.ReactElement | null {
       aria-live="polite"
       aria-label={REWRITING_LABEL}
     >
-      <div className="flex items-center gap-2.5 px-4 py-2 rounded-full bg-zinc-900/90 ring-1 ring-zinc-700 shadow-lg">
+      <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-zinc-900/90 ring-1 ring-zinc-700 shadow-lg">
         <span
-          className="inline-block text-zinc-300 animate-spin-slow"
+          className="inline-block text-zinc-300 text-base"
           aria-hidden="true"
           style={{ animation: 'spin 2.4s linear infinite' }}
         >
           ⚙
         </span>
-        <span className="text-xs font-medium text-zinc-200">{REWRITING_LABEL}</span>
+        <div className="flex flex-col leading-tight">
+          <span className="text-xs font-medium text-zinc-200">{REWRITING_LABEL}</span>
+          <span className="text-[10px] text-zinc-400 mt-0.5">{REWRITING_HINT}</span>
+        </div>
       </div>
     </div>
   );

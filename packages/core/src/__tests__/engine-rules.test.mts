@@ -33,9 +33,9 @@ describe('buildEngineRules', () => {
     // 字节快照——任何 prompt 子段改动都会让 hash 变。改动时同步更新此值，
     // commit message 必须解释为什么改。
     expect(hash(text)).toBe(
-      '7ba267ce0352e1dd5eadf743567e70a772c1a48521cc353bad404744ab368148',
+      '035d8f3620342095f096711d708f0745217e0771d50fd41c30d3f681ec8454ad',
     );
-    expect(text.length).toBe(9034);
+    expect(text.length).toBe(9063);
   });
 
   it('v2 with sample manifest 输出字节稳定 (snapshot hash)', () => {
@@ -47,9 +47,9 @@ describe('buildEngineRules', () => {
       backgrounds: [{ id: 'classroom_evening' }, { id: 'classroom_night' }],
     });
     expect(hash(text)).toBe(
-      'fdfafeccc4cfe88ad0a04fe33587863134ab2f40752fa9e8692a6f0ab13df2fe',
+      '38c2415d2594ae74b6dedd75ba867b7cddb92f4508c36dacc04c5ee500b2e821',
     );
-    expect(text.length).toBe(9093);
+    expect(text.length).toBe(9122);
   });
 
   // ==========================================================================
@@ -136,7 +136,8 @@ describe('buildEngineRules', () => {
       expect(text).toContain(banned);
     }
     // 跟 reducer 对齐的代词列表
-    for (const pronoun of ['你', '我', '他', '她', '它', '他们', '她们', '咱', '自己', '主角']) {
+    // '我' 不在禁止列表——某些剧本里"我"是 NPC 自述合法称呼
+    for (const pronoun of ['你', '他', '她', '它', '他们', '她们', '咱', '自己', '主角']) {
       expect(text).toContain(pronoun);
     }
   });

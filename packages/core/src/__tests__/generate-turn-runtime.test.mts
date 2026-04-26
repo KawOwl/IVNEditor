@@ -518,9 +518,15 @@ describe('isForbiddenAdhocSuffix', () => {
   });
 
   it('人称代词后缀 → true', () => {
-    for (const p of ['你', '我', '他', '她', '它', '他们', '她们', '咱', '自己', '主角']) {
+    // '我' 不在禁止列表（某些剧本里"我"是 NPC 自述合法称呼）
+    for (const p of ['你', '他', '她', '它', '他们', '她们', '咱', '自己', '主角']) {
       expect(isForbiddenAdhocSuffix(`__npc__${p}`)).toBe(true);
     }
+  });
+
+  it('"我" 后缀 → false（允许 NPC 自述场景）', () => {
+    expect(isForbiddenAdhocSuffix('__npc__我')).toBe(false);
+    expect(isForbiddenAdhocSuffix('我')).toBe(false);
   });
 
   it('不带 __npc__ 前缀的纯后缀也判定（防御性）', () => {

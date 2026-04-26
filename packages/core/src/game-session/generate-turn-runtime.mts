@@ -170,7 +170,8 @@ function toTraceStepRecord(step: StepInfo): TraceStepRecord {
  * 改动这里时同步更新 engine-rules.mts ADHOC_SPEAKER_RULES_V2 段的禁止列表。
  */
 export const FORBIDDEN_ADHOC_SUFFIXES: ReadonlySet<string> = new Set([
-  '你', '我', '他', '她', '它', '他们', '她们', '咱', '自己', '主角',
+  // 注：'我' 不在列表（某些剧本里"我"可以是 NPC 自述合法称呼）
+  '你', '他', '她', '它', '他们', '她们', '咱', '自己', '主角',
   '另一人', '某人', '其中一个', '那个人', '谁',
 ]);
 

@@ -161,7 +161,7 @@ describe('reduce · dialogue 容器', () => {
 
   it.each([
     '__npc__你',
-    '__npc__我',
+    // '__npc__我' 不在禁止列表（某些剧本里"我"是 NPC 自述合法称呼）
     '__npc__他',
     '__npc__她',
     '__npc__它',
@@ -196,6 +196,18 @@ describe('reduce · dialogue 容器', () => {
       { code: 'dialogue-adhoc-speaker', detail: '__npc__你的' },
     ]);
     expect(outputs.degrades.some((d) => d.code === 'dialogue-pronoun-as-speaker')).toBe(false);
+  });
+
+  it('<dialogue speaker="__npc__我"> → 走 adhoc 路径（"我"允许 NPC 自述场景）', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'dialogue', attrs: { speaker: '__npc__我' } },
+      { type: 'text', data: '...' },
+      { type: 'closetag', name: 'dialogue' },
+    ]);
+    expect(outputs.degrades.some((d) => d.code === 'dialogue-pronoun-as-speaker')).toBe(false);
+    expect(outputs.degrades.some(
+      (d) => d.code === 'dialogue-adhoc-speaker' && d.detail === '__npc__我',
+    )).toBe(true);
   });
 
   it('<dialogue speaker="__npc__"> 裸前缀 → 走 adhoc 路径不当代词处理', () => {
