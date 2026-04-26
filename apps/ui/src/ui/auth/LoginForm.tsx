@@ -40,15 +40,17 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
       <div className="flex-none px-5 py-4 border-b border-zinc-800">
         <h2 className="text-sm font-medium text-zinc-200">登录已注册账号</h2>
         <p className="text-[11px] text-zinc-500 mt-1">
-          已经注册过的用户可以直接登录恢复账号；admin 用 username 登录。
+          已经注册过的用户可以直接登录恢复账号。
         </p>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         <fieldset className="space-y-1">
           <legend className="text-xs text-zinc-300">
-            <span className="text-red-400 mr-1">*</span>邮箱 或 用户名
+            <span className="text-red-400 mr-1">*</span>邮箱
           </legend>
+          {/* type="text" 不是 type="email" —— 后端 identifier 仍接受 username
+              便于 admin 用 username 登录；type="email" 会被浏览器格式校验拦住 */}
           <input
             type="text"
             value={identifier}

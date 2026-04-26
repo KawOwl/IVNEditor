@@ -32,12 +32,12 @@ export const authRoutes = new Elysia({ prefix: '/api/auth' })
     const identifier = b.identifier ?? b.username ?? '';
     const password = b.password ?? '';
     if (!identifier || !password) {
-      return new Response(JSON.stringify({ error: '请输入邮箱/用户名和密码' }), { status: 400 });
+      return new Response(JSON.stringify({ error: '请输入邮箱和密码' }), { status: 400 });
     }
 
     const result = await login(identifier, password);
     if (!result) {
-      return new Response(JSON.stringify({ error: '邮箱/用户名或密码错误' }), { status: 401 });
+      return new Response(JSON.stringify({ error: '邮箱或密码错误' }), { status: 401 });
     }
 
     return {
