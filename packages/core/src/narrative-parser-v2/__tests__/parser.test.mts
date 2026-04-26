@@ -89,42 +89,22 @@ describe('createParser · 基础', () => {
     }
   });
 
-  it('自闭合 <background/> <sprite/> <stage/> 都被识别', () => {
+  it('自闭合 <background/> 被识别（<sprite/> <stage/> 简化版静默忽略）', () => {
     const p = makeParser();
     const { sentences } = feedInChunks(
       p,
       `<narration>` +
         `<background scene="plaza_day"/>` +
         `<sprite char="sakuya" mood="smile" position="center"/>` +
+        `<stage/>` +
         `street view` +
         `</narration>`,
       1000,
     );
     expect(sentences).toHaveLength(1);
     expect(sentences[0]!.sceneRef.background).toBe('plaza_day');
-    expect(sentences[0]!.sceneRef.sprites).toEqual([
-      { id: 'sakuya', emotion: 'smile', position: 'center' },
-    ]);
-  });
-
-  it('<stage/> 清空立绘', () => {
-    const p = makeParser();
-    const { sentences } = feedInChunks(
-      p,
-      `<narration>` +
-        `<sprite char="sakuya" mood="smile" position="left"/>` +
-        `a` +
-        `</narration>` +
-        `<narration>` +
-        `<stage/>` +
-        `empty now` +
-        `</narration>`,
-      1000,
-    );
-    expect(sentences).toHaveLength(2);
-    expect(sentences[0]!.sceneRef.sprites).toHaveLength(1);
-    expect(sentences[1]!.sceneRef.sprites).toEqual([]);
-    expect(sentences[1]!.spritesChanged).toBe(true);
+    // 简化版：narration 立绘恒为空，<sprite/>/<stage/> 被解析但不影响输出
+    expect(sentences[0]!.sceneRef.sprites).toEqual([]);
   });
 });
 
@@ -203,10 +183,7 @@ describe('createParser · stream truncation', () => {
     const { sentences, degrades } = p.finalize();
     expect(sentences).toHaveLength(1);
     expect(sentences[0]!.truncated).toBe(true);
-    // V.9 兜底：speaker 没立绘 → 自动补一条 + emit fallback 事件，
-    // 然后才是 truncated 事件
     expect(degrades).toMatchObject([
-      { code: 'dialogue-speaker-sprite-fallback' },
       { code: 'container-truncated', detail: 'dialogue' },
     ]);
   });
@@ -309,7 +286,7 @@ describe('createParser · silent tolerance e2e', () => {
     ]);
   });
 
-  it('多重非法 sprite + bg 都产 degrade 但不崩', () => {
+  it('多重非法 sprite + bg：bg 仍报错，sprite 层级简化版静默忽略', () => {
     const p = makeParser();
     const { sentences, degrades } = feedInChunks(
       p,
@@ -325,13 +302,14 @@ describe('createParser · silent tolerance e2e', () => {
     expect(sentences).toHaveLength(1);
     expect(sentences[0]!.sceneRef.background).toBeNull();
     expect(sentences[0]!.sceneRef.sprites).toEqual([]);
+    // 简化版立绘规则：narration 一律不显示立绘，`<sprite>` 标签整体被忽略，
+    // 所以 sprite 系列 degrade（unknown-char / unknown-mood / invalid-position）
+    // 不再产生。仅 bg 校验依旧 emit。
     const codes = degrades.map((d) => d.code).sort();
     expect(codes).toEqual(
       [
         'bg-unknown-scene',
         'sprite-invalid-position',
-        'sprite-unknown-char',
-        'sprite-unknown-mood',
       ].sort(),
     );
   });
@@ -377,7 +355,7 @@ describe('createParser · snapshot + 起始', () => {
     expect(sentences.every((s) => s.turnNumber === 3)).toBe(true);
   });
 
-  it('起始 initialScene 被第一句继承', () => {
+  it('起始 initialScene 的 background 被第一句继承（sprites 简化版不继承）', () => {
     const p = createParser({
       manifest: MANIFEST,
       turnNumber: 1,
@@ -393,8 +371,10 @@ describe('createParser · snapshot + 起始', () => {
       1000,
     );
     expect(sentences[0]!.sceneRef.background).toBe('cafe_interior');
-    expect(sentences[0]!.sceneRef.sprites).toHaveLength(1);
     expect(sentences[0]!.bgChanged).toBe(false);
+    // 简化版：narration 始终 sprites=[]，不继承 initialScene 的立绘
+    expect(sentences[0]!.sceneRef.sprites).toEqual([]);
+    expect(sentences[0]!.spritesChanged).toBe(true);
   });
 });
 
@@ -485,20 +465,19 @@ describe('createParser · 综合场景', () => {
     expect(sentences.map((s) => s.index)).toEqual([1, 2, 3, 4]);
     expect(scratches[0]!.index).toBe(0);
     expect(sentences[0]!.sceneRef.background).toBe('cafe_interior');
-    expect(sentences[0]!.sceneRef.sprites).toHaveLength(1);
-    // 最后 narration 因为 <stage/> 清空了 sprites
+    // 简化版：narration 不显示立绘，<sprite> 子标签被忽略
+    expect(sentences[0]!.sceneRef.sprites).toEqual([]);
+    // dialogue sakuya → 立绘 = sakuya@center
+    expect(sentences[1]!.sceneRef.sprites).toEqual([
+      { id: 'sakuya', emotion: 'neutral', position: 'center' },
+    ]);
+    // dialogue mc → 立绘换为 mc@center（不并存）
+    expect(sentences[2]!.sceneRef.sprites).toEqual([
+      { id: 'mc', emotion: 'neutral', position: 'center' },
+    ]);
+    // 最后 narration → 立绘退场
     expect(sentences[3]!.sceneRef.sprites).toEqual([]);
     expect(sentences[3]!.sceneRef.background).toBe('cafe_interior'); // bg 继承
-    // V.9 兜底：第二条 dialogue speaker=mc 时 mc 不在台上，自动补 mc 默认
-    // sprite 在第一个空闲位置（左 / 右；center 已被 sakuya 占）
-    expect(degrades).toMatchObject([
-      { code: 'dialogue-speaker-sprite-fallback', detail: 'mc:neutral@left' },
-    ]);
-    const mcDialogue = sentences[2]!;
-    expect(mcDialogue.sceneRef.sprites).toContainEqual({
-      id: 'mc',
-      emotion: 'neutral',
-      position: 'left',
-    });
+    expect(degrades).toHaveLength(0);
   });
 });

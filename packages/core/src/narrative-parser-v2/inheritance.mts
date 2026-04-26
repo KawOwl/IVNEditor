@@ -1,26 +1,30 @@
 /**
- * Narrative Parser v2 — 视觉状态继承推导
+ * Narrative Parser v2 — 视觉状态推导（暂时简化版）
  *
- * RFC §3.4 的 TypeScript 编码。**纯函数**：接一个 prev scene 和 pending 的
- * 视觉子标签，产出 resolved scene + change flags + degrades。
+ * 简化规则（覆盖 RFC §3.4 旧设计）：
+ *   - **dialogue 单元**：sprites = [speaker 立绘 at center]
+ *     - 已知 speaker（manifest.characters 含该 id）→ 用该 character 的 default
+ *       mood；缺 default mood（作者还没上传 sprite 资产）→ emotion 空串，UI
+ *       占位卡片兜底渲染。
+ *     - ad-hoc speaker（`__npc__保安` 等）→ 映射到 reserved character id
+ *       `__npc__` 查找；作者在编辑器添加了 `__npc__` 角色就触发，没添加则空台。
+ *     - 不在白名单（杜撰角色）→ 空台。
+ *   - **非 dialogue 单元**（narration / speakerMissing）→ sprites = []。
+ *   - 完全不继承 prev.sprites，完全忽略 `<sprite>` / `<stage/>` 子标签：立绘
+ *     绑定到 dialogue 容器生命周期——dialogue 关闭时立绘随之退场。
  *
- * 不 mutate 输入。不做 IO。不依赖 htmlparser2。
+ * 背景规则不变：pending bg 通过白名单则切换，否则继承 + emit
+ * `bg-unknown-scene`。
+ *
+ * 纯函数。不 mutate 输入。不做 IO。
  */
 
 import type { SceneState, SpriteState } from '#internal/types';
 import type { PendingUnit, ParserManifest, DegradeEvent } from '#internal/narrative-parser-v2/state';
-import { isAdhocSpeaker } from '#internal/narrative-parser-v2/tag-schema';
-
-/**
- * Speaker fallback 注入新 sprite 时的 position 优先顺序：center 最自然
- * （单角色对话默认居中），其次 left / right。和 tag-schema 的 VALID_POSITIONS
- * 不同——后者按属性值字母序声明，这里按"美术意图"优先级。
- */
-const FALLBACK_POSITION_PREFERENCE: ReadonlyArray<'center' | 'left' | 'right'> = [
-  'center',
-  'left',
-  'right',
-];
+import {
+  isAdhocSpeaker,
+  NPC_RESERVED_CHARACTER_ID,
+} from '#internal/narrative-parser-v2/tag-schema';
 
 // ============================================================================
 // 输出形状
@@ -34,34 +38,9 @@ export interface ResolvedScene {
 }
 
 // ============================================================================
-// 继承规则主入口
+// 主入口
 // ============================================================================
 
-/**
- * 按 RFC §3.4 推导该单元最终的视觉状态：
- *
- *   bg:
- *     - 子里有 <background/> 且 scene 通过校验 → 用新值
- *     - 否则 → 继承 prev
- *
- *   sprites:
- *     - 子里有 <stage/> → 清空
- *     - 子里有 <sprite/> (无 stage) → **替换**
- *     - 无 → 继承 prev
- *
- * 白名单校验在本函数内完成（silent tolerance）：
- *   - bg.scene 不在 manifest → drop，产出 `bg-unknown-scene` degrade
- *   - sprite char 不在 manifest → drop，产出 `sprite-unknown-char`
- *   - sprite mood 不在该 char 的白名单 → drop，产出 `sprite-unknown-mood`
- *   - stage 和 sprite 同时出现 → stage 优先清场，sprite 全部 drop，
- *     产出 `stage-and-sprite-conflict`
- *
- * 上述完成后还有一层 dialogue speaker 兜底：dialogue 容器结束时如果 speaker
- * 是 manifest 已知角色但当前台上没有该 speaker 的立绘（无论是 LLM 没写
- * `<sprite>`、清场后没补、或者只放了配角的立绘），自动在第一个空闲位置补
- * 一个 manifest 里该角色的默认 sprite，并 emit `dialogue-speaker-sprite-fallback`
- * 中性事件供 trace 量化。
- */
 export function resolveScene(
   prev: SceneState,
   pending: PendingUnit,
@@ -70,8 +49,7 @@ export function resolveScene(
   const degrades: DegradeEvent[] = [];
 
   const nextBg = resolveBackground(prev.background, pending, manifest, degrades);
-  const baseSprites = resolveSprites(prev.sprites, pending, manifest, degrades);
-  const nextSprites = applySpeakerSpriteFallback(baseSprites, pending, manifest, degrades);
+  const nextSprites = resolveSpeakerSprite(pending, manifest);
 
   const bgChanged = nextBg !== prev.background;
   const spritesChanged = !spritesEqual(nextSprites, prev.sprites);
@@ -103,121 +81,38 @@ function resolveBackground(
   return scene;
 }
 
-function resolveSprites(
-  prevSprites: ReadonlyArray<SpriteState>,
-  pending: PendingUnit,
-  manifest: ParserManifest,
-  degrades: DegradeEvent[],
-): SpriteState[] {
-  const hasStage = pending.pendingClearStage;
-  const hasSprite = pending.pendingSprites.length > 0;
-
-  if (hasStage && hasSprite) {
-    degrades.push({ code: 'stage-and-sprite-conflict' });
-    return [];
-  }
-
-  if (hasStage) return [];
-
-  if (!hasSprite) return [...prevSprites];  // clone prev (immutable)
-
-  // 替换：对每条 sprite 做白名单校验，失败 drop
-  const resolved: SpriteState[] = [];
-  for (const sprite of pending.pendingSprites) {
-    const verdict = validateSprite(sprite, manifest);
-    if (verdict.ok) {
-      resolved.push(sprite);
-    } else {
-      degrades.push(verdict.degrade);
-    }
-  }
-  return resolved;
-}
-
-type SpriteVerdict =
-  | { ok: true }
-  | { ok: false; degrade: DegradeEvent };
-
-function validateSprite(
-  sprite: SpriteState,
-  manifest: ParserManifest,
-): SpriteVerdict {
-  if (!manifest.characters.has(sprite.id)) {
-    return {
-      ok: false,
-      degrade: { code: 'sprite-unknown-char', detail: sprite.id },
-    };
-  }
-  const moods = manifest.moodsByChar.get(sprite.id);
-  if (!moods || !moods.has(sprite.emotion)) {
-    return {
-      ok: false,
-      degrade: {
-        code: 'sprite-unknown-mood',
-        detail: `${sprite.id}:${sprite.emotion}`,
-      },
-    };
-  }
-  return { ok: true };
-}
-
-// ============================================================================
-// Dialogue speaker 立绘兜底
-// ============================================================================
-
 /**
- * 给 `<dialogue>` 兜底：speaker 是 manifest 已知角色但台上没有 speaker 的
- * 立绘时，自动在第一个空闲位置补一个 manifest 默认 sprite。
+ * 简化版立绘规则：dialogue → [speaker 立绘 at center]，其余 → []。
  *
- * 触发条件（全部满足）：
- *   1. unit.kind === 'dialogue' 且 speaker 完整（speakerMissing=false）
- *   2. speaker 不是 ad-hoc（`__npc__保安`、`__npc__你` 等都没立绘）
- *   3. speaker 在 manifest.characters 白名单内
- *   4. manifest 给该 speaker 配过至少一个 sprite（defaultMoodByChar 有 key）
- *   5. 当前 resolved sprites 里没有任何条目 id === speaker
- *   6. 三个 position（center / left / right）至少有一个空闲
+ * Lookup id 映射：ad-hoc speaker（`__npc__保安`）统一映射到 reserved id
+ * `__npc__`（`NPC_RESERVED_CHARACTER_ID`），所有 ad-hoc 共用作者在 manifest
+ * 配的占位 character。
  *
- * 满足 1-5 但 6 不满足（台上 3 个角色全占满）→ 跳过，emit
- * `dialogue-speaker-sprite-fallback` 但保留 detail 注明 'no-position'，
- * UI 行为和原来一致（speaker 不上台），但 trace 能区分。
+ * Skip 条件（任一命中 → 返回空数组）：
+ *   - 非 dialogue 单元
+ *   - speaker 缺失（已被 reducer 降级 narration）
+ *   - speaker pf 字段为空
+ *   - lookup id 不在 manifest.characters 白名单（杜撰 / 作者没配 `__npc__`）
  *
- * Position 选择：依次尝试 center → left → right，第一个空闲就用。
- * center 优先因为它是单角色对话最自然的位置。
+ * Emotion 兜底：lookup id 在白名单但 manifest 没给该 character 配过 sprite
+ * 资产（`defaultMoodByChar` 缺 key）→ emotion 用空字符串，让 UI SpriteLayer
+ * 走"无 assetUrl → 占位卡片"的现有 fallback 路径（显示 displayName 框）。
  *
- * 注意：这不是降级，是补全。speaker 已经能正常说话，UI 只是缺立绘；
- * 兜底之后玩家看到的才是符合 VN 直觉的画面。
+ * 不读 prev.sprites、不读 pending.pendingSprites、不读 pending.pendingClearStage：
+ * 每个单元独立从 manifest 推导，立绘随 dialogue 容器生命周期出场/退场。
  */
-function applySpeakerSpriteFallback(
-  resolved: SpriteState[],
+function resolveSpeakerSprite(
   pending: PendingUnit,
   manifest: ParserManifest,
-  degrades: DegradeEvent[],
 ): SpriteState[] {
-  if (pending.kind !== 'dialogue') return resolved;
-  if (pending.speakerMissing) return resolved;
+  if (pending.kind !== 'dialogue') return [];
+  if (pending.speakerMissing) return [];
   const speaker = pending.pf?.speaker;
-  if (!speaker) return resolved;
-  if (isAdhocSpeaker(speaker)) return resolved;
-  if (!manifest.characters.has(speaker)) return resolved;
-  const defaultMood = manifest.defaultMoodByChar.get(speaker);
-  if (!defaultMood) return resolved;
-  if (resolved.some((s) => s.id === speaker)) return resolved;
-
-  const used = new Set(resolved.map((s) => s.position).filter(Boolean));
-  const free = FALLBACK_POSITION_PREFERENCE.find((p) => !used.has(p));
-  if (!free) {
-    degrades.push({
-      code: 'dialogue-speaker-sprite-fallback',
-      detail: `${speaker}:no-position`,
-    });
-    return resolved;
-  }
-
-  degrades.push({
-    code: 'dialogue-speaker-sprite-fallback',
-    detail: `${speaker}:${defaultMood}@${free}`,
-  });
-  return [...resolved, { id: speaker, emotion: defaultMood, position: free }];
+  if (!speaker) return [];
+  const lookupId = isAdhocSpeaker(speaker) ? NPC_RESERVED_CHARACTER_ID : speaker;
+  if (!manifest.characters.has(lookupId)) return [];
+  const emotion = manifest.defaultMoodByChar.get(lookupId) ?? '';
+  return [{ id: lookupId, emotion, position: 'center' }];
 }
 
 // ============================================================================

@@ -88,11 +88,9 @@ describe('reduce · dialogue 容器', () => {
       expect(s.text).toBe('hello world');
       expect(s.index).toBe(0);
     }
-    // speaker 漏 sprite + 不在 prev 台上 → 兜底补 sakuya 默认 sprite，emit
-    // dialogue-speaker-sprite-fallback 中性事件（不算降级，仅供 trace 量化）
-    expect(outputs.degrades).toMatchObject([
-      { code: 'dialogue-speaker-sprite-fallback', detail: 'sakuya:neutral@center' },
-    ]);
+    // 简化版：dialogue speaker 始终绑定 manifest 默认 sprite 在 center，
+    // 不再 emit fallback 事件。
+    expect(outputs.degrades).toHaveLength(0);
     expect(s.sceneRef.sprites).toEqual([
       { id: 'sakuya', emotion: 'neutral', position: 'center' },
     ]);
@@ -236,10 +234,10 @@ describe('reduce · dialogue 容器', () => {
     expect(s.pf.overhearers).toEqual(['*']);
   });
 
-  it('LLM 漏 sprite 真实 trace 复现：<dialogue speaker="karina" mood="curious"> 自动补 karina 默认立绘', () => {
+  it('LLM 漏 sprite 真实 trace 复现：<dialogue speaker="karina" mood="curious"> 自动绑定 karina 默认立绘', () => {
     // trace 784ab8fc 现场：LLM 把 mood 写到 dialogue 上（被 silent 忽略），
-    // 没有 <sprite> 子标签且 prev 不在台上，玩家屏幕看不到 karina 立绘。
-    // V.9 兜底：speaker 在白名单 + 不在台上 → 自动补 manifest 默认 sprite。
+    // 没有 <sprite> 子标签且 prev 不在台上。简化版：dialogue 始终对应 speaker
+    // 默认 sprite at center，不依赖 LLM 是否补 `<sprite>`。
     const { outputs } = run([
       {
         type: 'opentag',
@@ -256,9 +254,7 @@ describe('reduce · dialogue 容器', () => {
       { id: 'karina', emotion: 'serious', position: 'center' },
     ]);
     expect(s.spritesChanged).toBe(true);
-    expect(outputs.degrades).toMatchObject([
-      { code: 'dialogue-speaker-sprite-fallback', detail: 'karina:serious@center' },
-    ]);
+    expect(outputs.degrades).toHaveLength(0);
   });
 });
 
@@ -321,22 +317,26 @@ describe('reduce · 段落切分（\\n\\n）', () => {
   });
 
   it('bgChanged / spritesChanged 只打在第一条', () => {
-    const { outputs } = run([
-      { type: 'opentag', name: 'narration', attrs: {} },
-      { type: 'opentag', name: 'background', attrs: { scene: 'plaza_day' } },
-      { type: 'closetag', name: 'background' },
-      {
-        type: 'opentag',
-        name: 'sprite',
-        attrs: { char: 'sakuya', mood: 'smile', position: 'center' },
-      },
-      { type: 'closetag', name: 'sprite' },
-      { type: 'text', data: '第一段。\n\n第二段。' },
-      { type: 'closetag', name: 'narration' },
-    ]);
+    // 简化版立绘规则下：narration 一律 sprites=[]；想触发
+    // spritesChanged=true 需要 prev 非空，于是先跑一条 dialogue 让 sakuya 上台。
+    const init = makeInitial();
+    const after = reduce(init, { type: 'opentag', name: 'dialogue', attrs: { speaker: 'sakuya' } }, MANIFEST);
+    const after2 = reduce(after.state, { type: 'text', data: '先发一句' }, MANIFEST);
+    const after3 = reduce(after2.state, { type: 'closetag', name: 'dialogue' }, MANIFEST);
+    const { outputs } = run(
+      [
+        { type: 'opentag', name: 'narration', attrs: {} },
+        { type: 'opentag', name: 'background', attrs: { scene: 'plaza_day' } },
+        { type: 'closetag', name: 'background' },
+        { type: 'text', data: '第一段。\n\n第二段。' },
+        { type: 'closetag', name: 'narration' },
+      ],
+      MANIFEST,
+      after3.state,
+    );
     expect(outputs.sentences).toHaveLength(2);
     expect(outputs.sentences[0]!.bgChanged).toBe(true);
-    expect(outputs.sentences[0]!.spritesChanged).toBe(true);
+    expect(outputs.sentences[0]!.spritesChanged).toBe(true); // [sakuya] → []
     expect(outputs.sentences[1]!.bgChanged).toBe(false);
     expect(outputs.sentences[1]!.spritesChanged).toBe(false);
   });
@@ -643,51 +643,9 @@ describe('reduce · visual child tags', () => {
     expect(outputs.sentences[0]!.spritesChanged).toBe(true);
   });
 
-  it('同 char 多次 <sprite/> → 取最后一个', () => {
-    const { state } = run([
-      { type: 'opentag', name: 'narration', attrs: {} },
-      {
-        type: 'opentag',
-        name: 'sprite',
-        attrs: { char: 'sakuya', mood: 'smile', position: 'left' },
-      },
-      { type: 'closetag', name: 'sprite' },
-      {
-        type: 'opentag',
-        name: 'sprite',
-        attrs: { char: 'sakuya', mood: 'worried', position: 'center' },
-      },
-      { type: 'closetag', name: 'sprite' },
-      { type: 'text', data: 'x' },
-      { type: 'closetag', name: 'narration' },
-    ]);
-    expect(state.lastScene.sprites).toEqual([
-      { id: 'sakuya', emotion: 'worried', position: 'center' },
-    ]);
-  });
-
-  it('同 position 不同 char → 后者覆盖前者', () => {
-    const { state } = run([
-      { type: 'opentag', name: 'narration', attrs: {} },
-      {
-        type: 'opentag',
-        name: 'sprite',
-        attrs: { char: 'sakuya', mood: 'smile', position: 'center' },
-      },
-      { type: 'closetag', name: 'sprite' },
-      {
-        type: 'opentag',
-        name: 'sprite',
-        attrs: { char: 'karina', mood: 'serious', position: 'center' },
-      },
-      { type: 'closetag', name: 'sprite' },
-      { type: 'text', data: 'x' },
-      { type: 'closetag', name: 'narration' },
-    ]);
-    expect(state.lastScene.sprites).toEqual([
-      { id: 'karina', emotion: 'serious', position: 'center' },
-    ]);
-  });
+  // 简化版：narration 一律 sprites=[]，<sprite/> 子标签整体被忽略；
+  // 旧的"同 char 取最后一个"/"同 position 后者覆盖"dedup 行为已无外部可观测面，
+  // 对应 dedupSprites 仅在 reducer 内部为 V.x 视觉 IR 留作 hook，不再单测。
 
   it('顶层出现 <sprite/> 时忽略，不崩', () => {
     const { outputs } = run([
@@ -786,9 +744,7 @@ describe('reduce · finalize / truncation', () => {
     const s = outputs.sentences[0]!;
     expect(s.kind).toBe('dialogue');
     expect(s.truncated).toBe(true);
-    // sceneDegrades 先 emit（含 fallback），然后是 truncDegrade
     expect(outputs.degrades).toMatchObject([
-      { code: 'dialogue-speaker-sprite-fallback' },
       { code: 'container-truncated', detail: 'dialogue' },
     ]);
     expect(state.finalized).toBe(true);

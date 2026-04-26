@@ -28,6 +28,32 @@
 
 ## 最近完成
 
+**V.11 ad-hoc speaker 走 `__npc__` reserved character 占位立绘 + 已知 speaker 缺图占位（2026-04-26，本会话）**
+- 起因：V.10 落地后用户问 ad-hoc（`__npc__保安`）当前怎么处理 → 答"空台"。用户决策"不空台已经很好"，方案：作者在编辑器配 `__npc__` reserved character + 上传通用占位立绘，所有 ad-hoc 共享。
+- 改动：
+  - [tag-schema.mts](packages/core/src/narrative-parser-v2/tag-schema.mts) 加 `NPC_RESERVED_CHARACTER_ID` 常量（值等于 `NPC_SPEAKER_PREFIX` 即 `__npc__`，但语义不同：前者是 manifest character id，后者是 dialogue speaker 协议前缀）。
+  - [narrative-parser-v2/index.mts](packages/core/src/narrative-parser-v2/index.mts) re-export 该常量。
+  - [inheritance.mts](packages/core/src/narrative-parser-v2/inheritance.mts) `resolveSpeakerSprite` 重写：ad-hoc speaker 替换 lookup id 为 `__npc__`；只要 lookup id 在 `manifest.characters` 白名单内就 emit sprite，emotion 取 default mood 否则空字符串。
+  - [ScriptInfoPanel.tsx](apps/ui/src/ui/editor/ScriptInfoPanel.tsx) character 添加表单的 ID_PATTERN 校验给 `__npc__` 单独豁免（保持其他 id 仍走 snake_case）。
+- 行为差异：
+  - ad-hoc + 作者配了 `__npc__` 角色（含 sprite 资产）→ 实立绘 at center
+  - ad-hoc + 作者配了 `__npc__` 角色（没上传 sprite）→ UI SpriteLayer 占位卡（"路人 · ·"）
+  - ad-hoc + 作者完全没配 `__npc__` → 仍空台（作者主动配置才解锁）
+  - 已知 speaker + 没配 sprite → 占位卡（V.10 是空台）
+  - 杜撰 → 仍空台
+- 验证：`pnpm typecheck` 4 package 全绿；`pnpm test:core` 273/273（从 269 涨 4：ad-hoc → `__npc__` 共 5 用例 + 已知缺图测断言从 `[]` 改成占位 sprite + 多 ad-hoc 共用同一立绘不抖动断言）。Browser：vite 动态 import ScriptInfoPanel.tsx 成功 + console 0 error，证明 `@ivn/core/narrative-parser-v2` cross-package import 解析正确；form 改动是单行字符串字面量比较，单测覆盖充分。完整 admin → 编辑器 → 加 `__npc__` 的 E2E 留作者手动验证。
+- 决策：(a) reserved id 选 `__npc__` 裸前缀（和 ad-hoc 协议同源便于作者直觉理解）；(b) 走作者自配而非内建 SVG（避免跨剧本风格不统一）；(c) emotion 缺 default mood 用空串而非 'default'（占位卡显示更干净）；(d) ad-hoc + 没配 → 空台不强制显示框（与"杜撰"一致，作者主动配置才解锁）；(e) 把"已知 speaker 缺图"也顺手改成占位卡——UI 早已有占位逻辑，原本 parser 不 emit 数据导致触发不到，是 V.10 收尾的小补丁。
+
+**V.10 立绘绑定 dialogue 容器生命周期（暂时简化版，2026-04-26，本会话）**
+- 用户原话："将立绘的功能暂时简化一下，改为 dialogue 展示结束后，dialogue 中的立绘也退场，并且只显示 dialogue 中说话人的立绘。"
+- 简化规则一条：**dialogue 单元 → sprites = [speaker 默认 sprite at center]；其余（narration / speakerMissing / ad-hoc / 杜撰 / 无 sprite 配置）→ sprites = []**。完全不读 prev.sprites、不认 `<sprite>` / `<stage/>` 子标签。立绘随 dialogue 容器开/关出场退场。bg 规则不动。
+- 改动：
+  - [inheritance.mts](packages/core/src/narrative-parser-v2/inheritance.mts) 重写：`resolveScene` = bg 规则 + speaker-only 规则两步；删除 `resolveSprites` / `validateSprite` / `applySpeakerSpriteFallback` / `FALLBACK_POSITION_PREFERENCE`。整体从 ~238 行 → ~110 行。
+  - [tag-schema.mts](packages/core/src/narrative-parser-v2/tag-schema.mts) DegradeCode 注释更新——保留 `sprite-unknown-char` / `sprite-unknown-mood` / `stage-and-sprite-conflict` / `dialogue-speaker-sprite-fallback` enum 成员（reducer/inheritance 不再 emit）便于后续恢复。
+  - 测试同步：`inheritance.test.mts` 重写整个 sprites 段（含 dialogue→narration 退场、speaker 切换、忽略 `<sprite>`/`<stage/>` 等 13 用例）；`reducer.test.mts` 调整 dialogue 容器/truncation/段落切分相关断言 + 删除 dedup 行为单测；`parser.test.mts` 调整 truncation/sprite 验证/integration/initialScene 断言 + 合并自闭合 + stage 测试。
+- 验证：`pnpm typecheck` 4 个 package 全绿；`pnpm test:core` 269/269（V.9 时是 323；净 -54 主要因为删除了 V.9 的 11 个 fallback 场景测 + dedup/位置覆盖单测 + 整合测断言瘦身）。UI 层未改：`SpriteLayer` 直读 `sceneRef.sprites`，新规则下 dialogue 段渲染单 speaker、narration 段空数组触发 fade-out。
+- 决策：(a) 完全 override V.9 fallback 不叠加'仅 speaker'过滤——一层心智更清楚，避免兜底/过滤双语义；(b) `<sprite>` / `<stage/>` 整体 no-op 而非仅 speaker 过滤——简化版隐含 prompt 暂不改，让 parser 静默吞 LLM 旧协议输出；(c) DegradeCode 旧成员保留——"暂时"二字隐含可能回滚；(d) bg 规则保持继承——立绘的"每单元独立"不传染到 bg。
+
 **Memorax HTTP adapter + parallel composite，接 production game session（2026-04-26，本会话）**
 - 用户目标：把同事自部署的 Memorax 服务（http://47.99.179.197/，schema `0006_drop_default_user_id`）当成 IVN 玩家剧本的长期记忆 store；mem0 当 fallback 并行写。Memorax 暂时不太稳定，需要失败可观测。
 - **Bootstrap**：跑 `/auth/register` → `/projects` → `/v1/api-keys`（user-facing endpoint，scopes `read+write`，**不是** master `/admin/keys`），把账号/项目/key 落到 `~/.config/ivn-editor/memorax-bootstrap.json`（mode 600），三个 env 追加到 `~/.config/ivn-editor/.env`：`MEMORAX_BASE_URL` / `MEMORAX_API_KEY` / `MEMORAX_APP_ID`。`pnpm setup:env` 已链到 apps/server。
@@ -365,6 +391,8 @@
 | 2026-04-26 | Memorax adapter ID 模型用 `user_id=systemUserId / agent_id=playthroughId / app_id=ivn-editor`（不用 mem0 的 `user_id=playthrough-${playthroughId}`），retrieve 强制 `filters.agent_id.eq` 隔离 | Memorax 有多层 ID hierarchy 而 mem0 只有单层 user_id。把 systemUserId 放 user_id 字段保留"跨存档聚合此玩家"的可能（filter 去掉就行），同时 agent_id 强制做 per-playthrough 隔离永不串档。mem0 那边维持 `playthrough-${id}` 不动（mem0 没 agent_id 概念，metadata filter 也不灵敏），两个 store 的写入 user_id 不一致是设计预期 —— ParallelMemory 是 fallback 关系不是写入对齐 | mem0/memorax adapter 各自隔离独立；将来想做"全玩家所有存档的全局记忆"分析直接拿 user_id 跨档 query Memorax；mem0 仍只能按 playthrough 查 |
 | 2026-04-26 | Memorax 失败信号通过 `meta.error` 而非 throw 传给 ParallelMemory | 让 MemoraxMemory 单独使用（eval / 单 provider 配置）也不会炸 game-session（contract 是 retrieve 永不抛）；ParallelMemory 检 meta.error 决定 fallback 是个简单且 typed 的协议，不需要 try/catch wrapper。`appendTurn` / `pin` 用 fire-and-forget + console.error 同模式不影响游戏循环 | MemoraxMemory.retrieve 内部 try/catch + 返回 `{summary:'',meta:{error:reason}}`；ParallelMemory.retrieve 看 meta.error 就 fallback，看到抛错也 fallback（双兜底）；meta.attempted 累积失败历史给 trace |
 | 2026-04-26 | Memorax adapter `appendTurn` 用 `async_mode=true`（fire-and-forget），`pin` 用 `async_mode=false`（同步等服务端确认） | Memorax 的 add 内部跑 LLM 抽取最坏 5-30s，同步会卡住每轮 generate。但 pin 是显式"重要记忆"语义，不能容忍丢失（pin 频次低 + 一次额外 HTTP 成本可接受）。同 mem0 adapter 同模式 | appendTurn 失败靠服务端 PENDING 队列重试 + console.error log；pin 失败立刻 console.error 但仍返回 entry（caller 不感知，重启时 pin 再发即可） |
+| 2026-04-26 | V.10 立绘整体简化：dialogue → speaker only at center；非 dialogue → []；忽略 `<sprite>` / `<stage/>` 子标签 | 用户原话指令——dialogue 展示结束立绘退场 + 只显示说话人立绘。比 V.9 兜底 + 多角色并存 + 三 position 分配的整套机制简单 N 倍，prompt 也无需教 LLM 摆位。改动只在 inheritance.mts 一层，UI / WS 协议 / persistence 全不动 | 失去：多角色并存（无法表现"两人同框"）、explicit `<sprite>` 摆位、`<stage/>` 显式清场。这些场景如果用户要恢复，倒退也只是 inheritance.mts 几十行 + 测试。DegradeCode enum 旧成员保留便于平滑回滚。tag-schema 标注哪些事件被简化版 dormant |
+| 2026-04-26 | V.11 ad-hoc speaker 走 `__npc__` reserved character 占位立绘；已知 speaker 缺 sprite 也 emit 占位卡 | V.10 落地后讨论 ad-hoc 处理：当前空台 vs 显示什么。性别细分（`__npc__male`/`__npc__female`）LLM 协议负担可控但收益不清楚，先做最简单的"统一占位"（作者在编辑器配 `__npc__` 角色）。reserved id 用 `__npc__` 裸前缀和现有 ad-hoc 协议同源；走作者自配而非内建 SVG 避免跨剧本风格冲突。编辑器 ID_PATTERN 给 `__npc__` 单独豁免；emotion 缺 default mood 用空串让 UI 占位卡只显示 displayName 行更干净 | ad-hoc + 没配 `__npc__` 仍空台（作者主动配置才解锁）；已知 speaker 缺 sprite 由空台升级到占位卡（UI 早有占位逻辑，原本 parser 不 emit 数据触发不到，顺手收口）。后续可加：编辑器'添加 `__npc__` 角色'快捷按钮；按性别细分（先观察实际玩家反馈再决定） |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |

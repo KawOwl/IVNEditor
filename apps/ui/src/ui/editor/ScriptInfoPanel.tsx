@@ -18,6 +18,7 @@ import type {
   ProtocolVersion,
 } from '@ivn/core/types';
 import { listTools } from '@ivn/core/tool-catalog';
+import { NPC_RESERVED_CHARACTER_ID } from '@ivn/core/narrative-parser-v2';
 import { useLLMConfigsStore } from '#internal/stores/llm-configs-store';
 import { useAssetUpload } from '#internal/ui/editor/use-asset-upload';
 import { getBackendUrl } from '@/lib/backend-url';
@@ -521,7 +522,9 @@ function CharactersSection({
       setError('id 和 显示名 都不能为空');
       return;
     }
-    if (!ID_PATTERN.test(id)) {
+    // reserved id `__npc__` 是 ad-hoc NPC 占位 character（双下划线特例豁免
+    // ID_PATTERN）；其余 id 仍要 snake_case
+    if (id !== NPC_RESERVED_CHARACTER_ID && !ID_PATTERN.test(id)) {
       setError('id 必须 snake_case（小写字母开头，仅含小写字母/数字/下划线）');
       return;
     }

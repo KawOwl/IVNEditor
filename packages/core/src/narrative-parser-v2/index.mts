@@ -27,6 +27,7 @@ import { reduce, type ParserEvent } from '#internal/narrative-parser-v2/reducer'
 export type { ParserManifest, DegradeEvent } from '#internal/narrative-parser-v2/state';
 export {
   NPC_SPEAKER_PREFIX,
+  NPC_RESERVED_CHARACTER_ID,
   isAdhocSpeaker,
   adhocDisplayName,
 } from '#internal/narrative-parser-v2/tag-schema';

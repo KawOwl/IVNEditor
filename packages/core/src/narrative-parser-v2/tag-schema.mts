@@ -156,6 +156,20 @@ export function isValidPosition(v: string): v is 'left' | 'center' | 'right' {
  */
 export const NPC_SPEAKER_PREFIX = '__npc__';
 
+/**
+ * Reserved character id for ad-hoc NPC 立绘占位。字面量恰等于
+ * `NPC_SPEAKER_PREFIX`（裸前缀本身），但语义不同：
+ *   - `NPC_SPEAKER_PREFIX` 是 dialogue speaker 协议字段的前缀
+ *   - `NPC_RESERVED_CHARACTER_ID` 是 manifest.characters 里的一个 reserved
+ *     character id；所有 `__npc__保安` / `__npc__老板` 这类 ad-hoc dialogue
+ *     在视觉层都映射到这个 id 查找立绘。
+ *
+ * 编辑器 character id 校验需要给该值开豁免（绕过 snake_case 起手字母规则），
+ * 才能让作者在编辑器添加这个 character + 上传通用占位立绘。作者没添加该
+ * character 时，ad-hoc dialogue 的立绘维持空台（不强制要求作者配置）。
+ */
+export const NPC_RESERVED_CHARACTER_ID = NPC_SPEAKER_PREFIX;
+
 /** id 是否为 ad-hoc NPC（带 `__npc__` 前缀）。 */
 export function isAdhocSpeaker(speakerId: string): boolean {
   return speakerId.startsWith(NPC_SPEAKER_PREFIX);
@@ -204,9 +218,13 @@ export function isPronounSpeaker(speakerId: string): boolean {
  * `dialogue-adhoc-speaker` 是中性事件（量化用，非降级）。
  * `dialogue-pronoun-as-speaker` 是 ad-hoc 的细分子类——后缀是中文代词
  * （"你"/"我"/...），表明 LLM 把第二人称代词错当成 ad-hoc 显示名。
- * `dialogue-speaker-sprite-fallback` 是中性事件——dialogue speaker 没有立绘
- * 在台上时 parser 自动补一个 manifest 的默认 sprite（量化 LLM 漏摆 speaker
- * 的频率，UI 仍正常渲染）。
+ *
+ * 立绘相关事件在简化版规则下不再 emit（保留 enum 成员以便后续恢复 V.x
+ * 视觉 IR 时无需 schema 演进）：
+ * - `sprite-unknown-char` / `sprite-unknown-mood` / `stage-and-sprite-conflict`：
+ *   旧版 inheritance 校验 `<sprite>` 子标签时触发，简化版整体忽略 `<sprite>`。
+ * - `dialogue-speaker-sprite-fallback`：旧版兜底事件，简化版每个 dialogue
+ *   都自动绑定 speaker 默认 sprite，不再需要"兜底"语义。
  */
 export type DegradeCode =
   | 'sprite-missing-attr'
