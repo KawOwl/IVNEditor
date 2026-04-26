@@ -329,26 +329,27 @@ describe('reduce · 段落切分（\\n\\n）', () => {
   });
 
   it('bgChanged / spritesChanged 只打在第一条', () => {
-    // 简化版立绘规则下：narration 一律 sprites=[]；想触发
-    // spritesChanged=true 需要 prev 非空，于是先跑一条 dialogue 让 sakuya 上台。
+    // V.14：narration 继承 prev sprites，所以触发 spritesChanged 只能靠 dialogue
+    // 切 speaker。先跑一条 sakuya dialogue，再用一条 karina dialogue（带 bg 切换
+    // + \n\n 段落切分）触发 bgChanged + spritesChanged。
     const init = makeInitial();
     const after = reduce(init, { type: 'opentag', name: 'dialogue', attrs: { speaker: 'sakuya' } }, MANIFEST);
     const after2 = reduce(after.state, { type: 'text', data: '先发一句' }, MANIFEST);
     const after3 = reduce(after2.state, { type: 'closetag', name: 'dialogue' }, MANIFEST);
     const { outputs } = run(
       [
-        { type: 'opentag', name: 'narration', attrs: {} },
+        { type: 'opentag', name: 'dialogue', attrs: { speaker: 'karina' } },
         { type: 'opentag', name: 'background', attrs: { scene: 'plaza_day' } },
         { type: 'closetag', name: 'background' },
         { type: 'text', data: '第一段。\n\n第二段。' },
-        { type: 'closetag', name: 'narration' },
+        { type: 'closetag', name: 'dialogue' },
       ],
       MANIFEST,
       after3.state,
     );
     expect(outputs.sentences).toHaveLength(2);
     expect(outputs.sentences[0]!.bgChanged).toBe(true);
-    expect(outputs.sentences[0]!.spritesChanged).toBe(true); // [sakuya] → []
+    expect(outputs.sentences[0]!.spritesChanged).toBe(true); // [sakuya] → [karina]
     expect(outputs.sentences[1]!.bgChanged).toBe(false);
     expect(outputs.sentences[1]!.spritesChanged).toBe(false);
   });
@@ -632,7 +633,7 @@ describe('reduce · visual child tags', () => {
     ]);
   });
 
-  it('<stage/> 清空立绘', () => {
+  it('<stage/> 子标签被忽略：narration 仍继承 prev 立绘（V.14 规则）', () => {
     const priorState: ParserState = {
       ...makeInitial(),
       lastScene: {
@@ -651,8 +652,11 @@ describe('reduce · visual child tags', () => {
       MANIFEST,
       priorState,
     );
-    expect(state.lastScene.sprites).toEqual([]);
-    expect(outputs.sentences[0]!.spritesChanged).toBe(true);
+    // V.14：narration 继承 prev.sprites，<stage/> 不影响
+    expect(state.lastScene.sprites).toEqual([
+      { id: 'sakuya', emotion: 'smile', position: 'center' },
+    ]);
+    expect(outputs.sentences[0]!.spritesChanged).toBe(false);
   });
 
   // 简化版：narration 一律 sprites=[]，<sprite/> 子标签整体被忽略；

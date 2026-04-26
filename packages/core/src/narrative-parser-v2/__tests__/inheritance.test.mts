@@ -1,8 +1,14 @@
 /**
- * inheritance.ts — 纯函数单测（暂时简化版立绘规则）
+ * inheritance.ts — 纯函数单测（V.14 turn 级生命周期版立绘规则）
  *
- * 当前规则：dialogue 单元 → speaker 立绘 at center（ad-hoc 走 `__npc__`
- * reserved id）；其余 → []。不继承 prev、不认 `<sprite>` / `<stage/>` 子标签。
+ * 当前规则：
+ *   - dialogue 单元 → speaker 立绘 at center（ad-hoc 走 `__npc__` reserved id）
+ *   - 非 dialogue 单元（narration / speakerMissing 已降级）→ 继承 prev.sprites
+ *   - 杜撰 speaker（白名单外）→ 清空，对应"未知人物在说话"
+ *   - 忽略 `<sprite>` / `<stage/>` 子标签
+ *
+ * Turn 边界清空在 game-session 层做（V.13 player_input.sceneRef.sprites=[]
+ * + V.14 reducer initialScene.sprites=[]），不在 inheritance.mts 里。
  *
  * 背景规则不变。
  */
@@ -88,7 +94,7 @@ describe('resolveScene · 背景规则', () => {
   });
 });
 
-describe('resolveScene · 简化版立绘规则（dialogue speaker only）', () => {
+describe('resolveScene · V.14 立绘规则（dialogue 换人 / narration 继承）', () => {
   it('dialogue + 已知 speaker → sprites = [speaker 默认 sprite at center]', () => {
     const result = resolveScene(EMPTY_SCENE, dialogueWith('karina'), MANIFEST);
     expect(result.scene.sprites).toEqual([
@@ -98,24 +104,52 @@ describe('resolveScene · 简化版立绘规则（dialogue speaker only）', () 
     expect(result.degrades).toHaveLength(0);
   });
 
-  it('narration → sprites = []，prev 立绘退场', () => {
+  it('narration → 继承 prev.sprites（立绘保留，不退场）', () => {
     const prev: SceneState = {
       background: null,
       sprites: [{ id: 'karina', emotion: 'serious', position: 'center' }],
     };
     const result = resolveScene(prev, emptyPendingUnit('narration'), MANIFEST);
-    expect(result.scene.sprites).toEqual([]);
-    expect(result.spritesChanged).toBe(true);
+    expect(result.scene.sprites).toEqual([
+      { id: 'karina', emotion: 'serious', position: 'center' },
+    ]);
+    expect(result.spritesChanged).toBe(false);
   });
 
-  it('dialogue → narration 序列：speaker 立绘随 dialogue 关闭退场', () => {
+  it('narration on empty stage → sprites 仍空', () => {
+    const result = resolveScene(EMPTY_SCENE, emptyPendingUnit('narration'), MANIFEST);
+    expect(result.scene.sprites).toEqual([]);
+    expect(result.spritesChanged).toBe(false);
+  });
+
+  it('dialogue (A) → narration → narration → dialogue (A) 链：A 立绘全程保留', () => {
     const step1 = resolveScene(EMPTY_SCENE, dialogueWith('sakuya'), MANIFEST);
-    expect(step1.scene.sprites).toEqual([
+    const sakuya = { id: 'sakuya', emotion: 'neutral', position: 'center' as const };
+    expect(step1.scene.sprites).toEqual([sakuya]);
+
+    const step2 = resolveScene(step1.scene, emptyPendingUnit('narration'), MANIFEST);
+    expect(step2.scene.sprites).toEqual([sakuya]);
+    expect(step2.spritesChanged).toBe(false);
+
+    const step3 = resolveScene(step2.scene, emptyPendingUnit('narration'), MANIFEST);
+    expect(step3.scene.sprites).toEqual([sakuya]);
+
+    const step4 = resolveScene(step3.scene, dialogueWith('sakuya'), MANIFEST);
+    expect(step4.scene.sprites).toEqual([sakuya]);
+    expect(step4.spritesChanged).toBe(false);
+  });
+
+  it('dialogue (A) → narration → dialogue (B)：narration 期间保留 A，B 来时换人', () => {
+    const step1 = resolveScene(EMPTY_SCENE, dialogueWith('sakuya'), MANIFEST);
+    const step2 = resolveScene(step1.scene, emptyPendingUnit('narration'), MANIFEST);
+    expect(step2.scene.sprites).toEqual([
       { id: 'sakuya', emotion: 'neutral', position: 'center' },
     ]);
-    const step2 = resolveScene(step1.scene, emptyPendingUnit('narration'), MANIFEST);
-    expect(step2.scene.sprites).toEqual([]);
-    expect(step2.spritesChanged).toBe(true);
+    const step3 = resolveScene(step2.scene, dialogueWith('karina'), MANIFEST);
+    expect(step3.scene.sprites).toEqual([
+      { id: 'karina', emotion: 'serious', position: 'center' },
+    ]);
+    expect(step3.spritesChanged).toBe(true);
   });
 
   it('dialogue 切 speaker → 立绘换人（不并存）', () => {
@@ -136,16 +170,28 @@ describe('resolveScene · 简化版立绘规则（dialogue speaker only）', () 
     expect(step2.spritesChanged).toBe(false);
   });
 
-  it('speakerMissing dialogue（reducer 已降级 narration）→ []', () => {
+  it('speakerMissing dialogue（reducer 已降级 narration）→ 继承 prev', () => {
+    const prev: SceneState = {
+      background: null,
+      sprites: [{ id: 'sakuya', emotion: 'neutral', position: 'center' }],
+    };
     const unit = emptyPendingUnit('dialogue', { speakerMissing: true });
-    const result = resolveScene(EMPTY_SCENE, unit, MANIFEST);
-    expect(result.scene.sprites).toEqual([]);
+    const result = resolveScene(prev, unit, MANIFEST);
+    expect(result.scene.sprites).toEqual([
+      { id: 'sakuya', emotion: 'neutral', position: 'center' },
+    ]);
+    expect(result.spritesChanged).toBe(false);
     expect(result.degrades).toHaveLength(0);
   });
 
-  it('ad-hoc speaker（__npc__保安）+ 作者没配 __npc__ → []', () => {
-    const result = resolveScene(EMPTY_SCENE, dialogueWith('__npc__保安'), MANIFEST);
+  it('ad-hoc speaker（__npc__保安）+ 作者没配 __npc__ → 清空（白名单外）', () => {
+    const prev: SceneState = {
+      background: null,
+      sprites: [{ id: 'sakuya', emotion: 'neutral', position: 'center' }],
+    };
+    const result = resolveScene(prev, dialogueWith('__npc__保安'), MANIFEST);
     expect(result.scene.sprites).toEqual([]);
+    expect(result.spritesChanged).toBe(true);
     expect(result.degrades).toHaveLength(0);
   });
 
@@ -186,7 +232,6 @@ describe('resolveScene · 简化版立绘规则（dialogue speaker only）', () 
     };
     const step1 = resolveScene(EMPTY_SCENE, dialogueWith('__npc__保安'), manifestWithNpc);
     const step2 = resolveScene(step1.scene, dialogueWith('__npc__老板'), manifestWithNpc);
-    // 两条 ad-hoc 都映射到同一 reserved id，sprite 数据相同 → 不抖动
     expect(step2.scene.sprites).toEqual([
       { id: NPC_RESERVED_CHARACTER_ID, emotion: 'default', position: 'center' },
     ]);
@@ -206,9 +251,14 @@ describe('resolveScene · 简化版立绘规则（dialogue speaker only）', () 
     ]);
   });
 
-  it('speaker 不在白名单（杜撰）→ []', () => {
-    const result = resolveScene(EMPTY_SCENE, dialogueWith('mystery_man'), MANIFEST);
+  it('speaker 不在白名单（杜撰）→ 清空（不继承，对应"未知人物在说话"）', () => {
+    const prev: SceneState = {
+      background: null,
+      sprites: [{ id: 'sakuya', emotion: 'neutral', position: 'center' }],
+    };
+    const result = resolveScene(prev, dialogueWith('mystery_man'), MANIFEST);
     expect(result.scene.sprites).toEqual([]);
+    expect(result.spritesChanged).toBe(true);
     expect(result.degrades).toHaveLength(0);
   });
 
@@ -258,9 +308,13 @@ describe('resolveScene · 简化版立绘规则（dialogue speaker only）', () 
     expect(result.degrades).toHaveLength(0);
   });
 
-  it('narration 上的 <sprite> 标签也被忽略', () => {
+  it('narration 上的 <sprite> 标签也被忽略，prev 立绘继续保留', () => {
+    const prev: SceneState = {
+      background: null,
+      sprites: [{ id: 'karina', emotion: 'serious', position: 'center' }],
+    };
     const result = resolveScene(
-      EMPTY_SCENE,
+      prev,
       emptyPendingUnit('narration', {
         pendingSprites: [
           { id: 'sakuya', emotion: 'smile', position: 'center' },
@@ -268,7 +322,9 @@ describe('resolveScene · 简化版立绘规则（dialogue speaker only）', () 
       }),
       MANIFEST,
     );
-    expect(result.scene.sprites).toEqual([]);
+    expect(result.scene.sprites).toEqual([
+      { id: 'karina', emotion: 'serious', position: 'center' },
+    ]);
     expect(result.degrades).toHaveLength(0);
   });
 

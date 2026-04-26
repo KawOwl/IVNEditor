@@ -514,7 +514,13 @@ export class GameSession {
       parserManifest: this.parserManifest,
       characters: this.characters,
       backgrounds: this.backgrounds,
-      currentScene: this.currentScene,
+      // V.14 turn 起点清空舞台立绘：reducer initialScene.sprites=[]，让本 turn
+      // 第一个 unit 是 narration 时不继承上 turn 最后立绘，配合 V.13 player_input
+      // 清空 → 下 turn 真正播放前舞台是空的；第一个 unit 是 dialogue 时由
+      // V.10/V.11/V.14 unit-resolved sprites=[speaker] 自动重建（边界保护）。
+      // `this.currentScene` 不动 → buildRetrievalQuery 拿 char_ids 给 mem0/memorax
+      // 语义检索的"上一轮在场角色"信号不退化。
+      currentScene: { ...this.currentScene, sprites: [] },
       // narrative-rewrite invoke：默认走 GameSession 自己的 LLMClient.simpleGenerate
       // （单轮、无 tools、无 followup）。session-manager 不需要额外注入。
       rewriter: async (opts) => {

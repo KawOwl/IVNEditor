@@ -355,7 +355,7 @@ describe('createParser · snapshot + 起始', () => {
     expect(sentences.every((s) => s.turnNumber === 3)).toBe(true);
   });
 
-  it('起始 initialScene 的 background 被第一句继承（sprites 简化版不继承）', () => {
+  it('起始 initialScene 的 background + sprites 都被第一句继承（V.14 narration 继承 prev）', () => {
     const p = createParser({
       manifest: MANIFEST,
       turnNumber: 1,
@@ -372,9 +372,11 @@ describe('createParser · snapshot + 起始', () => {
     );
     expect(sentences[0]!.sceneRef.background).toBe('cafe_interior');
     expect(sentences[0]!.bgChanged).toBe(false);
-    // 简化版：narration 始终 sprites=[]，不继承 initialScene 的立绘
-    expect(sentences[0]!.sceneRef.sprites).toEqual([]);
-    expect(sentences[0]!.spritesChanged).toBe(true);
+    // V.14：narration 单元继承 prev.sprites，initialScene 的立绘保留
+    expect(sentences[0]!.sceneRef.sprites).toEqual([
+      { id: 'sakuya', emotion: 'smile', position: 'center' },
+    ]);
+    expect(sentences[0]!.spritesChanged).toBe(false);
   });
 });
 
@@ -465,18 +467,21 @@ describe('createParser · 综合场景', () => {
     expect(sentences.map((s) => s.index)).toEqual([1, 2, 3, 4]);
     expect(scratches[0]!.index).toBe(0);
     expect(sentences[0]!.sceneRef.background).toBe('cafe_interior');
-    // 简化版：narration 不显示立绘，<sprite> 子标签被忽略
+    // V.14：narration 继承 prev.sprites，但起点 reducer initialScene.sprites=[]
+    // （来自 makeParser 默认 INITIAL_SCENE），所以第一条 narration sprites=[]
     expect(sentences[0]!.sceneRef.sprites).toEqual([]);
     // dialogue sakuya → 立绘 = sakuya@center
     expect(sentences[1]!.sceneRef.sprites).toEqual([
       { id: 'sakuya', emotion: 'neutral', position: 'center' },
     ]);
-    // dialogue mc → 立绘换为 mc@center（不并存）
+    // dialogue mc → 立绘换为 mc@center
     expect(sentences[2]!.sceneRef.sprites).toEqual([
       { id: 'mc', emotion: 'neutral', position: 'center' },
     ]);
-    // 最后 narration → 立绘退场
-    expect(sentences[3]!.sceneRef.sprites).toEqual([]);
+    // V.14：最后 narration 继承 prev=[mc]，立绘保留（turn 内不退场）
+    expect(sentences[3]!.sceneRef.sprites).toEqual([
+      { id: 'mc', emotion: 'neutral', position: 'center' },
+    ]);
     expect(sentences[3]!.sceneRef.background).toBe('cafe_interior'); // bg 继承
     expect(degrades).toHaveLength(0);
   });

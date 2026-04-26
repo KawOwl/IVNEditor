@@ -33,6 +33,24 @@
 
 ## 最近完成
 
+**V.14 立绘 turn 级生命周期（修正 V.10 unit 级理解错误，2026-04-26，本会话）**
+- 用户原话："dialogue 结束，立绘不清除，也就是说 1. dialogue (A) → narration 后续有 narration 也不管，直到下一个 dialogue 覆盖；2. 或者在下 turn，真正开始播放前被清除。"
+- 误解订正：V.10 时把"dialogue 展示结束立绘退场"理解成 unit 级（每个 dialogue 容器关闭即退场），所以 narration → []。但用户原意是 **turn 级**——dialogue 期间的 speaker 立绘在 turn 内 narration 期间应该保留，跨 turn 才清空。V.13 修了 turn 边界 player_input 清空，但 V.10 的 narration → [] 跟用户意图相反。
+- 改动：
+  - [inheritance.mts](packages/core/src/narrative-parser-v2/inheritance.mts) `resolveSpeakerSprite` 加 `prevSprites` 参数：非 dialogue 单元（含 speakerMissing 已降级 narration / scratch）→ 继承 `[...prevSprites]`；dialogue 单元仍按 V.10/V.11 emit `[speaker]` / 杜撰 `[]` / ad-hoc 走 `__npc__`。
+  - [game-session.mts](packages/core/src/game-session.mts) `runGenerateTurn` 给 `GenerateTurnRuntime` 传 `currentScene: { ...this.currentScene, sprites: [] }` 替代 `currentScene: this.currentScene`：reducer initialScene.sprites=[]，下 turn 第一个 unit 是 narration 时不会"继承到上 turn 最后立绘"导致 V.13 player_input 清空被瞬间覆盖。`this.currentScene` 不动 → `buildRetrievalQuery` 拿到 `char_ids` 给 mem0/memorax 语义检索的"上一轮在场角色"信号不退化。
+- 行为差异（vs V.10/V.13）：
+  - turn 内 dialogue (A) → narration → narration → ... → dialogue (B)：A 立绘全程保留，B 来时换 B（V.10 是 narration 时清空，V.14 保留）
+  - turn 内 dialogue (A) → narration → dialogue (A)：A 立绘全程不变（spritesChanged=false 全程）
+  - turn 边界 dialogue (A) → player_input → 下 turn 第一 unit：(V.13) player_input.sceneRef.sprites=[] + (V.14) reducer initialScene.sprites=[] → 下 turn narration 也是空台、dialogue (B) 重建 [B] 立绘（**清空 → 真正开始播放**）
+  - 杜撰 speaker / ad-hoc + 没配 `__npc__`：仍清空（"未知人物在说话"对应立绘消失，不继承 prev）
+- 测试同步：
+  - [inheritance.test.mts](packages/core/src/narrative-parser-v2/__tests__/inheritance.test.mts) 重写 sprite 段：narration 继承 prev、dialogue→narration→dialogue 链测、speakerMissing 继承 prev、杜撰 speaker 清空 + 不继承等 16 用例。
+  - [reducer.test.mts](packages/core/src/narrative-parser-v2/__tests__/reducer.test.mts) `<stage/> 清空立绘` 改成"`<stage/>` 子标签被忽略，narration 仍继承 prev"；`bgChanged / spritesChanged 只打在第一条` 改用 dialogue 切 speaker 触发（narration 现在不再 emit spritesChanged）。
+  - [parser.test.mts](packages/core/src/narrative-parser-v2/__tests__/parser.test.mts) `起始 initialScene 的 background + sprites 都被第一句继承`（V.10 时只继承 bg，V.14 sprites 也继承）；`综合场景` 最后 narration 改成"继承 prev=[mc]"（V.10 时 `<stage/>` 清空 → []）。
+- 验证：`pnpm typecheck` 4 package 全绿；`pnpm test:core` 322/322（V.13 时 320，净 +2：inheritance 新增 dialogue→narration 链测 + dialogue (A)→narration→dialogue (A) 同 speaker 全程不变测 + speakerMissing 继承 prev 测 - 删除 narration→[] 退场测）。完整 e2e（实际跑剧本验证 turn 内 narration 期间立绘保留 + turn 边界清空）留作者运行时验证。
+- 决策：(a) 改 inheritance 加 prevSprites 参数而不是改 reducer——逻辑分层清晰，inheritance 仍是纯函数；(b) game-session 传 initialScene.sprites=[] 而不动 this.currentScene——retrieve query 的 char_ids 信号需要保留；(c) 杜撰 speaker → 清空（V.10 行为保留）而非继承 prev——未知人物在说话时立绘消失对应"声音从画面外传来"，比看着上一个 speaker 在说话更直觉；(d) speakerMissing dialogue 已降级 narration，按 narration 继承 prev——保持降级语义一致。
+
 **V.13 turn 边界舞台清空（2026-04-26，本会话）**
 - 用户原话："实际效果尝试下来，还是要再修改，dialogue 结束，立绘不清楚。直到下次遇到 dialogue 被覆盖。每一轮叙事开始之前先清空舞台上的立绘，再开始本轮叙事，注意边界情况，如果本轮叙事第一条就有立绘，不要被误清除。"
 - 现象诊断：V.10 unit 独立 resolution 让 narration sceneRef.sprites=[] 是对的，但 LLM 实际经常 emit `dialogue → dialogue` 没 narration 间隙。turn 间 player_input.sceneRef 来自 `copyScene(this.currentScene)`（[game-session.mts:595](packages/core/src/game-session.mts:595)），= 上 turn 最后 dialogue 的 [speaker]。下个 turn 第一个 dialogue 来时直接覆盖，玩家视觉上看到"立绘没清，被新 dialogue 覆盖"。
@@ -419,6 +437,7 @@
 | 2026-04-26 | V.11 ad-hoc speaker 走 `__npc__` reserved character 占位立绘；已知 speaker 缺 sprite 也 emit 占位卡 | V.10 落地后讨论 ad-hoc 处理：当前空台 vs 显示什么。性别细分（`__npc__male`/`__npc__female`）LLM 协议负担可控但收益不清楚，先做最简单的"统一占位"（作者在编辑器配 `__npc__` 角色）。reserved id 用 `__npc__` 裸前缀和现有 ad-hoc 协议同源；走作者自配而非内建 SVG 避免跨剧本风格冲突。编辑器 ID_PATTERN 给 `__npc__` 单独豁免；emotion 缺 default mood 用空串让 UI 占位卡只显示 displayName 行更干净 | ad-hoc + 没配 `__npc__` 仍空台（作者主动配置才解锁）；已知 speaker 缺 sprite 由空台升级到占位卡（UI 早有占位逻辑，原本 parser 不 emit 数据触发不到，顺手收口）。后续可加：编辑器'添加 `__npc__` 角色'快捷按钮；按性别细分（先观察实际玩家反馈再决定） |
 | 2026-04-26 | V.12 SpriteLayer 强制立绘居中渲染，无视 `sprite.position` 字段 | 用户原话指令——立绘暂时都显示在中间。UI 层一行 const 赋值最小冲击，比 parser/persistence 抹掉 position 字段（影响 WS 协议 + 老存档兼容）轻得多；保留 `POSITION_STYLES` 常量左右两 key 便于后续恢复 | parser / 持久化 / WS 协议层 SpriteState.position 字段不动；老 playthrough sceneRef 含 left/right 立绘 restore 后也居中（视觉边界角色消失）；编辑器 default scene 配的 left/right 运行时也居中 |
 | 2026-04-26 | V.13 turn 边界舞台清空：player_input.sceneRef.sprites=[]，不动 this.currentScene | 用户报实际跑下来 dialogue→dialogue 没空台 transition，要求"每轮叙事开始前清空舞台"。修 player_input.sceneRef 而非 this.currentScene 因为后者影响 retrieve query 的 char_ids 信号（语义检索召回率）；边界保护通过 V.10 unit 独立 resolution 自动满足（dialogue 第一条 unit 总是输出 [speaker]） | 玩家 click 到 player_input 时立绘退场，下个 turn 第一个 narrative unit 按 V.10 规则重建立绘。同 speaker 跨 turn 视觉上"离场又上场"，符合 turn 边界清空语义。retrieve query / persistence / WS 协议都不动 |
+| 2026-04-26 | V.14 立绘 turn 级生命周期（修正 V.10 unit 级理解错误）：narration 继承 prev sprites + game-session 传 reducer initialScene.sprites=[] | V.10 把"dialogue 展示结束立绘退场"理解成 unit 级（每 dialogue 关闭就退场，narration → []），但用户原意是 turn 级——turn 内 narration 期间立绘要保留，跨 turn 才清。V.13 修了 turn 边界 player_input 清空，V.14 把 narration 反过来继承 prev。两层 turn 边界清空（player_input.sceneRef.sprites=[] + reducer initialScene.sprites=[]）保证下 turn narration 不会"继承到上 turn 最后立绘"导致瞬间覆盖 | turn 内 dialogue (A) → narration*N → dialogue (B) 立绘：[A] → [A] → ... → [A] → [B]（V.10 时是 [A] → [] → ... → [] → [B]）。杜撰 speaker / ad-hoc 没配 __npc__ 仍清空（"未知人物在说话"≠"沉默承接上一 speaker"）。game-session 传 reducer initialScene.sprites=[] 但 this.currentScene 不动 → retrieve query 的 char_ids 信号保留 |
 | 2026-03-31 | 重写 v2.0.md，删除 FlowExecutor 节点驱动设计 | 实现偏离了设计讨论决策 | 核心循环改为 Generate + Receive，FlowGraph 降级为可视化参考图 |
 | 2026-03-31 | 引擎层术语中性化：GM/PC → Generate/Receive | 引擎不应绑定特定交互模式 | 记忆条目 role 改为 'generate'/'receive' |
 | 2026-03-31 | UI 路由用 Zustand 状态路由，不引入 React Router | 项目只有 3 页，状态路由最轻量 | 新增 app-store.ts |
