@@ -175,6 +175,12 @@ export const ServerEnvSchema = z.object({
 
   MEM0_API_KEY: optionalEnvString,
 
+  // Memorax (self-hosted long-term memory; runs in parallel with mem0).
+  // 三个一组：base url / key / app id。缺任一 provider:'memorax' / 'parallel' 时 factory 抛错。
+  MEMORAX_BASE_URL: optionalUrlString('MEMORAX_BASE_URL'),
+  MEMORAX_API_KEY: optionalEnvString,
+  MEMORAX_APP_ID: optionalEnvString,
+
   LANGFUSE_HOST: optionalUrlString('LANGFUSE_HOST'),
   LANGFUSE_PUBLIC_KEY: optionalEnvString,
   LANGFUSE_SECRET_KEY: optionalEnvString,

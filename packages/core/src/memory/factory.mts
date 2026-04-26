@@ -20,6 +20,7 @@ import { LegacyMemory } from '#internal/memory/legacy/manager';
 import { truncatingCompressFn } from '#internal/memory/legacy/compress';
 import { LLMSummarizerMemory } from '#internal/memory/llm-summarizer/manager';
 import { Mem0Memory } from '#internal/memory/mem0/adapter';
+import { MemoraxMemory } from '#internal/memory/memorax/adapter';
 
 export async function createMemory(options: CreateMemoryOptions): Promise<Memory> {
   const kind = options.config.provider ?? 'legacy';
@@ -50,6 +51,21 @@ export async function createMemory(options: CreateMemoryOptions): Promise<Memory
           );
         }
         return new Mem0Memory(options.scope, options.config, apiKey);
+      }
+
+    case 'memorax':
+      {
+        const cfg = options.memoraxConfig;
+        if (!cfg?.baseUrl || !cfg?.apiKey) {
+          throw new Error(
+            'Memory provider "memorax" requires memoraxConfig.{baseUrl,apiKey} (host runtime must inject from env)',
+          );
+        }
+        return new MemoraxMemory(options.scope, options.config, {
+          baseUrl: cfg.baseUrl,
+          apiKey: cfg.apiKey,
+          appId: cfg.appId,
+        });
       }
 
     default:

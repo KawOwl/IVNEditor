@@ -177,6 +177,12 @@ export interface CreateMemoryOptions {
   llmClient?: Pick<LLMClient, 'generate'>;
   /** Mem0 adapter 需要；由宿主运行时读取并验证 env 后注入，core 不读 process.env。 */
   mem0ApiKey?: string;
+  /** Memorax adapter 需要；缺失时 factory 在 provider:'memorax'/'parallel' 下抛错。 */
+  memoraxConfig?: {
+    baseUrl: string;
+    apiKey: string;
+    appId?: string;
+  };
   /**
    * CoreEvent-only content log：从 canonical core_event_envelopes 读历史的
    * 接口。legacy / llm-summarizer 的 retrieve / getRecentAsMessages / maybeCompact

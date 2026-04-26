@@ -416,6 +416,7 @@ export class GameSession {
       config: config.memoryConfig,
       llmClient: this.llmClient,
       mem0ApiKey: config.mem0ApiKey,
+      memoraxConfig: config.memoraxConfig,
       coreEventReader: config.coreEventReader,
     });
     this.segments = config.segments;

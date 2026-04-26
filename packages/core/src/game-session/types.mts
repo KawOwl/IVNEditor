@@ -111,6 +111,7 @@ export interface RestoreConfig {
   currentScene?: SceneState | null;
   defaultScene?: SceneState;
   mem0ApiKey?: string;
+  memoraxConfig?: { baseUrl: string; apiKey: string; appId?: string };
   coreEventReader?: CoreEventHistoryReader;
   protocolVersion?: ProtocolVersion;
   parserManifest?: ParserManifest;
@@ -137,6 +138,7 @@ export interface GameSessionConfig {
   coreEventSink?: CoreEventSink;
   defaultScene?: SceneState;
   mem0ApiKey?: string;
+  memoraxConfig?: { baseUrl: string; apiKey: string; appId?: string };
   coreEventReader?: CoreEventHistoryReader;
   protocolVersion?: ProtocolVersion;
   parserManifest?: ParserManifest;

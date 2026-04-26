@@ -37,6 +37,22 @@ import { getServerEnv } from '#internal/env';
 /** 断线后 wrapper 在内存中保留的时间 */
 const SESSION_TTL_MS = 10 * 60 * 1000; // 10 分钟
 
+/**
+ * 从 env 拼 memoraxConfig。三个字段任一缺失就返回 undefined（factory 在
+ * provider 是 'memorax' / 'parallel' 时会抛错指引；其它 provider 正常）。
+ */
+function buildMemoraxConfig():
+  | { baseUrl: string; apiKey: string; appId?: string }
+  | undefined {
+  const env = getServerEnv();
+  if (!env.MEMORAX_BASE_URL || !env.MEMORAX_API_KEY) return undefined;
+  return {
+    baseUrl: env.MEMORAX_BASE_URL,
+    apiKey: env.MEMORAX_API_KEY,
+    appId: env.MEMORAX_APP_ID,
+  };
+}
+
 // ============================================================================
 // GameSessionWrapper
 // ============================================================================
@@ -143,6 +159,7 @@ export class GameSessionWrapper {
       coreEventSink: base.coreEventSink,
       // mem0 key 从 base 带过来（base 已经从 env 读好了）
       mem0ApiKey: base.mem0ApiKey,
+      memoraxConfig: base.memoraxConfig,
       coreEventReader: base.coreEventReader,
       // V.2：parser 分叉键 + 白名单；restore 路径和 start 走同一份，保证重连后
       // parser 选型不跳变
@@ -230,6 +247,7 @@ export class GameSessionWrapper {
       backgrounds: manifest.backgrounds,
       // server 只负责把已验证 env 注入 core；core 自身不读 process.env。
       mem0ApiKey: getServerEnv().MEM0_API_KEY,
+      memoraxConfig: buildMemoraxConfig(),
       persistence: createPlaythroughPersistence(this.playthroughId),
       tracing: createBoundTracing({
         playthroughId: this.playthroughId,
