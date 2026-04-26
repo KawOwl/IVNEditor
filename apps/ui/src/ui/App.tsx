@@ -18,6 +18,7 @@ import { HomePage } from '#internal/ui/home/HomePage';
 import { PlayPage } from '#internal/ui/play/PlayPage';
 import { EditorPage } from '#internal/ui/editor/EditorPage';
 import { LoginModal } from '#internal/ui/auth/LoginModal';
+import { RegistrationGate } from '#internal/ui/auth/RegistrationGate';
 import {
   publicInfoToManifest,
   type PublicScriptInfo,
@@ -136,6 +137,8 @@ export function App() {
     <>
       {content}
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
+      {/* PFB.2：anonymous 用户进入网页时全局拦截，强制注册+画像后才能用 */}
+      <RegistrationGate />
     </>
   );
 }
