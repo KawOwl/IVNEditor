@@ -2,7 +2,9 @@ import {
   createNoThinkingLLMConfig,
   runLiveMemoryEvaluationSuite,
   type LiveMemoryEvaluationOptions,
+  type PlayerSource,
 } from '#internal/evaluation/memory-harness';
+import { createLLMPlayerSimulator } from '#internal/evaluation/player-simulator';
 import { buildParserManifest } from '#internal/narrative-parser-v2';
 import type { LLMConfig } from '#internal/llm-client';
 import type {
@@ -16,17 +18,21 @@ import type {
 
 async function main(): Promise<void> {
   const outputPath = Bun.env.MEMORY_EVAL_OUTPUT ?? '/tmp/ivn-memory-live-eval.json';
-  const inputs = readInputs();
   const variants = readVariants();
   const llmConfig = createNoThinkingLLMConfig(readLLMConfig());
   const scenario = createLiveScenario();
+  const player = readPlayerSource();
+  const maxTurns = Number(
+    Bun.env.MEMORY_EVAL_MAX_TURNS
+      ?? (player.kind === 'scripted' ? player.inputs.length + 1 : '15'),
+  );
 
   const report = await runLiveMemoryEvaluationSuite({
     scenario,
     variants,
     llmConfig,
-    inputs,
-    maxTurns: Number(Bun.env.MEMORY_EVAL_MAX_TURNS ?? inputs.length + 1),
+    player,
+    maxTurns,
   } satisfies LiveMemoryEvaluationOptions);
 
   await Bun.write(outputPath, `${JSON.stringify(report, null, 2)}\n`);
@@ -49,7 +55,7 @@ async function main(): Promise<void> {
     for (const run of protocolFailures) {
       console.error(`${run.variantId}: ${JSON.stringify(run.coreEventProtocol.violations)}`);
     }
-    Bun.exit(1);
+    process.exit(1);
   }
 
   if (projectionFailures.length > 0) {
@@ -57,12 +63,12 @@ async function main(): Promise<void> {
     for (const run of projectionFailures) {
       console.error(`${run.variantId}: ${run.sessionEmitterProjection.mismatches.join(', ')}`);
     }
-    Bun.exit(1);
+    process.exit(1);
   }
 
   if (inputRequestCounts.some((count) => count < 1)) {
     console.error('Expected every live run to reach at least one input request.');
-    Bun.exit(1);
+    process.exit(1);
   }
 }
 
@@ -90,6 +96,34 @@ function readInputs(): readonly string[] {
   return parsed;
 }
 
+/**
+ * MEMORY_EVAL_PLAYER_GOAL 设了 → 走 LLM-driven simulator；否则用 scripted inputs。
+ * Simulator 路径需要单独的 LLM 配置（MEMORY_EVAL_PLAYER_LLM_*），不复用 GM 的，
+ * 让两侧可以拆开模型 / API key（同模型也行，重复声明而已）。
+ *
+ * 返回的是 factory，每个 variant 进入时调一次新建一个 simulator —— 否则跨 variant
+ * 共享 instance，chat history 累积，A/B 对比不公平。
+ */
+function readPlayerSource(): PlayerSource {
+  const goal = Bun.env.MEMORY_EVAL_PLAYER_GOAL;
+  if (!goal) {
+    return { kind: 'scripted', inputs: readInputs() };
+  }
+  const llmConfig = createNoThinkingLLMConfig({
+    provider: requiredEnv('MEMORY_EVAL_PLAYER_LLM_PROVIDER'),
+    baseURL: requiredEnv('MEMORY_EVAL_PLAYER_LLM_BASE_URL'),
+    apiKey: requiredEnv('MEMORY_EVAL_PLAYER_LLM_API_KEY'),
+    model: requiredEnv('MEMORY_EVAL_PLAYER_LLM_MODEL'),
+    name: 'player-simulator',
+    maxOutputTokens: Number(Bun.env.MEMORY_EVAL_PLAYER_LLM_MAX_OUTPUT_TOKENS ?? 200),
+  });
+  const style = Bun.env.MEMORY_EVAL_PLAYER_STYLE;
+  return {
+    kind: 'simulated',
+    createSimulator: () => createLLMPlayerSimulator({ goal, style, llmConfig }),
+  };
+}
+
 function readVariants(): LiveMemoryEvaluationOptions['variants'] {
   const rawVariants: string = Bun.env.MEMORY_EVAL_VARIANTS ?? 'legacy,llm-summarizer';
   const ids = rawVariants
@@ -98,13 +132,23 @@ function readVariants(): LiveMemoryEvaluationOptions['variants'] {
     .filter(Boolean);
 
   return ids.map((id: string) => {
+    if (id === 'noop') {
+      return { id, memoryConfig: { ...baseMemoryConfig, provider: 'noop' } };
+    }
     if (id === 'legacy') {
       return { id, memoryConfig: { ...baseMemoryConfig, provider: 'legacy' } };
     }
     if (id === 'llm-summarizer') {
       return { id, memoryConfig: { ...baseMemoryConfig, provider: 'llm-summarizer' } };
     }
-    throw new Error(`Unknown memory eval variant "${id}"`);
+    if (id === 'mem0') {
+      const mem0ApiKey = Bun.env.MEM0_API_KEY;
+      if (!mem0ApiKey) {
+        throw new Error('Variant "mem0" requires MEM0_API_KEY env var');
+      }
+      return { id, memoryConfig: { ...baseMemoryConfig, provider: 'mem0' }, mem0ApiKey };
+    }
+    throw new Error(`Unknown memory eval variant "${id}" (expected noop / legacy / llm-summarizer / mem0)`);
   });
 }
 

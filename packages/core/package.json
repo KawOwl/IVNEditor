@@ -38,8 +38,8 @@
     }
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit",
-    "typecheck:tsc": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit && tsgo --noEmit -p scripts/tsconfig.json",
+    "typecheck:tsc": "tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json",
     "test": "bun test",
     "eval:memory:live": "bun --env-file ../../apps/server/.env scripts/memory-live-eval.mts"
   },

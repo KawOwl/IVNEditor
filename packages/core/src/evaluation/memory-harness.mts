@@ -45,6 +45,7 @@ import {
 import { createLegacySessionEmitterProjection } from '#internal/game-session/legacy-session-emitter-projection';
 import type { SessionPersistence } from '#internal/game-session/types';
 import { LLMClient, type GenerateOptions, type GenerateResult, type LLMConfig, type StepInfo } from '#internal/llm-client';
+import type { PlayerSimulator } from '#internal/evaluation/player-simulator';
 import { createMemory } from '#internal/memory/factory';
 import type {
   CreateMemoryOptions,
@@ -62,6 +63,7 @@ import type {
   PromptSegment,
   ProtocolVersion,
   SceneState,
+  Sentence,
   StateSchema,
   ToolCallEntry,
 } from '#internal/types';
@@ -133,11 +135,30 @@ export interface MemoryEvaluationOptions {
   readonly compression?: ScriptedCompressionFixture;
 }
 
+export type PlayerSource =
+  | { readonly kind: 'scripted'; readonly inputs: ReadonlyArray<ScriptedInput> }
+  /**
+   * `createSimulator` 是 factory 而不是 instance —— harness 每个 variant 跑前调
+   * 一次拿到全新的 simulator，避免 instance 内部 chat history 跨 variant 累积
+   * （否则 mem0 跑的时候 simulator 已经"记得"前面 noop 跑里 GM 说过什么，A/B 对
+   * 比不公平）。
+   */
+  | { readonly kind: 'simulated'; readonly createSimulator: () => PlayerSimulator };
+
 export interface LiveMemoryEvaluationOptions {
   readonly scenario: MemoryEvaluationScenario;
   readonly variants: ReadonlyArray<MemoryEvaluationVariant>;
   readonly llmConfig: LLMConfig;
-  readonly inputs: ReadonlyArray<ScriptedInput>;
+  /**
+   * 玩家输入来源 —— scripted 数组 or LLM-driven simulator。`player` 优先于
+   * `inputs`；两者都缺省抛错。
+   */
+  readonly player?: PlayerSource;
+  /**
+   * @deprecated 用 `player: { kind: 'scripted', inputs }`。本字段为向后兼容
+   * 别名，未来移除。
+   */
+  readonly inputs?: ReadonlyArray<ScriptedInput>;
   readonly maxTurns?: number;
 }
 
@@ -359,14 +380,19 @@ export async function runMemoryEvaluationCase(options: {
 export async function runLiveMemoryEvaluationSuite(
   options: LiveMemoryEvaluationOptions,
 ): Promise<MemoryEvaluationReport> {
+  const player = resolvePlayerSource(options);
+  // 不再 createNoThinkingLLMConfig 包一层 —— 调用方负责 LLMConfig.thinkingEnabled。
+  // _helpers.readGMLLMConfig 默认关 thinking；显式开靠 LLM_THINKING=on env。
+  const llmConfig = options.llmConfig;
+  const maxTurns = resolveMaxTurns(options.maxTurns, player);
   const runs = [];
   for (const variant of options.variants) {
     runs.push(await runLiveMemoryEvaluationCase({
       scenario: options.scenario,
       variant,
-      llmConfig: createNoThinkingLLMConfig(options.llmConfig),
-      inputs: options.inputs,
-      maxTurns: options.maxTurns,
+      llmConfig,
+      player,
+      maxTurns,
     }));
   }
 
@@ -381,10 +407,10 @@ export async function runLiveMemoryEvaluationCase(options: {
   readonly scenario: MemoryEvaluationScenario;
   readonly variant: MemoryEvaluationVariant;
   readonly llmConfig: LLMConfig;
-  readonly inputs: ReadonlyArray<ScriptedInput>;
-  readonly maxTurns?: number;
+  readonly player: PlayerSource;
+  readonly maxTurns: number;
 }): Promise<MemoryEvaluationRun> {
-  const { scenario, variant } = options;
+  const { scenario, variant, player, maxTurns } = options;
   const playthroughId = scenario.playthroughId ?? `memory-live-${scenario.id}-${variant.id}`;
   const recording = createRecordingSessionOutputSink();
   const coreRecorder = createRecordingCoreEventSink({ playthroughId });
@@ -395,7 +421,9 @@ export async function runLiveMemoryEvaluationCase(options: {
     coreRecorder,
     journal.persistence,
   );
-  const llmClient = createRecordingEvaluationLLM(new LLMClient(createNoThinkingLLMConfig(options.llmConfig)));
+  // 直接用 caller 的 llmConfig —— 上游 (suite) 已经决定 thinking 开关，case 层
+  // 不再覆写。这是从 noop 跑 thinking-mode 排错的必要前提。
+  const llmClient = createRecordingEvaluationLLM(new LLMClient(options.llmConfig));
   const stateStore = new StateStore(scenario.stateSchema);
   const memory = await createVariantMemory({
     scenario,
@@ -404,6 +432,9 @@ export async function runLiveMemoryEvaluationCase(options: {
     coreEventReader,
     llmClient,
   });
+  // factory call 在每个 variant 进入时调一次，simulator 实例只属于这 variant
+  // 的 turns；下一个 variant 跑前再 factory 一次，拿到 history 全空的新实例。
+  const simulator = player.kind === 'simulated' ? player.createSimulator() : null;
 
   let currentScene = copyScene(scenario.defaultScene ?? { background: null, sprites: [] });
   let lastPlayerInput = '';
@@ -411,7 +442,8 @@ export async function runLiveMemoryEvaluationCase(options: {
   let scenarioEndReason: string | undefined;
   let stopReason: MemoryEvaluationStopReason = 'completed-script';
   let turnsRun = 0;
-  const maxTurns = options.maxTurns ?? Math.max(1, options.inputs.length + 1);
+  const variantStartedAt = Date.now();
+  console.error(`▶ ${variant.id}: starting (max ${maxTurns} turns, memory=${memory.kind})`);
 
   harnessCoreEventSink.publish({
     type: 'session-started',
@@ -422,6 +454,8 @@ export async function runLiveMemoryEvaluationCase(options: {
     const turn = stateStore.getTurn() + 1;
     stateStore.setTurn(turn);
     turnsRun += 1;
+    const sentencesBefore = recording.getSnapshot().sentences.length;
+    const turnStartedAt = Date.now();
 
     const runtime = createGenerateTurnRuntime({
       turn,
@@ -452,6 +486,7 @@ export async function runLiveMemoryEvaluationCase(options: {
     currentScene = result.currentScene;
     if (result.stopped) {
       stopReason = 'stopped';
+      console.error(`  ${variant.id} turn ${turnsRun}: stopped (${Date.now() - turnStartedAt}ms)`);
       break;
     }
 
@@ -462,6 +497,7 @@ export async function runLiveMemoryEvaluationCase(options: {
         snapshot: await createHarnessSnapshot(memory, stateStore, currentScene),
       });
       stopReason = 'scenario-finished';
+      console.error(`  ${variant.id} turn ${turnsRun}: scenario-finished (${Date.now() - turnStartedAt}ms)`);
       break;
     }
 
@@ -473,9 +509,17 @@ export async function runLiveMemoryEvaluationCase(options: {
       pendingSignal: result.pendingSignal,
     });
 
-    const inputText = getScriptedInput(options.inputs[turnIndex]);
+    const inputText = await resolvePlayerInput(player, simulator, {
+      turn,
+      sentencesBefore,
+      recording,
+      pendingSignal: result.pendingSignal,
+      scriptedAt: turnIndex,
+    });
+
     if (inputText === null) {
       stopReason = 'waiting-for-unscripted-input';
+      console.error(`  ${variant.id} turn ${turnsRun}: waiting-for-unscripted-input (${Date.now() - turnStartedAt}ms)`);
       break;
     }
 
@@ -488,11 +532,13 @@ export async function runLiveMemoryEvaluationCase(options: {
       pendingSignal: result.pendingSignal,
       inputText,
     });
+    console.error(`  ${variant.id} turn ${turnsRun}: ok (${Date.now() - turnStartedAt}ms)`);
   }
 
   const memorySnapshot = await memory.snapshot();
   const coreEvents = coreRecorder.getEvents();
   const recordingSnapshot = recording.getSnapshot();
+  console.error(`✓ ${variant.id}: ${turnsRun}t, ${recordingSnapshot.sentences.length}s, ${Date.now() - variantStartedAt}ms (stop=${stopReason})`);
   return {
     variantId: variant.id,
     memoryKind: memory.kind,
@@ -509,6 +555,57 @@ export async function runLiveMemoryEvaluationCase(options: {
     coreEventProtocol: validateCoreEventSequence(coreEvents),
     sessionEmitterProjection: validateSessionEmitterProjection(recordingSnapshot, coreEvents),
   };
+}
+
+function resolvePlayerSource(options: LiveMemoryEvaluationOptions): PlayerSource {
+  if (options.player) return options.player;
+  if (options.inputs) return { kind: 'scripted', inputs: options.inputs };
+  throw new Error('LiveMemoryEvaluationOptions requires `player` or (deprecated) `inputs`');
+}
+
+function resolveMaxTurns(maxTurns: number | undefined, player: PlayerSource): number {
+  if (maxTurns) return maxTurns;
+  if (player.kind === 'scripted') return Math.max(1, player.inputs.length + 1);
+  throw new Error('Simulated player requires explicit `maxTurns`');
+}
+
+async function resolvePlayerInput(
+  player: PlayerSource,
+  simulator: PlayerSimulator | null,
+  ctx: {
+    readonly turn: number;
+    readonly sentencesBefore: number;
+    readonly recording: ReturnType<typeof createRecordingSessionOutputSink>;
+    readonly pendingSignal: { readonly hint: string; readonly choices: readonly string[] } | null;
+    readonly scriptedAt: number;
+  },
+): Promise<string | null> {
+  if (player.kind === 'scripted') {
+    return getScriptedInput(player.inputs[ctx.scriptedAt]);
+  }
+  if (!simulator) {
+    throw new Error('Internal: simulator missing for simulated PlayerSource');
+  }
+  const sentences = ctx.recording.getSnapshot().sentences.slice(ctx.sentencesBefore);
+  return simulator.decide({
+    turn: ctx.turn,
+    narration: summarizeNarrationForSimulator(sentences),
+    hint: ctx.pendingSignal?.hint || null,
+    choices: ctx.pendingSignal?.choices ? [...ctx.pendingSignal.choices] : [],
+  });
+}
+
+/** dialogue → `[speaker] text` / narration → text；其他 kind 跳过（不是玩家视角内容）。*/
+function summarizeNarrationForSimulator(sentences: ReadonlyArray<Sentence>): string {
+  const lines: string[] = [];
+  for (const s of sentences) {
+    if (s.kind === 'dialogue') {
+      lines.push(`[${s.pf.speaker}] ${s.text}`);
+    } else if (s.kind === 'narration') {
+      lines.push(s.text);
+    }
+  }
+  return lines.join('\n');
 }
 
 export function createNoThinkingLLMConfig(config: LLMConfig): LLMConfig {
