@@ -612,18 +612,28 @@ export class GameSession {
   /**
    * 为本轮 generate 构造 Memory.retrieve 的 query。
    *
-   * v1.1 版本（Focus Injection MVP）：拼接"当前 focus.scene + 最近玩家输入"。
-   *   - scene 来自 state_vars.current_scene（由 computeFocus 推断）
-   *   - lastPlayerInput 是 submitInput 写入的
+   * 当前形态：`<scene_id> <char_ids...>. <lastPlayerInput>`
+   *   - scene_id：state_vars.current_scene（computeFocus 推断）
+   *   - char_ids：this.currentScene.sprites 的 id 列表 —— 当前在场角色
+   *     （注：focus.characters 是 v2 扩展点尚未在 computeFocus 里投影，
+   *      这里直接读 currentScene.sprites 拿真实"现场立绘"集合。两路最终
+   *      会统一到 focus 维度，但 MVP 先各取所需）
+   *   - lastPlayerInput：submitInput 写入的玩家话语
    *
-   * 为什么拼 focus：给 Memory.retrieve 更结构化的信号，让 mem0 这类语义
-   * 检索能找到"此场景下发生过的事"而不只是"玩家话里提到的关键词"。
-   * legacy / llm-summarizer 下 query 对 summary 影响不大，但无害。
+   * 设计选择（2026-04-26）：
+   *   - **加 char_ids 的原因**：mem0 / memorax 是语义检索，给它角色 id 比单
+   *     scene 多一个语义锚点 —— "当前场景且这些角色在场时发生过的事" 召回率
+   *     显著高于仅 scene
+   *   - **保留 lastPlayerInput**：玩家话题往往跑在 state 变量更新之前，
+   *     是即时关注点的最快信号；冗余但低成本
+   *   - **下一场景的 gap 不在此层解决**：retrieve 在 LLM 跑之前发生，
+   *     "下个场景" 本质不可知。靠 (a) 下一 turn 自动追上、(b) LLM 的
+   *     query_memory 工具自助补查 兜底
    *
-   * ⚠ 扩展点保留。未来可能升级为：
-   *   - 加 chars / stage 维度
-   *   - 用便宜 LLM 根据 state + 最近叙事生成更精炼的 query
-   *   - 多 query 并行 retrieve 合并结果
+   * ⚠ 扩展点（按工程成本递增）：
+   *   - pin 几条剧本主线 facts，retrieve summary 永远拼到顶
+   *   - 多 query 并行 retrieve 合并结果（需要 script 侧"可能下一场景集合"）
+   *   - 用便宜 LLM 根据 state + 近 N 条叙事生成更精炼的 query
    *
    * 升级只改这个函数，assembleContext / Memory.retrieve 完全不动。
    *
@@ -631,12 +641,13 @@ export class GameSession {
    */
   private async buildRetrievalQuery(): Promise<string> {
     const focus = computeFocus(this.stateStore.getAll());
-    return [
-      focus.scene,
-      // v2: focus.stage,
-      // v2: focus.characters?.join(', '),
-      this.lastPlayerInput,
-    ].filter((part): part is string => !!part).join('. ');
+    const charIds = this.currentScene.sprites.map((s) => s.id);
+    const sceneAndChars = [focus.scene, ...charIds]
+      .filter((part): part is string => !!part)
+      .join(' ');
+    return [sceneAndChars, this.lastPlayerInput]
+      .filter((part) => !!part)
+      .join('. ');
   }
 
   private waitForInput(): Promise<string> {
