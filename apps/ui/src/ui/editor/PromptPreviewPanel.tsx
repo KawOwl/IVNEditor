@@ -101,10 +101,12 @@ function buildAllSections(
   segments: PromptSegment[],
   stateSchema: StateSchema,
   initialPrompt?: string,
-  protocolVersion: ProtocolVersion = CURRENT_PROTOCOL_VERSION,
+  _protocolVersion: ProtocolVersion = CURRENT_PROTOCOL_VERSION,
   characters: ReadonlyArray<CharacterAsset> = [],
   backgrounds: ReadonlyArray<BackgroundAsset> = [],
 ): PreviewSection[] {
+  // _protocolVersion 暂保留参数签名给 caller，但 buildEngineRules 不再需要它
+  // （永远产 v2 prompt）。后续可彻底删除。
   const vars = Object.fromEntries(
     stateSchema.variables.map((v) => [v.name, v.initial]),
   ) as Record<string, unknown>;
@@ -142,7 +144,6 @@ function buildAllSections(
   // 用 core/context-assembler 的 buildStateSection 保证和运行时 section 完全一致
   const stateContent = buildStateSection(vars);
   const engineRulesContent = buildEngineRules({
-    protocolVersion,
     characters,
     backgrounds,
   });

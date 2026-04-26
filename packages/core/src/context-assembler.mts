@@ -336,12 +336,15 @@ async function buildMemorySection(
 }
 
 function buildRulesSection(
-  protocolVersion: ProtocolVersion,
+  _protocolVersion: ProtocolVersion,
   characters: ReadonlyArray<CharacterAsset>,
   backgrounds: ReadonlyArray<BackgroundAsset>,
 ): AssembledSection {
+  // protocolVersion 不再用于 prompt 装配（buildEngineRules 永远产 v2）；保留
+  // 参数签名是为了 caller 不必同步改——legacy v1 协议的 runtime 守门在
+  // game-session 层做（拒绝执行），不在这里。
   return buildSection(
-    buildEngineRules({ protocolVersion, characters, backgrounds }),
+    buildEngineRules({ characters, backgrounds }),
     'system',
     false,
   );

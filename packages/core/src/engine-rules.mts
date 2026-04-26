@@ -16,24 +16,26 @@
  *    rewriter 看到的协议规则跟主路径**字节同步**——避免曾经的"主 prompt
  *    更新但 rewriter prompt 漂移"问题（trace bab24e15 / 227cb1d0）。
  *
- * V.3（2026-04-24）：新增 `buildEngineRules({ protocolVersion, ... })`
- * 按 `manifest.protocolVersion` 分叉产出 legacy v1 / 当前声明式协议不同的叙事格式段。
+ * 协议范围（2026-04-26 起）：本文件**只产出当前 v2 声明式视觉 IR 的 prompt**。
+ * legacy v1（XML-lite \`<d>\` + tool-driven 切景）的 prompt 文本已删除——
+ * 该协议被全局判为只读历史，runtime 拒绝执行；ProtocolVersion 类型仍保留
+ * 'v1-tool-call' 成员供历史 trace 解析 / runtime 协议版本守门用，但跟本文件
+ * 的 prompt 装配解耦。
  *
- * V.x.A（2026-04-26）：v2 narrative format 内部拆成可复用 builder 子段
+ * v2 narrative format 内部拆成可复用 builder 子段
  * （CONTAINER_SPEC / ADHOC_SPEAKER_RULES / OUTPUT_DISCIPLINE / ...）以便
- * narrative-rewrite 模块按需引用。main path 拼装顺序保持字节稳定。
+ * narrative-rewrite 模块按需引用。子段拼装顺序保持字节稳定（见
+ * engine-rules.test.mts 的 v2 字节 snapshot 守门）。
  *
  * 修改规则：
  * - 只在本文件一处修改，三个场景自动同步
- * - 避免再次出现"改了运行时但忘了改写侧"这类漂移
+ * - 修改 v2 任何子段会让 byte-stable snapshot 失败 → commit 必须显式更新
+ *   snapshot 同时在 commit message 解释为什么改
  */
-
-import type { ProtocolVersion } from '#internal/types';
-import { CURRENT_PROTOCOL_VERSION } from '#internal/protocol-version';
 
 // ============================================================================
 // 共享段：GM 身份 / 回合收尾 / signal_input_needed / end_scenario
-// v1 / v2 共用，保持字节级稳定（prompt cache 友好）
+// 保持字节级稳定（prompt cache 友好）
 // ============================================================================
 
 const RULES_PROLOGUE =
@@ -85,41 +87,7 @@ const RULES_PROLOGUE =
 const RULES_EPILOGUE = `---`;
 
 // ============================================================================
-// v1：XML-lite `<d>` + tool-driven 视觉切换
-// ============================================================================
-
-const NARRATIVE_FORMAT_V1 =
-  `\n## 叙事输出格式（XML-lite，必须遵守）\n` +
-  `你的叙事正文使用一套**简化的 XML-lite 标签**，由两类元素组成：\n` +
-  `1. **角色台词** —— 用 \`<d speaker="角色id">\` 包裹（仅当一句话被某个具体角色说出口时使用）；\n` +
-  `2. **旁白与描写** —— 直接以**纯文本**输出在 \`<d>\` 之外，**不要**用任何 \`<n>\` / \`<narration>\` 之类的额外包装标签（曾经允许过这种写法，已经被移除）。\n` +
-  `\n` +
-  `**示例**：\n` +
-  `\`\`\`\n` +
-  `黄昏的教室空空荡荡，夕阳把每一张桌子都染成暖橙色。\n` +
-  `\n` +
-  `<d speaker="sakuya">他今天又没来吗……</d>\n` +
-  `\n` +
-  `走廊里传来脚步声。\n` +
-  `\n` +
-  `<d speaker="aonkei">咲夜，你还在这里？</d>\n` +
-  `\`\`\`\n` +
-  `\n` +
-  `**禁止**：\n` +
-  `- 不要写 \`<dialogue>\` / \`<narration>\` / \`<scratch>\` 等其他标签 —— 这些不是当前协议的一部分，会被解析丢弃；\n` +
-  `- 不要写 markdown 代码块（\`\`\`） —— 输出只能是纯文本 + \`<d>\` 标签；\n` +
-  `- 不要在 \`<d>\` 标签外用 XML 包装旁白，旁白必须是裸文本（这是 v1 协议的核心约束）。\n` +
-  `\n## 视觉切换工具\n` +
-  `视觉状态（背景 / 立绘 / 舞台清空）通过工具调用切换：\n` +
-  `\n` +
-  `- **change_scene(scene)** —— 切换背景，scene 必须是剧本 prompt 里定义的场景 id；\n` +
-  `- **change_sprite(char, mood, position)** —— 显示某个角色的立绘到指定位置；\n` +
-  `- **clear_stage()** —— 清空所有立绘。\n` +
-  `\n` +
-  `这些工具应在合适的叙事节点调用，例如新场景开头先 change_scene，再写第一句旁白。\n`;
-
-// ============================================================================
-// v2：声明式视觉 IR（嵌套 <dialogue> / <narration> / <scratch>）
+// 声明式视觉 IR（嵌套 <dialogue> / <narration> / <scratch>）
 // 内部拆成多个子段（const + 函数）便于 narrative-rewrite 模块复用
 // ============================================================================
 
@@ -549,10 +517,8 @@ function buildNarrativeFormatV2(
 // ============================================================================
 
 export interface EngineRulesOpts {
-  /** 剧本 protocolVersion；缺省为当前运行协议。 */
-  readonly protocolVersion?: ProtocolVersion;
   /**
-   * 仅 v2 需要：剧本白名单 —— 角色及其情绪列表。
+   * 剧本白名单 —— 角色及其情绪列表。
    * 从 `ScriptManifest.characters` 直接传入即可（`CharacterAsset[]`），
    * 函数内只读 `id` + `sprites[].id`。
    */
@@ -561,7 +527,7 @@ export interface EngineRulesOpts {
     readonly sprites?: ReadonlyArray<{ readonly id: string }>;
   }>;
   /**
-   * 仅 v2 需要：剧本白名单 —— 背景列表。
+   * 剧本白名单 —— 背景列表。
    * 从 `ScriptManifest.backgrounds` 直接传入即可（`BackgroundAsset[]`），
    * 函数内只读 `id`。
    */
@@ -569,30 +535,12 @@ export interface EngineRulesOpts {
 }
 
 /**
- * 按 protocolVersion 产出完整的 ENGINE RULES 文本。
+ * 产出完整的 ENGINE RULES 文本（当前 v2 声明式视觉 IR 协议）。
  *
- * - 共享段（GM 身份 / 回合收尾 / signal_input / end_scenario）两版字节一致
- * - 叙事格式段按版本切分；v2 还会插入 manifest 白名单
+ * legacy v1（XML-lite \`<d>\` 协议）的 prompt 文本已删除——runtime 拒绝执行
+ * v1 协议剧本，本函数也只产 v2 prompt。
  */
 export function buildEngineRules(opts: EngineRulesOpts = {}): string {
-  const { protocolVersion = CURRENT_PROTOCOL_VERSION, characters = [], backgrounds = [] } = opts;
-  const narrativeFormat =
-    protocolVersion === 'v2-declarative-visual'
-      ? buildNarrativeFormatV2(characters, backgrounds)
-      : NARRATIVE_FORMAT_V1;
-  return RULES_PROLOGUE + narrativeFormat + RULES_EPILOGUE;
+  const { characters = [], backgrounds = [] } = opts;
+  return RULES_PROLOGUE + buildNarrativeFormatV2(characters, backgrounds) + RULES_EPILOGUE;
 }
-
-// ============================================================================
-// 向后兼容导出
-// ============================================================================
-
-/**
- * v1 规则文本常量。等价于 `buildEngineRules({ protocolVersion: 'v1-tool-call' })`。
- *
- * 保留此导出给历史只读解析、lint、迁移工具，以及还没迁到当前协议的消费者。
- * 字节级稳定 —— 修改本文件共享段或 v1 段时确保这条仍是 v1 完整文本。
- */
-export const ENGINE_RULES_CONTENT: string = buildEngineRules({
-  protocolVersion: 'v1-tool-call',
-});

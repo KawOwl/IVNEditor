@@ -805,6 +805,69 @@ export class LLMClient {
       }
     }
 
+    // ─── post-step signal **final fallback**（2026-04-26）──────────────────
+    //
+    // 第一层 post-step signal followup 跑完后仍然没有 signal_input_needed /
+    // end_scenario 的兜底。这一层比上面的更狭窄：tools 只剩 signal_input_needed
+    // 一个（连 end_scenario 都不允许 —— 既然走到这里说明前面 LLM 已经
+    // 在 signal+end 两选时无法做出选择，再给两个选项只会重复同样的歧义）。
+    //
+    // 强制 toolChoice = signal_input_needed（非 thinking）/ 省略 toolChoice
+    // 但 tools 只剩一个（thinking）—— 模型能选的只有这一个 tool call，
+    // 大概率会调。
+    //
+    // 触发条件：toolCallLog 仍 !hasTerminatingTool。
+    // 失败处理：warn + log，不冒异常 —— 保留 fallback 到 freetext 兜底。
+    const stillNoTerminatingTool = !toolCallLog.some(
+      (c) => c.name === 'signal_input_needed' || c.name === 'end_scenario',
+    );
+    if (stillNoTerminatingTool && !(abortSignal?.aborted ?? false)) {
+      isFollowupRef.current = true;
+      try {
+        const finalNudge: ModelMessage = {
+          role: 'user',
+          content:
+            '[引擎提示] 这是最后一次机会。立即调用 signal_input_needed —— ' +
+            'hint（1-2 句总结当前局面）+ choices（2-4 个推进选项）。' +
+            '不要写任何文本，只调一次 signal_input_needed。',
+        };
+        const isThinking = this.config.thinkingEnabled === true;
+        const finalTools = Object.fromEntries(
+          Object.entries(aiTools).filter(([name]) => name === 'signal_input_needed'),
+        );
+        const finalStream = streamText({
+          ...baseStreamArgs,
+          tools: finalTools,
+          messages: [...messages, finalNudge],
+          stopWhen: [hasToolCall('signal_input_needed'), stepCountIs(1)],
+          maxOutputTokens: 256,
+          ...(isThinking
+            ? {} // thinking: 省略 toolChoice（reasoner family 不接受），靠 single-tool set 兜底
+            : { toolChoice: { type: 'tool' as const, toolName: 'signal_input_needed' } }),
+        });
+
+        // text-delta 不转发不累加 —— 这一步只为调工具，不出文本
+        await consumeStream(finalStream, false);
+        const finalFinish = await (await finalStream).finishReason;
+        await addUsage(finalStream);
+
+        const finalGotSignal = toolCallLog.some((c) => c.name === 'signal_input_needed');
+        if (finalGotSignal) {
+          finishReason = 'tool-calls';
+        } else {
+          console.warn(
+            `[llm-client] final-fallback signal followup didn't elicit ` +
+              `signal_input_needed either. finalFinish=${String(finalFinish)}. ` +
+              `Player will see no choices; UI fallback to freetext.`,
+          );
+        }
+      } catch (err) {
+        console.error('[llm-client] final-fallback signal followup threw:', err);
+      } finally {
+        isFollowupRef.current = false;
+      }
+    }
+
     return {
       text: fullText,
       toolCalls: toolCallLog,
