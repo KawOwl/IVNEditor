@@ -28,7 +28,7 @@ import { assertTestDatabase } from '#internal/__tests__/_db-guard';
 
 async function cleanTables() {
   await assertTestDatabase();
-  await db.delete(schema.narrativeEntries);
+  await db.delete(schema.coreEventEnvelopes);
   await db.delete(schema.playthroughs);
   await db.delete(schema.scriptVersions);
   await db.delete(schema.scripts);

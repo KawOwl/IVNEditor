@@ -1,4 +1,4 @@
-import { asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import type {
   CoreEventEnvelope,
   CoreEventLogWriter,
@@ -46,13 +46,46 @@ export class CoreEventLogService {
       .where(eq(schema.coreEventEnvelopes.playthroughId, playthroughId))
       .orderBy(asc(schema.coreEventEnvelopes.sequence));
 
-    return rows.map((row) => ({
-      schemaVersion: row.schemaVersion as CoreEventEnvelope['schemaVersion'],
-      sequence: row.sequence,
-      occurredAt: row.occurredAt,
-      playthroughId: row.playthroughId,
-      event: row.event,
-    }));
+    return rows.map(rowToEnvelope);
+  }
+
+  async loadLatest(playthroughId: string, limit: number): Promise<CoreEventEnvelope[]> {
+    if (limit <= 0) return [];
+
+    const rows = await db
+      .select()
+      .from(schema.coreEventEnvelopes)
+      .where(eq(schema.coreEventEnvelopes.playthroughId, playthroughId))
+      .orderBy(desc(schema.coreEventEnvelopes.sequence))
+      .limit(limit);
+
+    return rows.reverse().map(rowToEnvelope);
+  }
+
+  async loadRange(
+    playthroughId: string,
+    opts: {
+      readonly fromSequence?: number;
+      readonly toSequence?: number;
+    } = {},
+  ): Promise<CoreEventEnvelope[]> {
+    const conditions = [
+      eq(schema.coreEventEnvelopes.playthroughId, playthroughId),
+      opts.fromSequence === undefined
+        ? undefined
+        : gte(schema.coreEventEnvelopes.sequence, opts.fromSequence),
+      opts.toSequence === undefined
+        ? undefined
+        : lte(schema.coreEventEnvelopes.sequence, opts.toSequence),
+    ].filter((condition): condition is Exclude<typeof condition, undefined> => condition !== undefined);
+
+    const rows = await db
+      .select()
+      .from(schema.coreEventEnvelopes)
+      .where(and(...conditions))
+      .orderBy(asc(schema.coreEventEnvelopes.sequence));
+
+    return rows.map(rowToEnvelope);
   }
 
   createWriter(): CoreEventLogWriter {
@@ -63,3 +96,15 @@ export class CoreEventLogService {
 }
 
 export const coreEventLogService = new CoreEventLogService();
+
+type CoreEventEnvelopeRow = typeof schema.coreEventEnvelopes.$inferSelect;
+
+function rowToEnvelope(row: CoreEventEnvelopeRow): CoreEventEnvelope {
+  return {
+    schemaVersion: row.schemaVersion as CoreEventEnvelope['schemaVersion'],
+    sequence: row.sequence,
+    occurredAt: row.occurredAt,
+    playthroughId: row.playthroughId,
+    event: row.event,
+  };
+}

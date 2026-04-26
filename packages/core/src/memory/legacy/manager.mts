@@ -4,12 +4,11 @@
  * 见 .claude/plans/memory-refactor-v2.md 和 architecture-alignment.md
  *
  * 和旧版本（2026-04-11 的 refactor v1）的区别：
- *   - 不再持有 `state.entries` —— 对话历史通过 NarrativeHistoryReader 从 canonical
- *     narrative_entries 读
+ *   - 不再持有 `state.entries` —— 对话历史通过 CoreEventHistoryReader 从
+ *     canonical core_event_envelopes 投影
  *   - 内部状态瘦身为：summaries（派生摘要）+ pinned（pin_memory 显式记）+
  *     compressedUpTo（压缩游标）
  *   - snapshot 格式 v1 → v2：去掉 entries 字段
- *   - restore 兼容 v1（从 entries 里提取 pinned=true + 保留 summaries）
  *
  * 保留：
  *   - compressFn 截断拼接契约不动
@@ -20,15 +19,18 @@
 
 import { estimateTokens } from '@ivn/core/tokens';
 import type { MemoryEntry, MemoryConfig } from '@ivn/core/types';
-import { buildMessagesFromEntries, capMessagesByBudgetFromTail } from '@ivn/core/messages-builder';
+import {
+  buildMessagesFromCoreEventHistory,
+  capMessagesByBudgetFromTail,
+  projectCoreEventHistoryToMemoryEntries,
+} from '#internal/game-session/core-event-history';
+import type { CoreEventHistoryReader } from '#internal/game-session/core-event-history';
 import type {
   Memory,
   MemoryRetrieval,
   MemorySnapshot,
   RecentMessagesResult,
 } from '#internal/memory/types';
-import type { NarrativeHistoryReader } from '#internal/memory/narrative-reader';
-import { narrativeEntriesToMemoryEntries } from '#internal/memory/narrative-entry-mapping';
 
 // ============================================================================
 // Compress function contract
@@ -57,8 +59,8 @@ function generateId(): string {
  *
  * 和 v1 的区别：
  *   - 删除 `entries`：对话原件走 reader，不再双写
- *   - 新增 `pinned`：pin_memory tool 显式记的条目（不在 narrative_entries 里）
- *   - 新增 `compressedUpTo`：记录最后一次压缩覆盖到哪条 orderIdx（-1 = 从未压缩）
+ *   - 新增 `pinned`：pin_memory tool 显式记的条目
+ *   - 新增 `compressedUpTo`：记录最后一次压缩覆盖到哪条 CoreEvent sequence（-1 = 从未压缩）
  */
 interface LegacyState {
   summaries: string[];
@@ -78,11 +80,11 @@ export class LegacyMemory implements Memory {
     private readonly config: MemoryConfig,
     private readonly compressFn: CompressFn,
     /**
-     * Memory Refactor v2 注入：从 narrative_entries 读历史。
+     * 从 core_event_envelopes 读历史。
      * undefined 时（单测场景）retrieve / getRecentAsMessages 保守返回空；
      * maybeCompact 变成 no-op。生产路径 session-manager 必传。
      */
-    private readonly reader?: NarrativeHistoryReader,
+    private readonly coreEventReader?: CoreEventHistoryReader,
   ) {}
 
   // ─── Write ─────────────────────────────────────────────────────────
@@ -90,7 +92,7 @@ export class LegacyMemory implements Memory {
   /**
    * Memory Refactor v2：appendTurn 不再写 state.entries。
    * 上游（game-session）仍然会调 —— 保留签名兼容，作为"轮次推进"通知；
-   * 真正的对话原件由 persistence 层在写 narrative_entries 时已经记下。
+   * 真正的对话原件由 CoreEvent 日志持久化。
    *
    * 返回值保留 MemoryEntry（id/role/content 等），调用方主要看日志/调试用。
    */
@@ -169,14 +171,13 @@ export class LegacyMemory implements Memory {
     opts: { budget: number },
   ): Promise<RecentMessagesResult> {
     const window = this.config.recencyWindow;
-    if (!this.reader) {
+    if (!this.coreEventReader) {
       return { messages: [], tokensUsed: 0 };
     }
-    const raw = await this.reader.readRecent({ limit: window });
-
-    // 投影（orderIdx 排序 + batchId 分组 + tool-call/tool-result 配对）已由
-    // messages-builder 负责，legacy 这里只要拿住 entries 丢给它即可
-    const projected = buildMessagesFromEntries(raw);
+    const raw = await this.coreEventReader.readRecent({
+      limit: Math.max(window * 8, 200),
+    });
+    const projected = buildMessagesFromCoreEventHistory(raw);
 
     return capMessagesByBudgetFromTail(projected, opts.budget);
   }
@@ -190,13 +191,12 @@ export class LegacyMemory implements Memory {
    * reader 不存在时（单测）no-op。
    */
   async maybeCompact(): Promise<void> {
-    if (!this.reader) return;
+    if (!this.coreEventReader) return;
 
-    // 拉自上次压缩以来（+ 所有更早的 recent 兜底）的完整区间
-    const pending = await this.reader.readRange({
-      fromOrderIdx: this.state.compressedUpTo + 1,
+    const pendingEvents = await this.coreEventReader.readRange({
+      fromSequence: this.state.compressedUpTo + 1,
     });
-    const memoryEntries = narrativeEntriesToMemoryEntries(pending);
+    const memoryEntries = projectCoreEventHistoryToMemoryEntries(pendingEvents);
     const totalTokens = memoryEntries.reduce((s, e) => s + e.tokenCount, 0);
     if (totalTokens <= this.config.compressionThreshold) return;
 
@@ -208,13 +208,8 @@ export class LegacyMemory implements Memory {
     const summary = await this.compressFn(toCompress, this.config.compressionHints);
     this.state.summaries.push(summary);
 
-    // 推进 compressedUpTo 到最后一条被压缩 entry 对应的 orderIdx
-    // 需要反查 pending 里对应的 NarrativeEntry.orderIdx（toCompress 的最后一条的 id）
-    const lastCompressedId = toCompress[toCompress.length - 1]?.id;
-    if (lastCompressedId) {
-      const orig = pending.find((e) => e.id === lastCompressedId);
-      if (orig) this.state.compressedUpTo = orig.orderIdx;
-    }
+    const lastCompressed = toCompress[toCompress.length - 1];
+    if (lastCompressed) this.state.compressedUpTo = lastCompressed.sequence;
     // toKeep 变量保留语义清晰，不实际使用（留给未来 adapter 逻辑参考）
     void toKeep;
   }
@@ -238,18 +233,6 @@ export class LegacyMemory implements Memory {
       };
       return;
     }
-    if (snap.kind === 'legacy-v1') {
-      // 老格式兼容：从 entries 里提取 pinned=true 的条目 + 保留 summaries
-      const oldEntries = (snap.entries ?? []) as MemoryEntry[];
-      this.state = {
-        summaries: [...((snap.summaries ?? []) as string[])],
-        pinned: structuredClone(oldEntries.filter((e) => e.pinned)),
-        // 老 snapshot 没有 compressedUpTo；置 -1 + 下次 maybeCompact 从头看，
-        // 可能会对老叙事"二次摘要"。实际影响：少量冗余 summary，LLM 能忍受
-        compressedUpTo: -1,
-      };
-      return;
-    }
     throw new Error(
       `LegacyMemory cannot restore from kind: ${String(snap.kind)}`,
     );
@@ -263,13 +246,12 @@ export class LegacyMemory implements Memory {
 
   /** 从 reader 拉近期 entries 并映射成 MemoryEntry（供 retrieve 的 keyword match 用） */
   private async readRecentMemoryEntries(): Promise<MemoryEntry[]> {
-    if (!this.reader) return [];
+    if (!this.coreEventReader) return [];
     // 检索的可见窗口比 messages 窗口大一些（用户的 query 可能命中较早条目）
-    const raw = await this.reader.readRecent({
-      limit: Math.max(this.config.recencyWindow * 4, 100),
-      kinds: ['narrative', 'player_input'],
+    const raw = await this.coreEventReader.readRecent({
+      limit: Math.max(this.config.recencyWindow * 8, 200),
     });
-    return narrativeEntriesToMemoryEntries(raw);
+    return projectCoreEventHistoryToMemoryEntries(raw);
   }
 
   /**

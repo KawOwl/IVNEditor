@@ -21,10 +21,12 @@ import { scriptVersionService } from '#internal/services/script-version-service'
 import { llmConfigService, type LlmConfigRow } from '#internal/services/llm-config-service';
 import { resolvePlayerSession } from '#internal/auth-identity';
 import { coreEventLogService } from '#internal/services/core-event-log';
-import { resolveRestorableSessionState } from '#internal/session-restore-input-state';
-import { projectReadbackPage } from '#internal/session-readback';
 import type { LLMConfig } from '@ivn/core/llm-client';
-import { deriveCoreEventLogRestoreState } from '@ivn/core/game-session';
+import {
+  coreEventHistoryFromEnvelopes,
+  deriveCoreEventLogRestoreState,
+  projectCoreEventHistoryPage,
+} from '@ivn/core/game-session';
 import type { ScriptManifest } from '@ivn/core/types';
 
 const sessionManager = new SessionManager();
@@ -60,8 +62,6 @@ const RESTORED_CLIENT_FIELDS = [
   'inputHint',
   'inputType',
   'choices',
-  'totalEntries',
-  'hasMore',
   'currentScene',
 ] as const satisfies ReadonlyArray<keyof PlaythroughDetail>;
 
@@ -124,7 +124,7 @@ async function loadSessionOpenContext(
     return { ok: false, error: 'Invalid or expired session' };
   }
 
-  const rawDetail = await playthroughService.getById(request.playthroughId, identity.userId, 50);
+  const rawDetail = await playthroughService.getById(request.playthroughId, identity.userId);
   if (!rawDetail) {
     return { ok: false, error: 'Playthrough not found' };
   }
@@ -158,7 +158,7 @@ async function normalizeRestorableDetail(detail: PlaythroughDetail): Promise<Pla
     await coreEventLogService.load(detail.id),
     { sortBySequence: true },
   );
-  const fromEventLog = eventLogState
+  return eventLogState
     ? applyRestorableState(detail, {
         status: eventLogState.status,
         turn: eventLogState.turn,
@@ -170,20 +170,6 @@ async function normalizeRestorableDetail(detail: PlaythroughDetail): Promise<Pla
         choices: eventLogState.choices,
       })
     : detail;
-
-  if (eventLogState && fromEventLog.status !== 'waiting-input') return fromEventLog;
-  if (!eventLogState && !['waiting-input', 'generating'].includes(fromEventLog.status)) return fromEventLog;
-
-  const recentEntries = fromEventLog.hasMore
-    ? await playthroughService.loadLatestEntries(fromEventLog.id, 100)
-    : fromEventLog.entries;
-  const sessionState = resolveRestorableSessionState(fromEventLog, recentEntries);
-  const turnPatch =
-    !eventLogState && fromEventLog.status === 'generating' && sessionState.status === 'idle'
-      ? { turn: Math.max(0, fromEventLog.turn - 1) }
-      : {};
-
-  return applyRestorableState(fromEventLog, { ...sessionState, ...turnPatch });
 }
 
 function applyRestorableState(
@@ -228,9 +214,8 @@ async function attachSessionWrapper(ws: SessionSocket, context: SessionOpenConte
   return wrapper;
 }
 
-function isNewPlaythrough(detail: PlaythroughDetail): boolean {
-  const { turn, totalEntries } = detail;
-  return turn === 0 && totalEntries === 0;
+async function isNewPlaythrough(detail: PlaythroughDetail): Promise<boolean> {
+  return detail.turn === 0 && await coreEventLogService.getLastSequence(detail.id) === 0;
 }
 
 function sendConnected(ws: SessionSocket, playthroughId: string): void {
@@ -240,19 +225,19 @@ function sendConnected(ws: SessionSocket, playthroughId: string): void {
   });
 }
 
-function restoreExistingPlaythrough(
+async function restoreExistingPlaythrough(
   ws: SessionSocket,
   wrapper: ReturnType<typeof sessionManager.getOrCreate>,
   playthroughId: string,
   detail: PlaythroughDetail,
-  manifest: ScriptManifest,
-): void {
-  const readback = projectReadbackPage({
-    manifest,
-    pageEntries: detail.entries,
+): Promise<void> {
+  const history = coreEventHistoryFromEnvelopes(
+    await coreEventLogService.load(playthroughId),
+    { sortBySequence: true },
+  );
+  const readback = projectCoreEventHistoryPage(history, {
     offset: 0,
-    limit: detail.entries.length,
-    totalEntries: detail.totalEntries,
+    limit: 50,
   });
 
   sendJson(ws, {
@@ -274,8 +259,8 @@ async function connectSessionWebSocket(ws: SessionSocket, context: SessionOpenCo
   const wrapper = await attachSessionWrapper(ws, context);
   sendConnected(ws, context.playthroughId);
 
-  if (!isNewPlaythrough(context.detail)) {
-    restoreExistingPlaythrough(ws, wrapper, context.playthroughId, context.detail, context.manifest);
+  if (!await isNewPlaythrough(context.detail)) {
+    await restoreExistingPlaythrough(ws, wrapper, context.playthroughId, context.detail);
   }
 }
 
@@ -308,7 +293,7 @@ export const sessionRoutes = new Elysia({ prefix: '/api/sessions' })
   //
   // 行为：
   //   - 校验 auth + ownership
-  //   - playthrough.turn===0 && 无 entries → 新游戏，等客户端发 'start'
+  //   - playthrough.turn===0 && 无 CoreEvents → 新游戏，等客户端发 'start'
   //   - 否则 → 从 DB restore，自动推送 'restored' 快照
   // ============================================================================
   .ws('/ws', {

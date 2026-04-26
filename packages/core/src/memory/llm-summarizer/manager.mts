@@ -10,16 +10,19 @@
 
 import { estimateTokens } from '@ivn/core/tokens';
 import type { MemoryEntry, MemoryConfig } from '@ivn/core/types';
-import { buildMessagesFromEntries, capMessagesByBudgetFromTail } from '@ivn/core/messages-builder';
 import type { LLMClient } from '@ivn/core/llm-client';
+import {
+  buildMessagesFromCoreEventHistory,
+  capMessagesByBudgetFromTail,
+  projectCoreEventHistoryToMemoryEntries,
+} from '#internal/game-session/core-event-history';
+import type { CoreEventHistoryReader } from '#internal/game-session/core-event-history';
 import type {
   Memory,
   MemoryRetrieval,
   MemorySnapshot,
   RecentMessagesResult,
 } from '#internal/memory/types';
-import type { NarrativeHistoryReader } from '#internal/memory/narrative-reader';
-import { narrativeEntriesToMemoryEntries } from '#internal/memory/narrative-entry-mapping';
 import { makeLLMCompressFn, type CompressFn } from '#internal/memory/llm-summarizer/compress';
 
 // ============================================================================
@@ -27,7 +30,6 @@ import { makeLLMCompressFn, type CompressFn } from '#internal/memory/llm-summari
 // ============================================================================
 
 const SNAPSHOT_KIND_V2 = 'llm-summarizer-v2';
-const SNAPSHOT_KIND_V1 = 'llm-summarizer-v1';
 
 // ============================================================================
 // Internal state (v2)
@@ -60,7 +62,7 @@ export class LLMSummarizerMemory implements Memory {
   constructor(
     private readonly config: MemoryConfig,
     llmClient: Pick<LLMClient, 'generate'>,
-    private readonly reader?: NarrativeHistoryReader,
+    private readonly coreEventReader?: CoreEventHistoryReader,
   ) {
     this.compressFn = makeLLMCompressFn(llmClient);
   }
@@ -74,7 +76,7 @@ export class LLMSummarizerMemory implements Memory {
     tokenCount: number;
     tags?: string[];
   }): Promise<MemoryEntry> {
-    // v2 no-op：对话原件由 persistence 层写 narrative_entries，adapter 不再双写
+    // no-op：对话原件由 CoreEvent 日志持久化，adapter 不再双写。
     return {
       id: generateId(),
       turn: params.turn,
@@ -121,25 +123,25 @@ export class LLMSummarizerMemory implements Memory {
     opts: { budget: number },
   ): Promise<RecentMessagesResult> {
     const window = this.config.recencyWindow;
-    if (!this.reader) {
+    if (!this.coreEventReader) {
       return { messages: [], tokensUsed: 0 };
     }
-    const raw = await this.reader.readRecent({ limit: window });
-    // 详见 legacy/manager.ts 同名方法的注释 —— 开放 kinds + tail-based budget cap
-    // + messages-builder 投影 tool-call parts。两个 adapter 保持语义一致。
-    const projected = buildMessagesFromEntries(raw);
+    const raw = await this.coreEventReader.readRecent({
+      limit: Math.max(window * 8, 200),
+    });
+    const projected = buildMessagesFromCoreEventHistory(raw);
     return capMessagesByBudgetFromTail(projected, opts.budget);
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────────
 
   async maybeCompact(): Promise<void> {
-    if (!this.reader) return;
+    if (!this.coreEventReader) return;
 
-    const pending = await this.reader.readRange({
-      fromOrderIdx: this.state.compressedUpTo + 1,
+    const pending = await this.coreEventReader.readRange({
+      fromSequence: this.state.compressedUpTo + 1,
     });
-    const memoryEntries = narrativeEntriesToMemoryEntries(pending);
+    const memoryEntries = projectCoreEventHistoryToMemoryEntries(pending);
     const totalTokens = memoryEntries.reduce((s, e) => s + e.tokenCount, 0);
     if (totalTokens <= this.config.compressionThreshold) return;
 
@@ -149,11 +151,8 @@ export class LLMSummarizerMemory implements Memory {
     const summary = await this.compressFn(toCompress, this.config.compressionHints);
     this.state.summaries.push(summary);
 
-    const lastCompressedId = toCompress[toCompress.length - 1]?.id;
-    if (lastCompressedId) {
-      const orig = pending.find((e) => e.id === lastCompressedId);
-      if (orig) this.state.compressedUpTo = orig.orderIdx;
-    }
+    const lastCompressed = toCompress[toCompress.length - 1];
+    if (lastCompressed) this.state.compressedUpTo = lastCompressed.sequence;
   }
 
   async snapshot(): Promise<MemorySnapshot> {
@@ -174,16 +173,6 @@ export class LLMSummarizerMemory implements Memory {
       };
       return;
     }
-    if (snap.kind === SNAPSHOT_KIND_V1) {
-      // 老格式兼容：从 entries.pinned=true 提取
-      const oldEntries = (snap.entries ?? []) as MemoryEntry[];
-      this.state = {
-        summaries: [...((snap.summaries ?? []) as string[])],
-        pinned: structuredClone(oldEntries.filter((e) => e.pinned)),
-        compressedUpTo: -1,
-      };
-      return;
-    }
     throw new Error(
       `LLMSummarizerMemory cannot restore from kind: ${String(snap.kind)}. ` +
         `提示：adapter 间 snapshot 不可互换；切换 provider 需新建 playthrough。`,
@@ -197,12 +186,11 @@ export class LLMSummarizerMemory implements Memory {
   // ─── Internal helpers ──────────────────────────────────────────────
 
   private async readRecentMemoryEntries(): Promise<MemoryEntry[]> {
-    if (!this.reader) return [];
-    const raw = await this.reader.readRecent({
-      limit: Math.max(this.config.recencyWindow * 4, 100),
-      kinds: ['narrative', 'player_input'],
+    if (!this.coreEventReader) return [];
+    const raw = await this.coreEventReader.readRecent({
+      limit: Math.max(this.config.recencyWindow * 8, 200),
     });
-    return narrativeEntriesToMemoryEntries(raw);
+    return projectCoreEventHistoryToMemoryEntries(raw);
   }
 
   private keywordMatch(query: string, entries: MemoryEntry[]): MemoryEntry[] {

@@ -105,8 +105,7 @@ const MIGRATIONS_FOLDER = fileURLToPath(new URL('../../drizzle', import.meta.url
  *   3. 对比 DB 中已应用的最后一条迁移的 created_at
  *   4. 仅执行 folderMillis > lastDbMigration.created_at 的迁移
  *
- * 所以对一个"已经是新 schema 但没记录过迁移"的环境（比如线上刚跑过
- * migrate-player-identity.mts），需要先跑 bootstrap-drizzle-migrations
+ * 所以对一个"已经是新 schema 但没记录过迁移"的环境，需要先跑 bootstrap-drizzle-migrations
  * 把 0000 baseline 标记为已应用，否则 migrate() 会尝试重复执行 CREATE TABLE。
  */
 export async function runMigrations(): Promise<void> {

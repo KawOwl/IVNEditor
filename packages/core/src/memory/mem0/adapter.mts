@@ -44,7 +44,7 @@ import type {
   MemoryScope,
   RecentMessagesResult,
 } from '#internal/memory/types';
-// Memory Refactor v2：Mem0 不需要 NarrativeHistoryReader —— 云端做长期记忆检索，
+// Memory Refactor v2：Mem0 不需要 CoreEventHistoryReader —— 云端做长期记忆检索，
 // 本地 recentEntries 窗口承担 getRecentAsMessages。factory 传不传 reader 都行，
 // mem0 的 Mem0Memory constructor 不接受也不需要。
 import { entryToMem0Message, playthroughToMem0UserId } from '#internal/memory/mem0/mapping';
@@ -236,11 +236,11 @@ export class Mem0Memory implements Memory {
     const recent = this.state.recentEntries.slice(-window);
 
     // 注意：mem0 adapter 仅从本地 `recentEntries` 缓存读（MemoryEntry 只有
-    // {role, content: string}），没接 NarrativeHistoryReader，所以**本版本
+    // {role, content: string}），没接 CoreEventHistoryReader，所以**本版本
     // 还拿不到 tool-call 历史**。返回类型升级到 ModelMessage[] 让接口统一，
     // 但实际消息仍然只有纯文本 narration + player_input。
     //
-    // TODO（后续）：给 Mem0 也注入 NarrativeHistoryReader，用 messages-builder
+    // TODO（后续）：给 Mem0 也注入 CoreEventHistoryReader，用 messages-builder
     // 投影 tool-call parts，达到和 legacy / llm-summarizer 一致的行为。当前
     // Mem0 不是默认 provider，临时保留 string-only 行为不影响生产。
     const messages: RecentMessagesResult['messages'] = [];

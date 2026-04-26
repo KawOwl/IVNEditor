@@ -24,7 +24,7 @@ export async function createMemory(options: CreateMemoryOptions): Promise<Memory
 
   switch (kind) {
     case 'legacy':
-      return new LegacyMemory(options.config, truncatingCompressFn, options.reader);
+      return new LegacyMemory(options.config, truncatingCompressFn, options.coreEventReader);
 
     case 'llm-summarizer':
       if (!options.llmClient) {
@@ -32,7 +32,7 @@ export async function createMemory(options: CreateMemoryOptions): Promise<Memory
           'Memory provider "llm-summarizer" requires llmClient (game-session 必须在 createMemory 前构造 LLMClient)',
         );
       }
-      return new LLMSummarizerMemory(options.config, options.llmClient, options.reader);
+      return new LLMSummarizerMemory(options.config, options.llmClient, options.coreEventReader);
 
     case 'mem0':
       {

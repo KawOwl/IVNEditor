@@ -5,7 +5,12 @@ import {
   createRecordingSessionOutputSink,
   type RecordingSessionOutputSink,
 } from '#internal/game-session/recording-session-output';
-import { createCoreEventBus, type CoreEventBus } from '#internal/game-session/core-events';
+import {
+  createCoreEventBus,
+  type CoreEvent,
+  type CoreEventBus,
+  type CoreEventSink,
+} from '#internal/game-session/core-events';
 import { createSessionPersistenceCoreEventSink } from '#internal/game-session/persistence-core-event-sink';
 import type { GenerateOptions, GenerateResult, LLMClient, StepInfo } from '#internal/llm-client';
 import type { Memory } from '#internal/memory/types';
@@ -19,7 +24,8 @@ describe('GenerateTurnRuntime', () => {
     const memory = createMemoryDouble();
     const persistence = createPersistenceDouble();
     const recording = createRecordingSessionOutputSink();
-    const coreEventSink = createTestCoreEventSink(recording, persistence);
+    const coreEvents: CoreEvent[] = [];
+    const coreEventSink = createTestCoreEventSink(recording, persistence, coreEvents);
     const llmClient = createLLMDouble(async (options) => {
       options.onStepStart?.({ stepNumber: 0, batchId: 'batch-1', isFollowup: false });
       options.onTextChunk?.('<narration>雨停了。</narration>');
@@ -81,7 +87,7 @@ describe('GenerateTurnRuntime', () => {
     expect(memory.appendedTurns.map((turn) => turn.content)).toEqual([
       '<narration>雨停了。</narration>',
     ]);
-    expect(persistence.narrativeEntries).toEqual([
+    expect(narrativeSegments(coreEvents)).toEqual([
       {
         entry: {
           role: 'generate',
@@ -182,7 +188,8 @@ describe('GenerateTurnRuntime', () => {
     const memory = createMemoryDouble();
     const persistence = createPersistenceDouble();
     const recording = createRecordingSessionOutputSink();
-    const coreEventSink = createTestCoreEventSink(recording, persistence);
+    const coreEvents: CoreEvent[] = [];
+    const coreEventSink = createTestCoreEventSink(recording, persistence, coreEvents);
     const llmClient = createLLMDouble(async (options) => {
       options.onStepStart?.({ stepNumber: 0, batchId: 'batch-tool', isFollowup: false });
       options.onReasoningChunk?.('先切场景再写状态');
@@ -216,7 +223,7 @@ describe('GenerateTurnRuntime', () => {
     }).run();
     await coreEventSink.flushDurable();
 
-    expect(persistence.narrativeEntries).toEqual([
+    expect(narrativeSegments(coreEvents)).toEqual([
       {
         entry: {
           role: 'generate',
@@ -235,7 +242,8 @@ describe('GenerateTurnRuntime', () => {
     const memory = createMemoryDouble();
     const persistence = createPersistenceDouble();
     const recording = createRecordingSessionOutputSink();
-    const coreEventSink = createTestCoreEventSink(recording, persistence);
+    const coreEvents: CoreEvent[] = [];
+    const coreEventSink = createTestCoreEventSink(recording, persistence, coreEvents);
     const llmClient = createLLMDouble(async (options) => {
       options.onStepStart?.({ stepNumber: 0, batchId: 'batch-scene', isFollowup: false });
       options.onTextChunk?.('<narration>你走进屋子。</narration>');
@@ -295,7 +303,7 @@ describe('GenerateTurnRuntime', () => {
       choices: ['坐下', '打招呼'],
       batchId: 'batch-signal',
     });
-    expect(persistence.narrativeEntries).toEqual([
+    expect(narrativeSegments(coreEvents)).toEqual([
       {
         entry: {
           role: 'generate',
@@ -357,8 +365,16 @@ const emptyStateSchema: StateSchema = { variables: [] };
 function createTestCoreEventSink(
   recording: RecordingSessionOutputSink,
   persistence: SessionPersistence,
+  coreEvents: CoreEvent[] = [],
 ): CoreEventBus {
+  const capture: CoreEventSink = {
+    publish(event) {
+      coreEvents.push(structuredClone(event));
+    },
+  };
+
   return createCoreEventBus([
+    capture,
     createSessionPersistenceCoreEventSink(persistence),
     recording,
   ]);
@@ -427,27 +443,34 @@ function memoryEntryFrom(params: AppendedTurn): MemoryEntry {
 }
 
 interface PersistenceDouble extends SessionPersistence {
-  readonly narrativeEntries: Array<Parameters<SessionPersistence['onNarrativeSegmentFinalized']>[0]>;
   readonly generateCompletes: Array<Parameters<SessionPersistence['onGenerateComplete']>[0]>;
 }
 
 function createPersistenceDouble(): PersistenceDouble {
-  const narrativeEntries: PersistenceDouble['narrativeEntries'] = [];
   const generateCompletes: PersistenceDouble['generateCompletes'] = [];
 
   return {
-    narrativeEntries,
     generateCompletes,
     async onGenerateStart() {},
-    async onNarrativeSegmentFinalized(data) {
-      narrativeEntries.push(data);
-    },
     async onGenerateComplete(data) {
       generateCompletes.push(data);
     },
     async onWaitingInput() {},
     async onReceiveComplete() {},
   };
+}
+
+function narrativeSegments(events: readonly CoreEvent[]): Array<{
+  entry: Extract<CoreEvent, { type: 'narrative-segment-finalized' }>['entry'];
+  batchId: string | null;
+}> {
+  return events
+    .filter((event): event is Extract<CoreEvent, { type: 'narrative-segment-finalized' }> =>
+      event.type === 'narrative-segment-finalized')
+    .map((event) => ({
+      entry: event.entry,
+      batchId: event.batchId,
+    }));
 }
 
 function createLLMDouble(

@@ -1,6 +1,6 @@
 /**
- * 一次性诊断脚本：查 llm_configs 现状 + 翻 thinking 模式开关 + 看最新 playthrough entries。
- * 运行：bun --env-file=.env scripts/probe-llm-config.mts [enable|disable|show|entries]
+ * 一次性诊断脚本：查 llm_configs 现状 + 翻 thinking 模式开关 + 看最新 playthrough CoreEvents。
+ * 运行：bun --env-file=.env scripts/probe-llm-config.mts [enable|disable|show|events]
  */
 
 import { Client } from 'pg';
@@ -26,8 +26,8 @@ if (action === 'enable') {
   );
   console.log('reverted to default on rows:');
   console.log(JSON.stringify(r.rows, null, 2));
-} else if (action === 'entries') {
-  // 最新 playthrough 的 narrative_entries
+} else if (action === 'events') {
+  // 最新 playthrough 的 core_event_envelopes
   const ptId = process.argv[3];
   if (!ptId) {
     const latest = await c.query(`SELECT id FROM playthroughs ORDER BY created_at DESC LIMIT 1`);
@@ -35,15 +35,15 @@ if (action === 'enable') {
   }
   const finalPtId = ptId ?? (await c.query(`SELECT id FROM playthroughs ORDER BY created_at DESC LIMIT 1`)).rows[0].id;
   const r = await c.query(
-    `SELECT id, kind, batch_id, order_idx, content, reasoning IS NULL AS reasoning_null, length(reasoning) AS reasoning_len, payload
-     FROM narrative_entries
+    `SELECT sequence, occurred_at, event->>'type' AS type, event
+     FROM core_event_envelopes
      WHERE playthrough_id = $1
-     ORDER BY order_idx`,
+     ORDER BY sequence`,
     [finalPtId],
   );
-  console.log(`narrative_entries for ${finalPtId}: ${r.rows.length} rows`);
+  console.log(`core_event_envelopes for ${finalPtId}: ${r.rows.length} rows`);
   for (const row of r.rows) {
-    console.log(`  ${row.order_idx}: ${row.kind}, batch=${row.batch_id?.slice(0, 8)}, reasoning_null=${row.reasoning_null}, reasoning_len=${row.reasoning_len}, content="${String(row.content ?? '').slice(0, 60).replace(/\n/g, '\\n')}"`);
+    console.log(`  ${row.sequence}: ${row.type} at ${row.occurred_at}`);
   }
 } else {
   const r = await c.query(

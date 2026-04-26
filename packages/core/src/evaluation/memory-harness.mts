@@ -2,9 +2,9 @@
  * Memory evaluation harness
  *
  * Runs deterministic generate/receive scripts through the core generate runtime
- * with a CoreEvent-native session output recorder and an in-memory narrative history store.
- * This gives memory providers the same canonical narrative_entries reader shape
- * they see in server runtime, without WebSocket, DOM, or live LLM calls.
+ * with a CoreEvent-native session output recorder. Memory providers read the
+ * same canonical CoreEvent history shape they see in server runtime, without
+ * WebSocket, DOM, or live LLM calls.
  */
 
 import { computeFocus } from '#internal/focus';
@@ -30,6 +30,11 @@ import {
   isSessionPersistenceCoreEvent,
 } from '#internal/game-session/persistence-core-event-sink';
 import { createRecordingCoreEventSink } from '#internal/game-session/recording-core-events';
+import type { RecordingCoreEventSink } from '#internal/game-session/recording-core-events';
+import {
+  coreEventHistoryFromEnvelopes,
+  type CoreEventHistoryReader,
+} from '#internal/game-session/core-event-history';
 import {
   createRecordingSessionEmitter,
   type RecordedSessionOutput,
@@ -46,9 +51,7 @@ import type {
   Memory,
   MemorySnapshot,
 } from '#internal/memory/types';
-import type { NarrativeHistoryReader } from '#internal/memory/narrative-reader';
 import { buildParserManifest, type ParserManifest } from '#internal/narrative-parser-v2';
-import type { EntryKind, NarrativeEntry } from '#internal/persistence-entry';
 import { resolveRuntimeProtocolVersion } from '#internal/protocol-version';
 import { StateStore } from '#internal/state-store';
 import { estimateTokens } from '#internal/tokens';
@@ -139,7 +142,6 @@ export interface LiveMemoryEvaluationOptions {
 }
 
 export interface MemoryEvaluationPersistenceSnapshot {
-  readonly entries: ReadonlyArray<NarrativeEntry>;
   readonly generateStarts: ReadonlyArray<number>;
   readonly generateCompletes: ReadonlyArray<GenerateCompleteRecord>;
   readonly waitingInputs: ReadonlyArray<WaitingInputRecord>;
@@ -185,7 +187,7 @@ export interface MemoryEvaluationComparison {
   readonly turnsRun: number;
   readonly generatedTexts: ReadonlyArray<string>;
   readonly inputRequestCount: number;
-  readonly narrativeEntryCount: number;
+  readonly contentEventCount: number;
   readonly memoryKind: string;
   readonly memorySummaryCount: number;
   readonly compressionCallCount: number;
@@ -230,6 +232,7 @@ export async function runMemoryEvaluationCase(options: {
   const recording = createRecordingSessionOutputSink();
   const coreRecorder = createRecordingCoreEventSink({ playthroughId });
   const journal = createInMemoryEvaluationJournal(playthroughId);
+  const coreEventReader = createRecorderHistoryReader(coreRecorder);
   const harnessCoreEventSink = createHarnessCoreEventSink(
     recording,
     coreRecorder,
@@ -244,7 +247,7 @@ export async function runMemoryEvaluationCase(options: {
     scenario,
     variant,
     playthroughId,
-    reader: journal.reader,
+    coreEventReader,
     llmClient,
   });
 
@@ -386,6 +389,7 @@ export async function runLiveMemoryEvaluationCase(options: {
   const recording = createRecordingSessionOutputSink();
   const coreRecorder = createRecordingCoreEventSink({ playthroughId });
   const journal = createInMemoryEvaluationJournal(playthroughId);
+  const coreEventReader = createRecorderHistoryReader(coreRecorder);
   const harnessCoreEventSink = createHarnessCoreEventSink(
     recording,
     coreRecorder,
@@ -397,7 +401,7 @@ export async function runLiveMemoryEvaluationCase(options: {
     scenario,
     variant,
     playthroughId,
-    reader: journal.reader,
+    coreEventReader,
     llmClient,
   });
 
@@ -599,7 +603,7 @@ function createVariantMemory(options: {
   readonly scenario: MemoryEvaluationScenario;
   readonly variant: MemoryEvaluationVariant;
   readonly playthroughId: string;
-  readonly reader: NarrativeHistoryReader;
+  readonly coreEventReader: CoreEventHistoryReader;
   readonly llmClient: Pick<LLMClient, 'generate'>;
 }): Promise<Memory> {
   const { scenario, variant } = options;
@@ -613,7 +617,7 @@ function createVariantMemory(options: {
     config: variant.memoryConfig,
     llmClient: options.llmClient,
     mem0ApiKey: variant.mem0ApiKey,
-    reader: options.reader,
+    coreEventReader: options.coreEventReader,
   });
 }
 
@@ -949,7 +953,6 @@ function createLLMCall(
 }
 
 class InMemoryEvaluationJournal {
-  private readonly entries: NarrativeEntry[] = [];
   private readonly generateStarts: number[] = [];
   private readonly generateCompletes: GenerateCompleteRecord[] = [];
   private readonly waitingInputs: WaitingInputRecord[] = [];
@@ -961,17 +964,6 @@ class InMemoryEvaluationJournal {
       this.generateStarts.push(turn);
     },
 
-    onNarrativeSegmentFinalized: async (data) => {
-      this.appendEntry({
-        role: data.entry.role,
-        kind: 'narrative',
-        content: data.entry.content,
-        reasoning: data.entry.reasoning ?? null,
-        finishReason: data.entry.finishReason ?? null,
-        batchId: data.batchId ?? null,
-      });
-    },
-
     onGenerateComplete: async (data) => {
       this.generateCompletes.push(cloneValue(data));
     },
@@ -980,38 +972,8 @@ class InMemoryEvaluationJournal {
       this.waitingInputs.push(cloneValue(data));
     },
 
-    onSignalInputRecorded: async (data) => {
-      this.appendEntry({
-        role: 'generate',
-        kind: 'signal_input',
-        content: data.hint,
-        payload: { choices: [...data.choices] },
-        batchId: data.batchId ?? null,
-      });
-    },
-
-    onToolCallRecorded: async (data) => {
-      this.appendEntry({
-        role: 'generate',
-        kind: 'tool_call',
-        content: data.toolName,
-        payload: {
-          input: cloneValue(data.input),
-          output: cloneValue(data.output),
-        },
-        batchId: data.batchId,
-      });
-    },
-
     onReceiveComplete: async (data) => {
       this.receiveCompletes.push(cloneValue(data));
-      this.appendEntry({
-        role: data.entry.role,
-        kind: 'player_input',
-        content: data.entry.content,
-        payload: cloneValue(data.payload ?? { inputType: 'freetext' }),
-        batchId: data.batchId ?? null,
-      });
     },
 
     onScenarioFinished: async (data) => {
@@ -1019,26 +981,8 @@ class InMemoryEvaluationJournal {
     },
   };
 
-  readonly reader: NarrativeHistoryReader = {
-    readRecent: async (opts) =>
-      this.entries
-        .filter((entry) => matchesKind(entry, opts.kinds))
-        .slice(-opts.limit)
-        .map(copyNarrativeEntry),
-
-    readRange: async (opts) =>
-      this.entries
-        .filter((entry) =>
-          (opts.fromOrderIdx === undefined || entry.orderIdx >= opts.fromOrderIdx) &&
-          (opts.toOrderIdx === undefined || entry.orderIdx <= opts.toOrderIdx))
-        .map(copyNarrativeEntry),
-  };
-
-  constructor(private readonly playthroughId: string) {}
-
   getSnapshot(): MemoryEvaluationPersistenceSnapshot {
     return {
-      entries: this.entries.map(copyNarrativeEntry),
       generateStarts: [...this.generateStarts],
       generateCompletes: this.generateCompletes.map(cloneValue),
       waitingInputs: this.waitingInputs.map(cloneValue),
@@ -1046,35 +990,11 @@ class InMemoryEvaluationJournal {
       scenarioFinished: this.scenarioFinished.map(cloneValue),
     };
   }
-
-  private appendEntry(data: {
-    readonly role: string;
-    readonly kind: EntryKind;
-    readonly content: string;
-    readonly payload?: Record<string, unknown> | null;
-    readonly reasoning?: string | null;
-    readonly finishReason?: string | null;
-    readonly batchId?: string | null;
-  }): void {
-    const orderIdx = this.entries.length;
-    this.entries.push({
-      id: `${this.playthroughId}-entry-${orderIdx + 1}`,
-      playthroughId: this.playthroughId,
-      role: data.role,
-      kind: data.kind,
-      content: data.content,
-      payload: data.payload ? cloneValue(data.payload) : null,
-      reasoning: data.reasoning ?? null,
-      finishReason: data.finishReason ?? null,
-      batchId: data.batchId ?? null,
-      orderIdx,
-      createdAt: new Date(orderIdx),
-    });
-  }
 }
 
 function createInMemoryEvaluationJournal(playthroughId: string): InMemoryEvaluationJournal {
-  return new InMemoryEvaluationJournal(playthroughId);
+  void playthroughId;
+  return new InMemoryEvaluationJournal();
 }
 
 function createComparison(run: MemoryEvaluationRun): MemoryEvaluationComparison {
@@ -1084,7 +1004,7 @@ function createComparison(run: MemoryEvaluationRun): MemoryEvaluationComparison 
     turnsRun: run.turnsRun,
     generatedTexts: run.recording.streamingEntries.map((entry) => entry.text),
     inputRequestCount: run.recording.inputRequests.length,
-    narrativeEntryCount: run.persistence.entries.length,
+    contentEventCount: countContentEvents(run.coreEvents),
     memoryKind: run.memoryKind,
     memorySummaryCount: countSnapshotSummaries(run.memorySnapshot),
     compressionCallCount: run.llmCalls.filter((call) => call.kind === 'compress').length,
@@ -1103,8 +1023,29 @@ function normalizeChunks(chunks: string | ReadonlyArray<string> | undefined): st
   return typeof chunks === 'string' ? [chunks] : [...chunks];
 }
 
-function matchesKind(entry: NarrativeEntry, kinds: ReadonlyArray<EntryKind> | undefined): boolean {
-  return kinds === undefined || kinds.includes(entry.kind);
+function createRecorderHistoryReader(recorder: RecordingCoreEventSink): CoreEventHistoryReader {
+  const readAll = () => coreEventHistoryFromEnvelopes(recorder.getEnvelopes(), {
+    sortBySequence: true,
+  });
+
+  return {
+    readRecent: async (opts) => readAll().slice(-Math.max(0, opts.limit)),
+    readRange: async (opts) => readAll().filter((item) =>
+      (opts.fromSequence === undefined || item.sequence >= opts.fromSequence) &&
+      (opts.toSequence === undefined || item.sequence <= opts.toSequence)),
+  };
+}
+
+function countContentEvents(events: ReadonlyArray<CoreEvent>): number {
+  return events.filter((event) =>
+    event.type === 'narrative-segment-finalized' ||
+    event.type === 'signal-input-recorded' ||
+    event.type === 'player-input-recorded' ||
+    (
+      event.type === 'tool-call-finished' &&
+      event.toolName !== 'signal_input_needed' &&
+      event.toolName !== 'end_scenario'
+    )).length;
 }
 
 function countSnapshotSummaries(snapshot: MemorySnapshot): number {
@@ -1139,14 +1080,6 @@ function copyLLMCall(call: ScriptedLLMCall): ScriptedLLMCall {
     messages: call.messages.map((message) => ({ ...message })),
     toolNames: [...call.toolNames],
     outputText: call.outputText,
-  };
-}
-
-function copyNarrativeEntry(entry: NarrativeEntry): NarrativeEntry {
-  return {
-    ...entry,
-    payload: entry.payload ? cloneValue(entry.payload) : null,
-    createdAt: new Date(entry.createdAt.getTime()),
   };
 }
 
