@@ -306,6 +306,18 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   private degradesThisTurn: DegradeEventV2[] = [];
   /** turn 起始时的 scene 快照——rewrite replay 时回滚到这里 */
   private turnInitialScene: SceneState = { background: null, sprites: [] };
+  /**
+   * 整个 turn 累计 raw text（改进 B，2026-04-26）。
+   *
+   * 跟 currentNarrativeBuffer 平行 —— buffer 在 signal_input_needed 触发的
+   * recordPendingSignal 里被 preflush 清空，但本字段只增不减，turn 结束才 reset。
+   * 让 rewrite 看到完整 turn 的 raw（含 preflush 已落库的那段），不被切断。
+   *
+   * 仅 in-memory，不落库。
+   */
+  private currentTurnRawText = '';
+  /** rewrite 是否已应用（用于 persistGenerateResult 选择 reason） */
+  private rewriteAppliedThisTurn = false;
 
   constructor(private readonly deps: GenerateTurnRuntimeDeps) {
     this.turnId = toTurnId(deps.turn);
@@ -419,6 +431,8 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     this.sentenceCountThisTurn = 0;
     this.scratchCountThisTurn = 0;
     this.degradesThisTurn = [];
+    this.currentTurnRawText = '';
+    this.rewriteAppliedThisTurn = false;
     // 记 turn 起始 scene；rewrite 替换时 currentScene 要回滚到这里再重 feed parser
     this.turnInitialScene = copyScene(this.currentScene);
     this.publish({ type: 'assistant-message-started', turnId: this.turnId });
@@ -444,6 +458,9 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       prepareStepSystem: prepared.prepareStepSystem,
       onTextChunk: (chunk) => {
         this.currentNarrativeBuffer += chunk;
+        // 改进 B：currentTurnRawText 跟 buffer 平行累加，但 preflush 不清空
+        // 让 rewrite 看到完整 turn 的 raw（含 preflush 已落库那段）
+        this.currentTurnRawText += chunk;
         this.publish({
           type: 'assistant-text-delta',
           turnId: this.turnId,
@@ -533,7 +550,10 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     const invoke = this.deps.rewriter;
     if (!invoke) return;
     if (!this.deps.parserManifest) return;
-    const rawText = this.currentNarrativeBuffer;
+    // 改进 B：rewrite 用整 turn 的 raw（含被 preflush 切走的部分），不只用
+    // currentNarrativeBuffer。这样 trace 227cb1d0 那种 prose 在主路径中段
+    // 被 preflush 落库后仍然能进入 rewrite 处理。
+    const rawText = this.currentTurnRawText;
     if (rawText.trim().length === 0) return;
 
     const looksBroken =
@@ -608,6 +628,10 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     ) {
       this.replayWithRewrittenText(rewriteResult.text, traceHandle);
       applied = true;
+      // 改进 B：标记 turn 已被 rewrite 替换；persistGenerateResult 会落
+      // reason='rewrite-applied' 替代 'generate-complete'，messages-builder
+      // 投影时跳过同 turn 内其他 segment（含 'signal-input-preflush' 那条 prose）
+      this.rewriteAppliedThisTurn = true;
     }
 
     this.publish({
@@ -705,12 +729,18 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     }
 
     if (this.currentNarrativeBuffer) {
+      // 改进 B：rewrite 已应用时落 reason='rewrite-applied'，messages-builder
+      // 看到此 reason 会跳过同 turn 内其他 segment（含 'signal-input-preflush'
+      // 那条 prose）—— 让下一轮 LLM 看到的 history 只有 rewrite 后的版本。
+      const reason = this.rewriteAppliedThisTurn
+        ? ('rewrite-applied' as const)
+        : ('generate-complete' as const);
       await this.publishDurable({
         type: 'narrative-segment-finalized',
         turnId: this.turnId,
         stepId: this.currentStepId,
         batchId: toBatchId(this.currentStepBatchId),
-        reason: 'generate-complete',
+        reason,
         entry: {
           role: 'generate',
           content: this.currentNarrativeBuffer,

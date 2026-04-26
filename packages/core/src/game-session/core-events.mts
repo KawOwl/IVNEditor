@@ -128,7 +128,24 @@ export type GenerateCoreEvent =
 export type NarrativeSegmentFinalizedReason =
   | 'generate-complete'
   | 'signal-input-preflush'
-  | 'step-reasoning';
+  | 'step-reasoning'
+  /**
+   * narrative-rewrite 替换层落库的"权威"段（改进 B，2026-04-26）。
+   *
+   * rewrite applied=true 时，runRewriteIfEnabled 用 currentTurnRawText（包含
+   * 主路径所有 onTextChunk，不被 preflush 切断）调 LLM 重写，输出**整个 turn**
+   * 的合规版本，落库时 reason='rewrite-applied'。
+   *
+   * messages-builder 投影时遇到此 reason 的 segment：
+   *   1. 跳过同 turnId 内**所有**其他 narrative-segment-finalized
+   *   （含 'signal-input-preflush' 落的 prose 段、'generate-complete' 落的尾段）
+   *   2. 只用 'rewrite-applied' 段的 content 投成 assistant message
+   *
+   * 这样 history 里 turn 内只剩 rewrite 后的 tagged 版本，下一轮 LLM 看到
+   * 的 history 干净 —— 修复 trace 227cb1d0 暴露的 prose 污染下一轮
+   * in-context 问题。
+   */
+  | 'rewrite-applied';
 
 export type NarrativeCoreEvent =
   | {

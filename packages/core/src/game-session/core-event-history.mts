@@ -135,9 +135,30 @@ export function projectCoreEventHistoryPage(
 export function projectCoreEventHistoryToMemoryEntries(
   history: readonly CoreEventHistoryItem[],
 ): CoreEventMemoryEntry[] {
-  return sortHistory(history).flatMap((item): CoreEventMemoryEntry[] => {
+  const sorted = sortHistory(history);
+  // 改进 B（2026-04-26）：跟 buildMessagesFromCoreEventHistory 一样，被
+  // rewrite 替换过的 turn 只用 'rewrite-applied' 那条 segment 作为权威；
+  // 同 turn 内其他 reason（preflush / generate-complete）被废弃，不进 memory。
+  const rewriteAppliedTurns = new Set<string>();
+  for (const item of sorted) {
+    if (
+      item.event.type === 'narrative-segment-finalized' &&
+      item.event.reason === 'rewrite-applied'
+    ) {
+      rewriteAppliedTurns.add(item.event.turnId as unknown as string);
+    }
+  }
+
+  return sorted.flatMap((item): CoreEventMemoryEntry[] => {
     const { event, occurredAt, sequence } = item;
     if (event.type === 'narrative-segment-finalized' && event.entry.content) {
+      // 改进 B：rewrite 替换过的 turn 跳过非 'rewrite-applied' 的 segment
+      if (
+        rewriteAppliedTurns.has(event.turnId as unknown as string) &&
+        event.reason !== 'rewrite-applied'
+      ) {
+        return [];
+      }
       return [{
         id: `core-event-${sequence}`,
         sequence,
@@ -220,6 +241,21 @@ function groupCoreEventsForMessages(
   const groups: MessageGroup[] = [];
   let active: AssistantGroup | null = null;
 
+  // 改进 B（2026-04-26）：第一遍扫出哪些 turn 被 rewrite 替换过。
+  // 这些 turn 内的 'signal-input-preflush' / 'generate-complete' 等 reason
+  // 的 segment 视为"已废弃"——只用 'rewrite-applied' 那条作为权威 history。
+  // 否则下一轮 LLM 看到 prose（preflush 落库的）+ tagged（rewrite-applied
+  // 落库的）拼接版本，prose 部分会污染 in-context。
+  const rewriteAppliedTurns = new Set<string>();
+  for (const item of history) {
+    if (
+      item.event.type === 'narrative-segment-finalized' &&
+      item.event.reason === 'rewrite-applied'
+    ) {
+      rewriteAppliedTurns.add(item.event.turnId as unknown as string);
+    }
+  }
+
   const flush = () => {
     if (!active) return;
     groups.push(active);
@@ -243,6 +279,13 @@ function groupCoreEventsForMessages(
     const { event, sequence } = item;
     switch (event.type) {
       case 'narrative-segment-finalized': {
+        // 改进 B：rewrite 替换过的 turn，跳过非 'rewrite-applied' 的 segment
+        if (
+          rewriteAppliedTurns.has(event.turnId as unknown as string) &&
+          event.reason !== 'rewrite-applied'
+        ) {
+          break;
+        }
         const group = ensureAssistant(messageGroupKey(event.batchId, sequence));
         group.narrativeText += event.entry.content;
         group.reasoningText += event.entry.reasoning ?? '';

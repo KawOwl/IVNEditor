@@ -195,6 +195,118 @@ describe('CoreEvent history projection', () => {
       { role: 'receive', content: '玩家回答', sequence: 11, turn: 2 },
     ]);
   });
+
+  // 改进 B（2026-04-26）：narrative-rewrite 替换语义。trace 227cb1d0 暴露
+  // signal-input-preflush 落库的 prose 段污染下一轮 history → 让 'rewrite-applied'
+  // reason 作为权威段，同 turn 内其他 reason 投影时跳过。
+  describe('rewrite-applied 替换语义', () => {
+    it('messages-builder: 同 turn 内 preflush + rewrite-applied → 仅保留 rewrite-applied', () => {
+      const messages = buildMessagesFromCoreEventHistory([
+        // 主 step 输出 prose，被 signal_input preflush 落库
+        item(1, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(4),
+          stepId: null,
+          batchId: batchId('batch-4-main'),
+          reason: 'signal-input-preflush',
+          entry: { role: 'generate', content: '原 prose 段（应被覆盖）' },
+          sceneAfter: emptyScene,
+        }),
+        // rewrite 跑完后落库的整 turn 重写版
+        item(2, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(4),
+          stepId: null,
+          batchId: batchId('batch-4-main'),
+          reason: 'rewrite-applied',
+          entry: { role: 'generate', content: '<narration>rewrite 后版本</narration>' },
+          sceneAfter: emptyScene,
+        }),
+      ]);
+      const assistantContent = JSON.stringify(messages[0]?.content ?? '');
+      expect(assistantContent).toContain('rewrite 后版本');
+      expect(assistantContent).not.toContain('原 prose 段');
+    });
+
+    it('memory-entries: 同 turn 内 preflush + rewrite-applied → 仅保留 rewrite-applied', () => {
+      const entries = projectCoreEventHistoryToMemoryEntries([
+        item(1, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(4),
+          stepId: null,
+          batchId: batchId('batch-4-main'),
+          reason: 'signal-input-preflush',
+          entry: { role: 'generate', content: '原 prose 段' },
+          sceneAfter: emptyScene,
+        }),
+        item(2, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(4),
+          stepId: null,
+          batchId: batchId('batch-4-main'),
+          reason: 'rewrite-applied',
+          entry: { role: 'generate', content: '<narration>rewrite 版</narration>' },
+          sceneAfter: emptyScene,
+        }),
+      ]);
+      expect(entries.map((e) => e.content)).toEqual([
+        '<narration>rewrite 版</narration>',
+      ]);
+    });
+
+    it('rewrite-applied 不影响其他 turn 的 segment（只覆盖同 turn）', () => {
+      const messages = buildMessagesFromCoreEventHistory([
+        item(1, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(3),
+          stepId: null,
+          batchId: batchId('batch-3'),
+          reason: 'generate-complete',
+          entry: { role: 'generate', content: 'turn 3 内容' },
+          sceneAfter: emptyScene,
+        }),
+        item(2, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(4),
+          stepId: null,
+          batchId: batchId('batch-4'),
+          reason: 'rewrite-applied',
+          entry: { role: 'generate', content: 'turn 4 rewrite 版' },
+          sceneAfter: emptyScene,
+        }),
+      ]);
+      const all = JSON.stringify(messages);
+      expect(all).toContain('turn 3 内容');
+      expect(all).toContain('turn 4 rewrite 版');
+    });
+
+    it('turn 没有 rewrite-applied → 所有 reason 段正常累加（向后兼容）', () => {
+      const messages = buildMessagesFromCoreEventHistory([
+        item(1, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(5),
+          stepId: null,
+          batchId: batchId('batch-5'),
+          reason: 'signal-input-preflush',
+          entry: { role: 'generate', content: 'pre' },
+          sceneAfter: emptyScene,
+        }),
+        item(2, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(5),
+          stepId: null,
+          batchId: batchId('batch-5'),
+          reason: 'generate-complete',
+          entry: { role: 'generate', content: 'post' },
+          sceneAfter: emptyScene,
+        }),
+      ]);
+      // 没 rewrite-applied → 两段都进，按 batchId group 合并 narrativeText
+      const all = JSON.stringify(messages);
+      expect(all).toContain('pre');
+      expect(all).toContain('post');
+    });
+  });
 });
 
 function item(sequence: number, event: CoreEvent): CoreEventHistoryItem {
