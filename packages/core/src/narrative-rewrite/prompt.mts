@@ -37,8 +37,11 @@ const REWRITER_HARD_CONSTRAINTS =
   `1. **不补剧情**：不新增对白、动作、场景、角色。原稿里没有的内容**绝对不能**出现在你的输出。\n` +
   `2. **不改剧情走向**：人物关系、情绪、决定都按原稿。\n` +
   `3. **允许微调措辞**：拆"他说A，做了B，又说C"成 \`<dialogue>\` + \`<narration>\` + \`<dialogue>\` 时，可以小幅润色衔接，但不能改变意思。\n` +
-  `4. **第一个字符必须是 \`<\`**：不要任何前置说明、致歉、解释。\n` +
-  `5. **整段 IVN XML，不要任何注释/markdown 代码块/解释文字**。\n` +
+  `4. **不补视觉子标签**：绝对不要新增原稿里没有的 \`<background/>\` / \`<sprite/>\` / \`<stage/>\`。视觉切换是 GM 的语义决策（哪张背景图、角色 mood 是什么、是否清场）—— rewriter 不知道场景 id 对应实际渲染的哪张图、不知道角色当前应该是什么 mood。凭白名单 id 字面猜会幻觉出错误场景（例如 \`dark_s01\` 跟 \`dark_s02\` 是不同图，rewriter 选错玩家会看到场景跳变）。原稿没写就保持没写——视觉继承规则会自动按上一单元延续。\n` +
+  `   - ❌ raw \`<narration>你踏入巷子的阴影里。</narration>\` → 错误重写 \`<narration><background scene="dark_s01" />你踏入巷子的阴影里。</narration>\`（凭 id 名称猜的，可能跟玩家上一轮场景冲突）\n` +
+  `   - ✅ raw \`<narration>你踏入巷子的阴影里。</narration>\` → 保持原样 \`<narration>你踏入巷子的阴影里。</narration>\`（继承会自动延续上一单元的背景）\n` +
+  `5. **第一个字符必须是 \`<\`**：不要任何前置说明、致歉、解释。\n` +
+  `6. **整段 IVN XML，不要任何注释/markdown 代码块/解释文字**。\n` +
   `\n` +
   `# IVN XML 协议\n`;
 
@@ -159,12 +162,21 @@ function formatSentenceMeta(s: { kind: string; pf?: { speaker?: string } }): str
 }
 
 function formatManifest(input: RewriteInput): string {
-  // 把精简版 manifest 转成 main-path 同款的 buildEngineRulesWhitelistV2 输入
-  // 以便 prompt 里白名单段跟主路径**字节同款**——LLM 看到的格式完全一致。
-  const characters = input.manifest.characterIds.map((id) => ({
-    id,
-    sprites: (input.manifest.moodsByCharacter[id] ?? []).map((moodId) => ({ id: moodId })),
-  }));
-  const backgrounds = input.manifest.backgroundIds.map((id) => ({ id }));
-  return buildEngineRulesWhitelistV2(characters, backgrounds).trimStart();
+  // 故意只给 character id 列表 —— rewriter 实际只用它判断 dialogue speaker 是否
+  // 在白名单内（合规白名单角色 vs ad-hoc）。
+  //
+  // **不给** background id / mood id 列表——rewriter 看到 hard constraint 4
+  // 知道不该补 \`<background/>\` / \`<sprite/>\` 视觉子标签，给 id 列表反而诱导
+  // "我能挑一个白名单 id 加进去"的幻觉（trace f6a68324 turn 5：rewriter 凭
+  // \`dark_s01\` 字面猜测加了一个 background，但它不知道这个 id 对应实际哪张图）。
+  //
+  // TODO：以后如果 rewriter 职责扩展到"删非法 sprite/bg 子标签"或"按上下文
+  // 校正白名单内的 id"，可能需要把这些列表加回来。当前职责仅 reformat 容器
+  // 分配 + ad-hoc speaker 修正，不需要视觉信息。
+  void buildEngineRulesWhitelistV2; // 暂未使用，import 保留以便后续加回 background/mood
+  const charIds = input.manifest.characterIds;
+  if (charIds.length === 0) {
+    return '- 角色 id（白名单）：（剧本未定义任何角色）';
+  }
+  return `- 角色 id（白名单）：${charIds.map((id) => `\`${id}\``).join(', ')}`;
 }

@@ -325,6 +325,20 @@ describe('rewriter system prompt 同源 engine-rules', () => {
     expect(sys).toContain('不改剧情走向');
     expect(sys).toContain('允许微调措辞');
   });
+
+  // 修复 trace f6a68324 (session 25c6863d turn 5)：rewriter 凭 dark_s01 字面
+  // 主动补 <background scene="dark_s01" />，违反"不补剧情"约束。加显式硬约束。
+  it('rewriter 硬约束含"不补视觉子标签"（含 dark_s01 反例）', () => {
+    const sys = buildRewriteSystemPrompt();
+    expect(sys).toContain('不补视觉子标签');
+    // 必须明确列出三种视觉子标签
+    expect(sys).toContain('<background/>');
+    expect(sys).toContain('<sprite/>');
+    expect(sys).toContain('<stage/>');
+    // 包含 trace f6a68324 那种"凭 id 名称猜"的反例 + 正例
+    expect(sys).toContain('dark_s01');
+    expect(sys).toMatch(/继承.*延续|延续.*上一单元/);
+  });
 });
 
 // 改进 C1（2026-04-26）：parser degrade 段加软提醒 + 判断要点
@@ -382,5 +396,45 @@ describe('rewriter user message — parser degrade 软提醒', () => {
     // 没有强制修复指令文字（避免误判）
     expect(msg).not.toContain('必须修复');
     expect(msg).not.toContain('必修');
+  });
+
+  // 修复 trace f6a68324：manifest 段以前给 rewriter background id 列表
+  // （从 buildEngineRulesWhitelistV2 reuse），rewriter 看到诱导幻觉。
+  // 改成只给 character id。
+  it('user message manifest 段只给 character id，不含 background / mood', () => {
+    const msg = buildRewriteUserMessage({
+      rawText: '<narration>x</narration>',
+      parserView: { sentences: [], scratchCount: 0, degrades: [], looksBroken: false },
+      manifest: {
+        characterIds: ['sakuya', 'aonkei'],
+        backgroundIds: ['classroom_evening', 'dark_s01', 'dark_s02'],
+        moodsByCharacter: {
+          sakuya: ['smiling', 'thinking'],
+          aonkei: ['neutral'],
+        },
+      },
+      turn: 1,
+    });
+    // character id **必须**有
+    expect(msg).toContain('sakuya');
+    expect(msg).toContain('aonkei');
+    // background id **必须没有**（防止 rewriter 凭白名单 id 字面猜）
+    expect(msg).not.toContain('classroom_evening');
+    expect(msg).not.toContain('dark_s01');
+    expect(msg).not.toContain('dark_s02');
+    // mood id 也不该出现
+    expect(msg).not.toContain('smiling');
+    expect(msg).not.toContain('thinking');
+    expect(msg).not.toContain('neutral');
+  });
+
+  it('user message manifest 段：character 白名单为空时显示占位', () => {
+    const msg = buildRewriteUserMessage({
+      rawText: '<narration>x</narration>',
+      parserView: { sentences: [], scratchCount: 0, degrades: [], looksBroken: false },
+      manifest: { characterIds: [], backgroundIds: [], moodsByCharacter: {} },
+      turn: 1,
+    });
+    expect(msg).toContain('剧本未定义任何角色');
   });
 });
