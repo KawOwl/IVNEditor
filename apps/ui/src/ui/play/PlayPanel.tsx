@@ -367,8 +367,9 @@ export function PlayPanel({
           characters={manifest.characters ?? []}
           backgrounds={manifest.backgrounds ?? []}
         />
-        {/* ANN.1 Memory deletion annotation panel — Figma stage 1-2 */}
-        <MemoryPanel playthroughId={currentPlaythroughId} />
+        {/* ANN.1 Memory deletion annotation panel — Figma stage 1-2
+            非编辑模式（玩家流）暂时隐藏：功能仍在调整，不暴露给玩家 */}
+        {editorMode && <MemoryPanel playthroughId={currentPlaythroughId} />}
         {/* PR2 narrative-rewrite loading 遮罩（rewrite 期间整屏覆盖） */}
         <RewriteOverlay />
       </div>
