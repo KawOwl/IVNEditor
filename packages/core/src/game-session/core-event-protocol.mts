@@ -336,6 +336,7 @@ export function reduceCoreEventProtocol(
       break;
 
     case 'rewrite-attempted':
+    case 'narrative-turn-reset':
     case 'rewrite-completed':
       requireTurn();
       // rewrite 在 generate 完成 + assistant message 闭合后触发，phase 应当

@@ -242,11 +242,14 @@ export type DiagnosticCoreEvent = {
  * 把 raw fullText 归一化成符合 IVN XML 协议的 tagged 输出。
  *
  * - rewrite-attempted：rewriter 即将启动（已通过 skip 检查）
+ * - narrative-turn-reset：rewrite 成功 + 即将替换前发，告知 UI 清掉本 turn 的
+ *   sentence 缓存（紧接着会有新一批 narrative-batch-emitted）
  * - rewrite-completed：rewriter 结束，含成功/fallback 状态、token 统计、失败原因
  *
- * PR1：仅记录不替换 → UI 不消费这两个事件，仅 trace + harness 用
- * PR2：开启替换 → narrative-segment-finalized.entry.content 落库版本是 rewritten
- * PR3：UI 消费 rewrite-completed 触发遮罩揭开
+ * PR1：仅记录不替换 → UI 不消费这三个事件，仅 trace + harness 用
+ * PR2：开启替换 → narrative-segment-finalized.entry.content 落库版本是 rewritten；
+ *      narrative-turn-reset 触发 UI 清 turn 缓存 + 重新接收 batch
+ * PR3：UI stream raw 半透明 + rewrite-completed 触发揭开
  */
 export type RewriteCoreEvent =
   | {
@@ -255,6 +258,13 @@ export type RewriteCoreEvent =
       readonly rawTextLength: number;
       /** parser 第一次跑完是否疑似不对劲（0 sentence / 有 degrade / 全 scratch） */
       readonly looksBroken: boolean;
+    }
+  | {
+      readonly type: 'narrative-turn-reset';
+      readonly turnId: TurnId;
+      readonly reason: 'rewrite-applied';
+      /** 重置后的 scene（rewrite replay 前的 turn 起始 scene） */
+      readonly sceneAfter: SceneState;
     }
   | {
       readonly type: 'rewrite-completed';
@@ -270,7 +280,7 @@ export type RewriteCoreEvent =
       readonly outputTextLength: number;
       /** 二次 parser 校验产出的 sentence 数；skip 时为 null */
       readonly verifiedSentenceCount: number | null;
-      /** PR1=false（仅记录），PR2 起视配置可能为 true（替换 buffer） */
+      /** rewrite 是否真的替换了 currentNarrativeBuffer（仅 status='ok' + 文本不同时为 true） */
       readonly applied: boolean;
     };
 

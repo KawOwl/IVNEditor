@@ -50,6 +50,10 @@ const SESSION_MESSAGE_HANDLERS: Record<string, SessionMessageHandler> = {
   sentence: handleSentenceMessage,
   'scene-change': handleSceneChangeMessage,
   'memory-retrieval': handleMemoryRetrievalMessage,
+  // PR2 narrative-rewrite
+  'rewrite-attempted': handleRewriteAttemptedMessage,
+  'rewrite-completed': handleRewriteCompletedMessage,
+  'narrative-turn-reset': handleNarrativeTurnResetMessage,
 };
 
 export function handleSessionMessage(
@@ -121,6 +125,41 @@ function handleSentenceMessage(msg: WSMessage, { store }: SessionMessageContext)
 
 function handleSceneChangeMessage(msg: WSMessage, { store }: SessionMessageContext): void {
   applySceneChange(msg, store);
+}
+
+/**
+ * PR2：narrative-rewrite 阶段开始。UI 切换 isRewriting=true 显示 loading 全
+ * 覆盖（PR2 最简版）/ 半透明遮罩（PR3）。
+ */
+function handleRewriteAttemptedMessage(_msg: WSMessage, { store }: SessionMessageContext): void {
+  store().setRewriting(true);
+}
+
+/**
+ * PR2：narrative-rewrite 阶段结束。无论 ok 还是 fallback 都把 isRewriting 翻 false。
+ * 如果 applied=true，narrative-turn-reset 已经先 emit 过、UI 清掉了 turn N 的
+ * sentence，这里只负责揭开遮罩。
+ */
+function handleRewriteCompletedMessage(_msg: WSMessage, { store }: SessionMessageContext): void {
+  store().setRewriting(false);
+}
+
+/**
+ * PR2：rewrite 替换前，server 通知 UI 清掉本 turn 已经 stream 出来的 sentence。
+ * 紧接着会有新一波 sentence WS message 重新填充（rewrite text → parser-v2 → emit）。
+ * UI 用 parsedSentences 的最大 turnNumber 当作"当前 turn"清掉。
+ */
+function handleNarrativeTurnResetMessage(_msg: WSMessage, { store }: SessionMessageContext): void {
+  const state = store();
+  const sentences = state.parsedSentences;
+  if (sentences.length === 0) return;
+  let maxTurn = -Infinity;
+  for (const s of sentences) {
+    const tn = (s as { turnNumber?: number }).turnNumber;
+    if (typeof tn === 'number' && tn > maxTurn) maxTurn = tn;
+  }
+  if (maxTurn === -Infinity) return;
+  state.resetTurnSentences(maxTurn);
 }
 
 /**

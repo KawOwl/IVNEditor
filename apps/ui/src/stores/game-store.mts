@@ -83,6 +83,13 @@ export interface GameState {
   memorySummaries: string[];
   changelogEntries: Array<{ turn: number; key: string; oldValue: unknown; newValue: unknown; source: string }>;
 
+  // --- Narrative Rewrite (PR2) ---
+  /**
+   * 当前是否在 narrative-rewrite 阶段（主 LLM 完成后的语义归一化层）。
+   * UI 据此显示 loading 全覆盖（PR2 最简版）/ 半透明遮罩（PR3）。
+   */
+  isRewriting: boolean;
+
   // --- ANN.1 Memory annotation ---
   /**
    * 最近 N 个 turn 的 retrieval（带 entries），最新在末尾。
@@ -166,6 +173,16 @@ export interface GameState {
    */
   seedOpeningSentences: (messages: string[], scene: SceneState) => void;
 
+  // --- Narrative Rewrite actions ---
+  /** rewrite-attempted/-completed → 切换 isRewriting */
+  setRewriting: (rewriting: boolean) => void;
+  /**
+   * narrative-turn-reset → 清掉指定 turn 的 sentence + 重置游标。
+   * 用于 rewrite ok 时撤销 raw 的 stream 渲染，让接下来的 narrative-batch
+   * emit 重新填充。
+   */
+  resetTurnSentences: (turnNumber: number) => void;
+
   // --- ANN.1 Memory annotation actions ---
   /** 接收一次 retrieve 的结果（来自 WS 'memory-retrieval' 事件）*/
   appendMemoryRetrieval: (retrieval: MemoryRetrievalView) => void;
@@ -227,6 +244,8 @@ const initialState = {
   // 初始 true：剧本刚开始时第一条 Sentence 到达就能自动显示给玩家
   catchUpPending: true,
   lastSceneTransition: 'fade' as 'fade' | 'cut' | 'dissolve',
+  // PR2 narrative-rewrite
+  isRewriting: false,
   // ANN.1
   memoryRetrievals: [] as MemoryRetrievalView[],
   memoryDeletions: {} as Record<string, MemoryDeletionView>,
@@ -369,6 +388,32 @@ export const useGameStore = create<GameState>((set) => ({
           state.currentScene.background === null && state.currentScene.sprites.length === 0
             ? scene
             : state.currentScene,
+      };
+    }),
+
+  // --- Narrative Rewrite (PR2) ---
+  setRewriting: (rewriting) => set({ isRewriting: rewriting }),
+
+  resetTurnSentences: (turnNumber) =>
+    set((state) => {
+      // 仅保留不属于该 turn 的 sentence；rewrite replay 会通过新一波
+      // narrative-batch-emitted 重新填充该 turn 的内容。
+      const filtered = state.parsedSentences.filter((s) => {
+        // sentence kinds 大多有 turnNumber 字段（narration / dialogue / scratch
+        // 等），signal_input / scene_change 也有；player_input 也有。
+        const tn = (s as { turnNumber?: number }).turnNumber;
+        return tn !== turnNumber;
+      });
+      // 游标回退：如果游标超出新数组范围，clamp 到末尾
+      const vsi =
+        state.visibleSentenceIndex !== null && state.visibleSentenceIndex >= filtered.length
+          ? Math.max(0, filtered.length - 1)
+          : state.visibleSentenceIndex;
+      return {
+        parsedSentences: filtered,
+        visibleSentenceIndex: vsi,
+        // catch-up 重新打开，让 replay 后第一条新 Sentence 自动推进游标
+        catchUpPending: true,
       };
     }),
 

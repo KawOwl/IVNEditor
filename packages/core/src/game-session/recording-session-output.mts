@@ -195,8 +195,14 @@ export function createRecordingSessionOutputSink(): RecordingSessionOutputSink {
         return;
       case 'rewrite-attempted':
       case 'rewrite-completed':
-        // PR1：rewrite 是 observability-only，不影响 recording session output。
-        // PR2 起需要在这里把 narrative-segment-finalized 重投影成 rewrite 后的版本。
+        // PR1/PR2：rewrite 是 observability + 替换 buffer，但 recording session
+        // output 不消费 rewrite-* 事件——它从 narrative-batch-emitted 重新拼，
+        // turn-reset 后的新一批 batch 自然替换旧的。
+        return;
+      case 'narrative-turn-reset':
+        // rewrite 替换前 emit；recording 应当清掉这一 turn 已经累积的渲染内容
+        // PR2：留作后续接入；当前 recording 模式主要给 editor playtest 用，
+        // rewrite 替换层在 production 路径，这里先 ignore 让数据不污染。
         return;
       case 'diagnostics-updated':
         output.debugSnapshots.push(copyDebugSnapshot(event.diagnostics));

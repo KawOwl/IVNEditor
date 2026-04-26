@@ -180,10 +180,27 @@ const websocketCoreEventHandlers: WebSocketCoreEventHandlers = {
 
   'memory-compaction-completed': ignoreEvent,
 
-  // PR1：rewrite 事件仅 trace + harness 用，UI 暂不消费。PR2 起会用 status
-  // 信号 + rewrite-completed 触发遮罩切换。
-  'rewrite-attempted': ignoreEvent,
-  'rewrite-completed': ignoreEvent,
+  // PR2：rewrite 事件转发给 UI，驱动 loading 遮罩 + turn 渲染重置。
+  'rewrite-attempted': (event, context) => {
+    context.emit('rewrite-attempted', {
+      rawTextLength: event.rawTextLength,
+      looksBroken: event.looksBroken,
+    });
+  },
+  'rewrite-completed': (event, context) => {
+    context.emit('rewrite-completed', {
+      status: event.status,
+      fallbackReason: event.fallbackReason,
+      attempts: event.attempts,
+      latencyMs: event.latencyMs,
+      applied: event.applied,
+    });
+  },
+  'narrative-turn-reset': (event, context) => {
+    context.emit('narrative-turn-reset', {
+      reason: event.reason,
+    });
+  },
 
   /**
    * ANN.1：把 retrieval 事件原样转发给客户端。client 的 ws-message-handlers

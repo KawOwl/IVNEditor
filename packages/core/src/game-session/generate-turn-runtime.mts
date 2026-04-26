@@ -304,6 +304,8 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   private scratchCountThisTurn = 0;
   /** parser-v2 这一轮 emit 的 degrade 累计列表 */
   private degradesThisTurn: DegradeEventV2[] = [];
+  /** turn 起始时的 scene 快照——rewrite replay 时回滚到这里 */
+  private turnInitialScene: SceneState = { background: null, sprites: [] };
 
   constructor(private readonly deps: GenerateTurnRuntimeDeps) {
     this.turnId = toTurnId(deps.turn);
@@ -417,6 +419,8 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     this.sentenceCountThisTurn = 0;
     this.scratchCountThisTurn = 0;
     this.degradesThisTurn = [];
+    // 记 turn 起始 scene；rewrite 替换时 currentScene 要回滚到这里再重 feed parser
+    this.turnInitialScene = copyScene(this.currentScene);
     this.publish({ type: 'assistant-message-started', turnId: this.turnId });
 
     const narrativeRuntime = this.createNarrativeRuntime(traceHandle);
@@ -514,11 +518,16 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
 
   /**
    * narrative-rewrite 阶段。在 parser-v2 第一次跑完之后、persistGenerateResult
-   * 之前触发。PR1：仅 trace + emit core event，**不**替换 currentNarrativeBuffer。
-   * PR2 起这里会替换 buffer，从而让 narrative-segment-finalized 落库版本是 tagged 的。
+   * 之前触发。
+   *
+   * - PR1：仅 trace + emit core event，不替换 currentNarrativeBuffer
+   * - PR2：rewrite ok 时**替换** currentNarrativeBuffer，并 emit narrative-turn-reset
+   *   让 UI 清掉本 turn 的旧 sentence；新建 parser-v2 实例 feed rewrite text
+   *   重新 emit narrative-batch-emitted。落库的 narrative-segment-finalized.entry.content
+   *   是 rewrite 后的 tagged 版本
    */
   private async runRewriteIfEnabled(
-    result: GenerateResult,
+    _result: GenerateResult,
     traceHandle: GenerateTraceHandle | undefined,
   ): Promise<void> {
     const invoke = this.deps.rewriter;
@@ -544,9 +553,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       {
         rawText,
         parserView: {
-          // 当前 runtime 没保留 sentence 详情列表，传空数组——rewriter prompt
-          // 仍能从 raw + degrades + counters 还原大致结构。后续 PR 可考虑收集
-          // sentence 详情提升 prompt 准确度。
           sentences: [],
           scratchCount: this.scratchCountThisTurn,
           degrades: this.degradesThisTurn,
@@ -560,14 +566,13 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         invoke,
         verifyParse: (text) => verifyParseWithParserV2(text, parserManifest),
         parserManifest,
-        // PR1：不重试。PR2 起改成 1。
-        maxRetries: 0,
+        // PR2：失败重试 1 次（temperature 默认；rewriter 内部不动 temperature）
+        maxRetries: 1,
         trace: traceHandle
           ? {
               start: (input) => {
                 const span = traceHandle.startNestedGeneration({
                   name: 'narrative-rewrite',
-                  model: result.usage ? undefined : undefined,
                   input: {
                     system: input.systemPrompt,
                     user: input.userMessage,
@@ -594,6 +599,17 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       },
     );
 
+    // 替换决策：仅当 status='ok' + 文本真的不一样才替换
+    let applied = false;
+    if (
+      rewriteResult.status === 'ok' &&
+      rewriteResult.text.trim().length > 0 &&
+      rewriteResult.text !== rawText
+    ) {
+      this.replayWithRewrittenText(rewriteResult.text, traceHandle);
+      applied = true;
+    }
+
     this.publish({
       type: 'rewrite-completed',
       turnId: this.turnId,
@@ -606,9 +622,64 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       model: rewriteResult.model,
       outputTextLength: rewriteResult.text.length,
       verifiedSentenceCount: rewriteResult.verified?.sentenceCount ?? null,
-      // PR1：observability-only，永远 false
-      applied: false,
+      applied,
     });
+  }
+
+  /**
+   * 用 rewrite 后的 text 重 feed parser-v2，emit 新一波 narrative-batch-emitted
+   * 给 UI。流程：
+   *   1. 回滚 currentScene 到 turn 起始状态（parser-v2 在 turn 内是单调推进的）
+   *   2. emit narrative-turn-reset → UI 清掉这一 turn 已经渲染的 sentence
+   *   3. 新建 parser-v2 实例 feed rewrite text → finalize → emit batch（自动重 emit）
+   *   4. 替换 currentNarrativeBuffer = rewrittenText
+   */
+  private replayWithRewrittenText(
+    rewrittenText: string,
+    traceHandle: GenerateTraceHandle | undefined,
+  ): void {
+    if (!this.deps.parserManifest) return;
+    // 1. 回滚 scene
+    this.currentScene = copyScene(this.turnInitialScene);
+
+    // 2. 通知 UI 清空 turn 渲染
+    this.publish({
+      type: 'narrative-turn-reset',
+      turnId: this.turnId,
+      reason: 'rewrite-applied',
+      sceneAfter: copyScene(this.currentScene),
+    });
+
+    // 3. 重置 counters + 新建 parser-v2 + feed
+    this.sentenceCountThisTurn = 0;
+    this.scratchCountThisTurn = 0;
+    this.degradesThisTurn = [];
+
+    const replayParser = createParserV2({
+      manifest: this.deps.parserManifest,
+      turnNumber: this.deps.turn,
+      startIndex: 0,
+      initialScene: copyScene(this.currentScene),
+    });
+
+    const drain = (batch: NarrativeBatch) => {
+      this.currentScene = drainNarrativeBatch(batch, {
+        initialScene: this.currentScene,
+        publish: (event) => this.publish(event),
+        traceHandle,
+        turnId: this.turnId,
+        turn: this.deps.turn,
+        getBatchId: () => this.currentStepBatchId,
+      });
+      this.sentenceCountThisTurn += batch.sentences.length;
+      this.scratchCountThisTurn += batch.scratches.length;
+      if (batch.degrades.length > 0) this.degradesThisTurn.push(...batch.degrades);
+    };
+    drain(replayParser.feed(rewrittenText));
+    drain(replayParser.finalize());
+
+    // 4. 替换 buffer—— persistGenerateResult 用这个值
+    this.currentNarrativeBuffer = rewrittenText;
   }
 
   private finalizeNarrativeOutput(

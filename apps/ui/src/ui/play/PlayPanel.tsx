@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { InputPanel } from '#internal/ui/InputPanel';
 import { VNStageContainer } from '#internal/ui/play/vn/VNStageContainer';
 import { MemoryPanel } from '#internal/ui/play/MemoryPanel';
+import { RewriteOverlay } from '#internal/ui/play/RewriteOverlay';
 import { useGameStore } from '@/stores/game-store';
 import {
   createRemoteSession,
@@ -368,6 +369,8 @@ export function PlayPanel({
         />
         {/* ANN.1 Memory deletion annotation panel — Figma stage 1-2 */}
         <MemoryPanel playthroughId={currentPlaythroughId} />
+        {/* PR2 narrative-rewrite loading 遮罩（rewrite 期间整屏覆盖） */}
+        <RewriteOverlay />
       </div>
 
       {/* Input area */}
