@@ -12,8 +12,15 @@
     {
       "idx": 1,
       "version": "7",
-      "when": 1777215681399,
+      "when": 1777216159652,
       "tag": "0001_add_memory_deletion_annotations",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777216589721,
+      "tag": "0002_uniq_active_memory_deletion",
       "breakpoints": true
     }
   ]
