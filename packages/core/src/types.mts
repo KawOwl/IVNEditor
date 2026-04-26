@@ -143,11 +143,12 @@ export interface MemoryConfig {
 
   /**
    * Memory adapter 选择（见 packages/core/src/memory/factory.ts）
+   * - 'noop'：完全不插入任何记忆，评测零基线
    * - 'legacy'（默认）：原 MemoryManager 等价行为，截断拼接式"压缩"
    * - 'llm-summarizer'（Phase 2）：真 LLM 摘要
    * - 'mem0'（Phase 3）：mem0 托管向量检索
    */
-  provider?: 'legacy' | 'llm-summarizer' | 'mem0';
+  provider?: 'noop' | 'legacy' | 'llm-summarizer' | 'mem0';
 
   /** Adapter 特定参数（mem0 的 topK / filter 等，Phase 3 定义） */
   providerOptions?: Record<string, unknown>;

@@ -8,12 +8,14 @@
  * 换 provider 时 snapshot 不可互通（kind 字段自隔离）—— 这是 opaque
  * snapshot 的预期契约。
  *
+ * - noop：完全不插入任何记忆，评测零基线
  * - legacy（默认）：截断拼接"压缩"，无外部依赖
  * - llm-summarizer：真 LLM 摘要，需要 llmClient
  * - mem0（Phase 3）：mem0 云端长期记忆；API key 由宿主运行时注入
  */
 
 import type { Memory, CreateMemoryOptions } from '#internal/memory/types';
+import { NoopMemory } from '#internal/memory/noop/adapter';
 import { LegacyMemory } from '#internal/memory/legacy/manager';
 import { truncatingCompressFn } from '#internal/memory/legacy/compress';
 import { LLMSummarizerMemory } from '#internal/memory/llm-summarizer/manager';
@@ -23,6 +25,9 @@ export async function createMemory(options: CreateMemoryOptions): Promise<Memory
   const kind = options.config.provider ?? 'legacy';
 
   switch (kind) {
+    case 'noop':
+      return new NoopMemory(options.config, options.coreEventReader);
+
     case 'legacy':
       return new LegacyMemory(options.config, truncatingCompressFn, options.coreEventReader);
 
