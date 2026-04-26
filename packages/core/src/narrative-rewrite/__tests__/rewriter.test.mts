@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   rewriteNarrative,
   buildRewriteSystemPrompt,
+  buildRewriteUserMessage,
   type RewriteDeps,
   type RewriteInput,
   type RewriteInvoke,
@@ -323,5 +324,63 @@ describe('rewriter system prompt 同源 engine-rules', () => {
     expect(sys).toContain('不补剧情');
     expect(sys).toContain('不改剧情走向');
     expect(sys).toContain('允许微调措辞');
+  });
+});
+
+// 改进 C1（2026-04-26）：parser degrade 段加软提醒 + 判断要点
+describe('rewriter user message — parser degrade 软提醒', () => {
+  function makeUserMsg(degrades: Array<{ code: string; detail: string }> = []): string {
+    return buildRewriteUserMessage({
+      rawText: 'raw 输出',
+      parserView: {
+        sentences: [],
+        scratchCount: 0,
+        // ParserView.degrades 期望是 DegradeEvent[]（含 code + detail）
+        degrades: degrades as unknown as RewriteInput['parserView']['degrades'],
+        looksBroken: degrades.length > 0,
+      },
+      manifest: { characterIds: [], backgroundIds: [], moodsByCharacter: {} },
+      turn: 1,
+    });
+  }
+
+  it('包含"事实信息**不是修复指令**"软提醒', () => {
+    const msg = makeUserMsg();
+    expect(msg).toContain('事实信息');
+    expect(msg).toContain('不是修复指令');
+  });
+
+  it('包含 3 步判断框架（定位 / 看协议规则 / 决定修复）', () => {
+    const msg = makeUserMsg();
+    expect(msg).toContain('定位');
+    expect(msg).toContain('协议规则');
+    expect(msg).toContain('决定是否修复');
+  });
+
+  it('为最容易误判的 3 类 degrade 给判断要点', () => {
+    const msg = makeUserMsg();
+    // bare-text-outside-container 区分元描述 vs 叙事
+    expect(msg).toContain('bare-text-outside-container');
+    expect(msg).toContain('元描述');
+    expect(msg).toContain('叙事内容');
+    // dialogue-adhoc-speaker 指向三档分级
+    expect(msg).toContain('dialogue-adhoc-speaker');
+    expect(msg).toContain('三档分级');
+    // container-truncated 禁止补内容
+    expect(msg).toContain('container-truncated');
+    expect(msg).toContain('不要试图补完');
+  });
+
+  it('degrade list 仍按 fact-only 格式呈现（code + detail，无修复方向）', () => {
+    const msg = makeUserMsg([
+      { code: 'bare-text-outside-container', detail: '你穿过自由市场...' },
+      { code: 'dialogue-adhoc-speaker', detail: '__npc__陌生男声' },
+    ]);
+    // 仍然是 list 格式，不被改成"必修清单"
+    expect(msg).toContain('bare-text-outside-container: 你穿过自由市场...');
+    expect(msg).toContain('dialogue-adhoc-speaker: __npc__陌生男声');
+    // 没有强制修复指令文字（避免误判）
+    expect(msg).not.toContain('必须修复');
+    expect(msg).not.toContain('必修');
   });
 });

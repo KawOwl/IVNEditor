@@ -85,6 +85,8 @@ export function buildRewriteUserMessage(input: RewriteInput): string {
     '```',
     '',
     '# Parser 解读',
+    PARSER_VIEW_INSTRUCTIONS,
+    '',
     formatParserView(input),
     '',
     '# Manifest 白名单（id 校验用）',
@@ -96,6 +98,29 @@ export function buildRewriteUserMessage(input: RewriteInput): string {
   ];
   return sections.join('\n');
 }
+
+/**
+ * 软提醒（C1，2026-04-26）：parser degrade 是事实信息**不是修复指令**。
+ *
+ * 历史教训（trace 227cb1d0 + 用户反馈）：把 degrade 机械标"必修 + 修复方向"
+ * 会误判——不同 degrade 需要的语义判断完全不同：
+ *   - `bare-text-outside-container` 既可能该包 `<narration>` 也可能该进 `<scratch>`
+ *   - `dialogue-adhoc-speaker` 既可能合规（`__npc__保安`）也可能禁止（`__npc__另一人`）
+ *   - `container-truncated` 不能补内容（违反"不补剧情"硬约束）
+ *
+ * 让 rewriter 看 raw 上下文 + system prompt 协议规则**自行做语义判断**，
+ * 比代码侧机械标记更稳。本段是判断框架 + 几个最容易误判类的判断要点。
+ */
+const PARSER_VIEW_INSTRUCTIONS =
+  `下面是 parser 解读 raw 时记录的事实信息（**不是修复指令**）。每条 degrade 你需要：\n` +
+  `- 在 raw 里定位到对应位置（detail 给了文本片段 / id / 容器名）\n` +
+  `- 按 system prompt 协议规则做语义判断\n` +
+  `- 决定是否修复、怎么修复\n` +
+  `\n` +
+  `判断要点（最容易误判的几类）：\n` +
+  `- \`bare-text-outside-container\`：裸文本是**元描述**（"让我先查 state…"）→ 包进 \`<scratch>\`；是**叙事内容** → 包进 \`<narration>\`\n` +
+  `- \`dialogue-adhoc-speaker\`：按 system prompt 里的 \`__npc__\` **三档分级**判断（✅ 具体身份 / ⚠️ 声音形容 / ❌ 关系代词 → 拆 \`<narration>\`）\n` +
+  `- \`container-truncated\`：原文被 token 上限截断，**不要试图补完**——保留截断的内容（含 \`truncated:true\` 标记），rewrite 输出原样保持`;
 
 function formatParserView(input: RewriteInput): string {
   const view = input.parserView;
