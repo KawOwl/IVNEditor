@@ -126,31 +126,106 @@ imports. Avoid `../../../` package boundary escapes.
 
 All DB schema changes must go through Drizzle's migration workflow.
 
-- The current migration directory is intentionally reset to an empty baseline.
+### Baseline state (post-reset)
+
+- The migration directory is intentionally reset to an empty baseline.
   Existing dev/staging/test databases keep their schema and data; their
   `drizzle.__drizzle_migrations` rows were cleared as an operational reset.
-- Edit `apps/server/src/db/schema.mts` first.
-- Generate normal migrations with
-  `cd apps/server && bun --env-file=.env.test drizzle-kit generate --config drizzle.config.mts --name <slug>`.
-- For custom SQL, still start from Drizzle:
-  `cd apps/server && bun --env-file=.env.test drizzle-kit generate --config drizzle.config.mts --custom --name <slug>`,
-  then edit only the generated SQL file.
-- Commit the generated SQL, `drizzle/meta/_journal.json`, and the generated
-  `drizzle/meta/*_snapshot.json` together.
-- Before committing migration files, fetch `origin/main` and compare the local
-  `_journal.json` against `git show origin/main:apps/server/drizzle/meta/_journal.json`.
-  If `main` already contains a migration whose `idx` is the same as (or newer
-  than) the one you just generated, a parallel worktree raced you. Fast-forward
-  `main` (`git merge --ff-only origin/main`), delete the generated SQL +
-  snapshot, then re-run `drizzle-kit generate` so your new migration's `idx`
-  follows the latest entry on `main`. Re-run `drizzle-kit check` afterwards.
-- Do not hand-create migration SQL files, hand-edit `_journal.json`, or omit
-  snapshots. A one-off repair may touch metadata only when the repair itself is
-  scripted, reviewed, and documented.
 - Migration record resets are operational one-offs: document the target DBs,
   run explicit SQL against the intended environment, and verify
   `drizzle.__drizzle_migrations` afterward. Do not mix a record reset with a
   schema migration.
+
+### Generating a migration
+
+- Edit `apps/server/src/db/schema.mts` first.
+- **Schema additions / changes**: use auto-generate (no `--custom`):
+  `cd apps/server && bun --env-file=.env.test drizzle-kit generate --config drizzle.config.mts --name <slug>`.
+  Drizzle writes the SQL **and** updates the snapshot to reflect the new
+  schema state. Do not edit the generated SQL except to add things drizzle
+  cannot express (see next bullet).
+- **SQL drizzle can't express** (partial unique indexes, `WHERE` on indexes,
+  data backfills, GRANTs, custom triggers): generate auto first for the
+  schema part, then add a **separate follow-up migration** with `--custom`:
+  `cd apps/server && bun --env-file=.env.test drizzle-kit generate --config drizzle.config.mts --custom --name <slug>`,
+  then write the SQL into the generated empty file. Reason: see the
+  `--custom` gotcha below.
+- Commit the generated SQL, `drizzle/meta/_journal.json`, and the generated
+  `drizzle/meta/*_snapshot.json` together.
+- After committing, run `bun --env-file=.env.test drizzle-kit generate --name verify_no_op`
+  once to confirm. Drizzle should print "No schema changes, nothing to migrate
+  😴". If it tries to generate a new migration, your snapshot and schema.mts
+  are out of sync — see the `--custom` gotcha.
+
+### Critical: `--custom` flag semantics
+
+`--custom` produces an **empty SQL file** for you to fill in **but does not
+regenerate the snapshot**. It copies the previous snapshot byte-for-byte
+and only adds a journal entry. Implications:
+
+- **Don't use `--custom` for schema additions.** If schema.mts has new tables
+  and you `--custom`-generate, the snapshot won't include them. Drizzle's
+  next `generate` will diff schema.mts against the stale snapshot and emit a
+  spurious "create those tables" migration that will fail with already-exists
+  on every DB that ran your `--custom` migration.
+- **Use `--custom` only on top of an UNCHANGED schema.** When schema.mts is
+  in the exact state captured by the latest snapshot, `--custom` lets you
+  add SQL that drizzle can't model (the partial unique / backfill / GRANT
+  pattern above), without disturbing the snapshot's view of "what drizzle
+  knows".
+- If you accidentally used `--custom` for schema additions: delete the SQL
+  file + the snapshot it created + the journal entry, then re-run with the
+  auto-generate path. Don't try to hand-edit the snapshot.
+
+### PR layout
+
+- **The migration files MUST be the LAST commit of the PR.** If a rebase
+  conflicts on `_journal.json` or `*_snapshot.json`, you should
+  `git rebase -i` to drop that commit, rebase the rest, then regenerate the
+  migration. Burying migration changes in earlier commits makes that drop
+  impossible without rewriting history.
+- Migration files (`*.sql` + `*_snapshot.json` + `_journal.json` updates)
+  belong in **one** commit. If a single feature needs both a schema-additions
+  migration and a follow-up `--custom` migration (e.g. partial unique), commit
+  them together at the end.
+- During feature iteration, prefer `drizzle-kit push` against an isolated dev
+  DB (per-feature schema or per-feature DB instance). Generate the migration
+  only at PR-prep time. Iterating on schema with `generate` produces churn in
+  `_journal.json` that you'll have to throw away when you rebase.
+
+### Conflict recovery
+
+- A conflict on `_journal.json` or `*_snapshot.json` is a **signal to
+  regenerate**, not to hand-resolve. Drizzle's snapshots encode UUIDs
+  (`id`/`prevId`) and column-order details that hand-resolving will
+  inevitably desync.
+- Recovery sequence when your migration loses an idx race or rebase conflicts:
+  1. `git rebase -i origin/main` and drop your migration commit (works
+     because of the "migration must be last commit" rule).
+  2. After rebase: `rm` the SQL file, the snapshot file, and revert the
+     `_journal.json` entry for your migration.
+  3. Re-run `drizzle-kit generate --name <slug>` so your migration's `idx`
+     and snapshot follow the latest entry on `main`.
+  4. Re-run `drizzle-kit check`. Re-run `drizzle-kit generate --name verify_no_op`
+     and confirm "No schema changes".
+  5. Apply to your dev DB to confirm SQL runs cleanly. If your dev DB has
+     residual schema from earlier experiments, **drop those tables first**
+     rather than papering over with `IF NOT EXISTS` in the canonical
+     migration — keep production-bound SQL minimal.
+- Do not hand-create migration SQL files, hand-edit `_journal.json`, or omit
+  snapshots. A one-off repair may touch metadata only when the repair itself
+  is scripted, reviewed, and documented.
+
+### Merge strategy
+
+- `main` keeps **linear migration history**. Use rebase merge or squash; do
+  not use a merge commit on PRs that touch `apps/server/drizzle/`. A merge
+  commit creates DAG ambiguity that drizzle's linear journal can't represent.
+- Before committing migration files, fetch `origin/main` and compare the local
+  `_journal.json` against `git show origin/main:apps/server/drizzle/meta/_journal.json`.
+  If `main` already contains a migration whose `idx` matches (or exceeds)
+  yours, a parallel worktree raced you — follow the conflict recovery
+  sequence above.
 
 ---
 
