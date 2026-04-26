@@ -1,15 +1,12 @@
 /**
  * ContextAssembler — Token 预算感知的 Prompt 组装
  *
- * 根据当前状态、记忆、Prompt Segments，组装 LLM 的输入 messages。
- * 按优先级填充，超出 token 预算时裁剪低优先级内容。
+ * 把剧本 segments + 引擎虚拟 section（state / focus / memory / rules）+
+ * 历史 messages 组装成 LLM 的 systemPrompt + messages，按预算裁可裁段。
  *
- * 优先级顺序：
- *   1. System segments (role='system', 不可裁)
- *   2. State YAML snapshot
- *   3. Memory summaries (含 inheritedSummary)
- *   4. Recent history
- *   5. Context segments (role='context', 可裁)
+ * 入口 `assembleContext` 6 步：computeBudget → filterActiveSegments →
+ * buildAllSections → decideAssemblyOrder → packSectionsIntoBudget →
+ * loadRecentHistory。每步都是同层级顶层函数，按 stepdown 展开细节。
  */
 
 import type { ModelMessage } from 'ai';
@@ -29,27 +26,20 @@ import { rankSegments, scoreSegment } from '#internal/focus';
 import { CURRENT_PROTOCOL_VERSION } from '#internal/protocol-version';
 
 // ============================================================================
-// Types
+// Public types
 // ============================================================================
 
 export interface AssembledContext {
   systemPrompt: string;
   /**
-   * 对话历史。AI SDK 原生 ModelMessage —— assistant 可带 ToolCallPart[]，
-   * tool role 带 ToolResultPart[]。这样 LLM 能看到自己过去 turn 调了什么
-   * 工具、拿到什么结果（in-context learning 的教材），而不是只看到光秃秃
-   * 的 narration。
-   *
-   * 2026-04-24 之前这里是本地 `{ role, content: string }`，
-   * 装不下 tool-call parts —— legacy adapter 把 tool_call / signal_input
-   * entries 过滤掉了，LLM 每一 turn 看到的历史都像从没开过工具。切成
-   * ModelMessage 后，messages-builder 能正确投影 tool history 到消息流。
+   * AI SDK 原生 ModelMessage —— assistant 可带 ToolCallPart[]，tool role 带
+   * ToolResultPart[]。让 LLM 看到自己过去 turn 调过哪些工具拿到什么结果（in-
+   * context learning），不再是光秃秃的 narration。
    */
   messages: ModelMessage[];
   tokenBreakdown: TokenBreakdown;
 }
 
-// Re-export so消费者 `import type { ModelMessage } from '…/context-assembler'` 也 work
 export type { ModelMessage };
 
 export interface TokenBreakdown {
@@ -67,111 +57,38 @@ export interface AssembleOptions {
   stateStore: StateStore;
   memory: Memory;
   tokenBudget: number;
-  outputReserve?: number;   // tokens reserved for LLM output (default: 4096)
-  initialPrompt?: string;   // 首轮 user message（等效于 prompt.txt）
+  outputReserve?: number;
+  initialPrompt?: string;
   /**
-   * Memory.retrieve 的 query hint。
-   *
-   * 由 game-session.buildRetrievalQuery() 生成 —— 这是个**刻意的扩展点**，
-   * Phase 1 简单返回最近玩家输入；未来可以升级为 LLM 动态生成检索 query，
-   * 升级时 assembleContext / Memory.retrieve 的签名不变。
-   *
-   * 空字符串合法：adapter 自己兜底（legacy → entries 空数组；mem0 按策略）。
+   * Memory.retrieve 的 query hint。由 game-session.buildRetrievalQuery() 生成。
+   * Phase 1 简单返回最近玩家输入；未来可以升级为 LLM 动态生成检索 query 而不
+   * 改本接口签名。空字符串合法（adapter 自己兜底）。
    */
   currentQuery: string;
   /**
-   * 当前 focus 状态，由 game-session 通过 computeFocus(stateVars) 推断传入。
-   * 用于生成 `_engine_scene_context` section（focus 元信号 + top N 相关 segment IDs）。
-   * 省略或空对象 → section 不生成，向后兼容。
+   * 由 game-session 用 computeFocus(stateVars) 推断。生成 `_engine_scene_context`
+   * section（焦点元信号 + top N 相关 segment IDs）。空 / 缺省 → 不生成此 section。
    */
   focus?: FocusState;
-  assemblyOrder?: string[]; // 自定义组装顺序（section ID 列表，含虚拟 section）
-  disabledSections?: string[]; // 被禁用的 section ID 列表（不参与组装）
+  assemblyOrder?: string[];
+  disabledSections?: string[];
   /**
-   * 声明式视觉 IR 协议版本。
-   *   - 'v2-declarative-visual'（缺省运行协议）→ 输出
-   *     `<dialogue>/<narration>/<background>/<sprite>/<stage>/<scratch>` 嵌套格式
-   *   - 'v1-tool-call' → 历史只读规则文本，供旧内容解析/迁移使用
+   * 'v2-declarative-visual'（缺省）→ 输出 `<dialogue>/<narration>/<background>/...`
+   * 嵌套格式；'v1-tool-call' → 历史只读规则文本，供旧内容解析迁移使用。
    */
   protocolVersion?: ProtocolVersion;
   /**
-   * 剧本白名单：character IDs + moods。v2 prompt 自动内联到规则里，提醒 LLM 只能
-   * 使用这些 ID；非白名单角色发言要转写到 `<narration>` 旁白（RFC §12.1.1）。
-   * 缺省空数组 → prompt 里显示"（无预置角色）"。
+   * 剧本白名单：character IDs + moods。v2 prompt 自动内联到规则里，提醒 LLM 只
+   * 能用这些 ID（非白名单角色发言要转写到 narration，详见 RFC §12.1.1）。
    */
   characters?: ReadonlyArray<CharacterAsset>;
-  /**
-   * 剧本白名单：background IDs。v2 prompt 自动内联。
-   */
+  /** 剧本白名单：background IDs。v2 prompt 自动内联。 */
   backgrounds?: ReadonlyArray<BackgroundAsset>;
 }
 
 // ============================================================================
-// Condition Evaluator
+// Internal types
 // ============================================================================
-
-/**
- * Simple condition evaluator for injection rules.
- * Evaluates expressions like "state.current_stage == 'exploration'"
- * against the current state variables.
- */
-function evaluateCondition(
-  condition: string,
-  vars: Record<string, unknown>,
-): boolean {
-  try {
-    // Create a simple evaluator with state vars in scope
-    // Supports: ==, !=, >, <, >=, <=, &&, ||, !
-    // Destructure state vars into local scope so conditions like
-    // "chapter === 1" work without needing "state.chapter === 1"
-    const keys = Object.keys(vars);
-    const values = keys.map((k) => vars[k]);
-    const fn = new Function(
-      ...keys,
-      `try { return !!(${condition}); } catch { return false; }`,
-    );
-    return fn(...values) as boolean;
-  } catch {
-    // If evaluation fails, treat as false (don't inject)
-    return false;
-  }
-}
-
-// ============================================================================
-// ContextAssembler
-// ============================================================================
-
-/**
- * 引擎虚拟 section 的 ID 常量。
- *
- * 编剧创建的 segment 使用自己的 id；引擎动态填充的内容（状态、记忆、历史、
- * 规则、首轮 prompt）则使用这些固定 ID，供 context-assembler 和编辑器
- * PromptPreviewPanel 共享同一套"虚拟 section"定义。
- */
-export const VIRTUAL_IDS = {
-  STATE: '_engine_state',
-  MEMORY: '_engine_memory',
-  /** Focus Injection（见 src/core/focus.ts）：focus 元信号 + top N 相关 segment IDs */
-  SCENE_CONTEXT: '_engine_scene_context',
-  HISTORY: '_engine_history',
-  RULES: '_engine_rules',
-  INITIAL_PROMPT: '_initial_prompt',
-} as const;
-
-/**
- * 构建 INTERNAL_STATE section 的完整文本。
- *
- * 运行时和编辑器预览都用这个函数，确保两侧的 section 分隔符、头部标签、
- * YAML 缩进风格完全一致，不会再出现"预览里带 2 空格缩进而运行时不带"
- * 这类漂移。
- */
-export function buildStateSection(vars: Record<string, unknown>): string {
-  const body = serializeStateVars(vars);
-  return `---\nINTERNAL_STATE:\n${body}\n---`;
-}
-
-// ENGINE_RULES_CONTENT 现在在 ./engine-rules.ts 单独维护，
-// 玩家侧运行时 + 编剧侧 AI 改写都从那里 import，保持单一真源。
 
 type SectionCategory = 'system' | 'context' | 'state' | 'summary';
 
@@ -184,206 +101,383 @@ interface AssembledSection {
   readonly trimmable: boolean;
 }
 
+interface Budget {
+  readonly tokenBudget: number;
+  readonly outputReserve: number;
+  readonly available: number;
+}
+
+interface SegmentFilterContext {
+  readonly vars: Record<string, unknown>;
+  readonly disabledIds: ReadonlySet<string>;
+  readonly focus: FocusState | undefined;
+  readonly focusFilterActive: boolean;
+}
+
+interface PackedPrompt {
+  readonly systemPrompt: string;
+  readonly breakdown: Record<SectionCategory, number>;
+  readonly usedTokens: number;
+}
+
+interface RecentHistory {
+  readonly messages: ModelMessage[];
+  readonly tokensUsed: number;
+}
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * 引擎虚拟 section 的 ID 常量。编剧 segment 用自己的 id；引擎动态填充的
+ * （state / memory / focus / rules / 首轮 prompt / 历史）用这些固定 ID。
+ * context-assembler 和编辑器 PromptPreviewPanel 共享同一套定义。
+ */
+export const VIRTUAL_IDS = {
+  STATE: '_engine_state',
+  MEMORY: '_engine_memory',
+  /** Focus Injection（focus.mts）：焦点元信号 + top N 相关 segment IDs */
+  SCENE_CONTEXT: '_engine_scene_context',
+  HISTORY: '_engine_history',
+  RULES: '_engine_rules',
+  INITIAL_PROMPT: '_initial_prompt',
+} as const;
+
+// ============================================================================
+// Reused predicates / projections (exported for cross-module reuse)
+// ============================================================================
+
+/**
+ * 把 state vars 解构成函数参数后 eval condition 字符串。支持 `==`/`!=`/比较
+ * 运算符 / `&&` / `||` / `!`。失败（语法错或运行抛）一律返回 false。
+ */
+export function evaluateCondition(
+  condition: string,
+  vars: Record<string, unknown>,
+): boolean {
+  try {
+    const keys = Object.keys(vars);
+    const values = keys.map((k) => vars[k]);
+    const fn = new Function(
+      ...keys,
+      `try { return !!(${condition}); } catch { return false; }`,
+    );
+    return fn(...values) as boolean;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * INTERNAL_STATE section 的完整文本。运行时和编辑器预览共用，确保 section
+ * 分隔符 / 头部标签 / YAML 缩进字节级一致（曾因预览侧加 2 空格缩进而漂移）。
+ */
+export function buildStateSection(vars: Record<string, unknown>): string {
+  const body = serializeStateVars(vars);
+  return `---\nINTERNAL_STATE:\n${body}\n---`;
+}
+
+// ============================================================================
+// assembleContext —— 6 步 stepdown，每步都是顶层函数
+// ============================================================================
+
 export async function assembleContext(options: AssembleOptions): Promise<AssembledContext> {
-  const {
-    segments,
-    stateStore,
-    memory,
-    tokenBudget,
-    outputReserve = 4096,
-    currentQuery,
-    focus,
-    assemblyOrder,
-    disabledSections,
-    protocolVersion = CURRENT_PROTOCOL_VERSION,
-    characters = [],
-    backgrounds = [],
-  } = options;
+  const budget = computeBudget(options);
+  const activeSegments = filterActiveSegments(options.segments, options);
+  const sections = await buildAllSections(activeSegments, options);
+  const orderedIds = decideAssemblyOrder(sections, activeSegments, options.assemblyOrder);
+  const packed = packSectionsIntoBudget(orderedIds, sections, budget.available);
+  const history = await loadRecentHistory(
+    options.memory,
+    budget.available - packed.usedTokens,
+    options.initialPrompt,
+  );
+  return toAssembledContext(packed, history, budget);
+}
 
-  const availableBudget = tokenBudget - outputReserve;
-  const vars = stateStore.getAll();
-  let usedTokens = 0;
-  const disabledSet = new Set(disabledSections ?? []);
+// ----------------------------------------------------------------------------
+// Step 1: budget
+// ----------------------------------------------------------------------------
 
-  // --- 1. Filter active segments by injection rules + disabled list + focus (B2) ---
-  //
-  // Focus Injection B2（见 .claude/plans/focus-injection.md 升级路径）：
-  //   - 无 focusTags 的 segment  → 全局注入，不受 focus 影响（world/rules/character cards）
-  //   - 有 focusTags 的 segment  → 只在当前 focus 命中时注入（scene/chars/stage 专属内容）
-  //   - focus 缺省或空 → 不过滤（向后兼容；老剧本没 current_scene 字段时走老逻辑）
-  //
-  // 效果：大剧本里非当前 scene 的 scene 段不再占预算。
-  const focusFilterActive = !!focus && Object.values(focus).some((v) => v !== undefined);
-  const activeSegments = segments.filter((seg) => {
-    if (seg.role === 'draft') return false;
-    if (disabledSet.has(seg.id)) return false;
-    if (seg.injectionRule && !evaluateCondition(seg.injectionRule.condition, vars)) return false;
-    if (focusFilterActive && seg.focusTags) {
-      return scoreSegment(seg, focus!) > 0;
-    }
-    return true;
-  });
-
-  // --- 2. Build named section map ---
-  //
-  // Each user segment gets its own ID; virtual sections use VIRTUAL_IDS.
-  // 每段用 `--- [${label}] ---\n<body>` 包裹，作为 Focus Injection 的 ID
-  // 锚点 —— `_engine_scene_context` 里提到的 segment ID/label 能让 LLM 找到
-  // 对应段落。label 为空时 fallback 到 id。
-  //
-  // category + trimmable 在 section 创建处一并定下来，consumption 阶段直接读
-  // 字段，不再按 id 走 if/else 链回查身份。
-  const sections = new Map<string, AssembledSection>();
-  const addSection = (id: string, content: string, category: SectionCategory, trimmable: boolean): void => {
-    sections.set(id, { content, tokens: estimateTokens(content), category, trimmable });
+function computeBudget(options: AssembleOptions): Budget {
+  const outputReserve = options.outputReserve ?? 4096;
+  return {
+    tokenBudget: options.tokenBudget,
+    outputReserve,
+    available: options.tokenBudget - outputReserve,
   };
+}
 
-  for (const seg of activeSegments) {
-    const body = (seg.useDerived && seg.derivedContent) ? seg.derivedContent : seg.content;
-    const content = `--- [${seg.label || seg.id}] ---\n${body}`;
-    addSection(
-      seg.id,
-      content,
-      seg.role === 'system' ? 'system' : 'context',
-      seg.role !== 'system',
-    );
-  }
+// ----------------------------------------------------------------------------
+// Step 2: filter active segments
+// ----------------------------------------------------------------------------
 
-  // State YAML (can be disabled). Not trimmed.
-  if (!disabledSet.has(VIRTUAL_IDS.STATE)) {
-    addSection(VIRTUAL_IDS.STATE, buildStateSection(stateStore.getAll()), 'state', false);
-  }
+/**
+ * Focus Injection B2（.claude/plans/focus-injection.md）：
+ *   - 无 focusTags 的 segment → 全局注入（world / rules / character cards）
+ *   - 带 focusTags 的 segment → 只在 focus 命中时注入（scene / chars / stage 专属）
+ *   - focus 缺省 / 空 → 不过滤（兼容老剧本无 current_scene 字段）
+ */
+function filterActiveSegments(
+  segments: ReadonlyArray<PromptSegment>,
+  options: AssembleOptions,
+): PromptSegment[] {
+  const ctx = buildSegmentFilterContext(options);
+  return segments.filter((seg) => isSegmentActive(seg, ctx));
+}
 
-  // Focus Injection（见 src/core/focus.ts 和 .claude/plans/focus-injection.md）
-  //
-  // 放在 STATE 之后、MEMORY 之前 —— 给 LLM 先呈现"此刻在哪、关注谁/啥"的
-  // focus 元信号，再让它看 memory 里相关记忆。
-  //
-  // B2 模式：step 1 已按 focus 过滤 activeSegments，本段只剩"元信号 + 实际注入
-  // 的匹配段落列表"。ranked 和 activeSegments 里带 focusTags 的那部分重合。
-  //
-  // 生成条件：focus 有效（至少一维有值）即生成。即使无 segment 匹配当前 focus，
-  // 也输出 focus 头（scene: xxx），让 LLM 明确知道"在某个场景，但没专属内容"。
-  // tokens 计入 system bucket，但是 trimmable（高预算压力下可以丢）。
-  if (!disabledSet.has(VIRTUAL_IDS.SCENE_CONTEXT) && focus) {
-    const focusLines = [
-      focus.scene ? `scene: ${focus.scene}` : undefined,
-    ].filter((line): line is string => line !== undefined);
-    // v2: characters / stage
-    if (focusLines.length > 0) {
-      const ranked = rankSegments(activeSegments, focus, 5);
-      const relevantLines = ranked.length > 0
-        ? ['', 'Most relevant segments:', ...ranked.map((s) => ` - ${s.label || s.id}`)]
-        : [];
-      const lines = ['[Current Focus]', ...focusLines, ...relevantLines];
-      addSection(VIRTUAL_IDS.SCENE_CONTEXT, `---\n${lines.join('\n')}\n---`, 'system', true);
-    }
-  }
+function buildSegmentFilterContext(options: AssembleOptions): SegmentFilterContext {
+  const focus = options.focus;
+  return {
+    vars: options.stateStore.getAll(),
+    disabledIds: new Set(options.disabledSections ?? []),
+    focus,
+    focusFilterActive: !!focus && Object.values(focus).some((v) => v !== undefined),
+  };
+}
 
-  // Memory summaries (can be disabled). Trimmable.
-  // 内容由 Memory.retrieve 产出：legacy 下是 summaries + pinned（修复了原 bug：
-  // pinned entries 原本漏读不在 section 里）；mem0 下是向量检索的相关记忆。
-  if (!disabledSet.has(VIRTUAL_IDS.MEMORY)) {
-    const retrieval = await memory.retrieve(currentQuery);
-    if (retrieval.summary) {
-      addSection(VIRTUAL_IDS.MEMORY, `---\n[Memory Summary]\n${retrieval.summary}\n---`, 'summary', true);
-    }
-  }
+function isSegmentActive(seg: PromptSegment, ctx: SegmentFilterContext): boolean {
+  if (seg.role === 'draft') return false;
+  if (ctx.disabledIds.has(seg.id)) return false;
+  if (seg.injectionRule && !evaluateCondition(seg.injectionRule.condition, ctx.vars)) return false;
+  if (ctx.focusFilterActive && seg.focusTags) return scoreSegment(seg, ctx.focus!) > 0;
+  return true;
+}
 
-  // Engine rules (can be disabled). Not trimmed.
-  if (!disabledSet.has(VIRTUAL_IDS.RULES)) {
-    addSection(
-      VIRTUAL_IDS.RULES,
-      buildEngineRules({ protocolVersion, characters, backgrounds }),
-      'system',
-      false,
-    );
-  }
+// ----------------------------------------------------------------------------
+// Step 3: build sections (user + virtual)
+// ----------------------------------------------------------------------------
 
-  // --- 3. Determine assembly order ---
-  let orderedIds: string[];
-  if (assemblyOrder && assemblyOrder.length > 0) {
-    // Use custom order, filtering to only existing sections, then append
-    // any new sections not mentioned in the custom order.
-    const existingIds = Array.from(sections.keys());
-    const customOrder = assemblyOrder.filter((id) => sections.has(id));
-    const customOrderSet = new Set(customOrder);
-    orderedIds = [
-      ...customOrder,
-      ...existingIds.filter((id) => !customOrderSet.has(id)),
-    ];
-  } else {
-    // Default order: system segs → state → focus → memory → context segs → rules
-    const systemSegs = activeSegments
-      .filter((s) => s.role === 'system')
-      .sort((a, b) => a.priority - b.priority);
-    const contextSegs = activeSegments
-      .filter((s) => s.role === 'context')
-      .sort((a, b) => a.priority - b.priority);
-    // 只把实际 set 进来的虚拟 section 列入默认顺序（被 disabled 的不在 sections 里）
-    const virtualIfPresent = (id: string): string[] => sections.has(id) ? [id] : [];
-    orderedIds = [
-      ...systemSegs.map((s) => s.id),
-      ...virtualIfPresent(VIRTUAL_IDS.STATE),
-      ...virtualIfPresent(VIRTUAL_IDS.SCENE_CONTEXT),
-      ...virtualIfPresent(VIRTUAL_IDS.MEMORY),
-      ...contextSegs.map((s) => s.id),
-      ...virtualIfPresent(VIRTUAL_IDS.RULES),
-    ];
-  }
+async function buildAllSections(
+  activeSegments: ReadonlyArray<PromptSegment>,
+  options: AssembleOptions,
+): Promise<Map<string, AssembledSection>> {
+  const disabledIds = new Set(options.disabledSections ?? []);
+  const userSections = activeSegments.map(buildUserSegmentSection);
+  const virtualSections = await buildVirtualSections(activeSegments, options, disabledIds);
+  return new Map([...userSections, ...virtualSections]);
+}
 
-  // Remove history and initial_prompt from system prompt ordering
-  // (they are handled as messages, not system prompt sections)
-  orderedIds = orderedIds.filter(
+/**
+ * 每段用 `--- [${label}] ---\n<body>` 包裹，作为 Focus Injection 的 ID 锚点
+ * —— `_engine_scene_context` 里提到的 segment ID/label 让 LLM 能找到对应段落。
+ */
+function buildUserSegmentSection(seg: PromptSegment): [string, AssembledSection] {
+  const body = (seg.useDerived && seg.derivedContent) ? seg.derivedContent : seg.content;
+  const content = `--- [${seg.label || seg.id}] ---\n${body}`;
+  const isSystem = seg.role === 'system';
+  return [seg.id, buildSection(content, isSystem ? 'system' : 'context', !isSystem)];
+}
+
+async function buildVirtualSections(
+  activeSegments: ReadonlyArray<PromptSegment>,
+  options: AssembleOptions,
+  disabledIds: ReadonlySet<string>,
+): Promise<Array<[string, AssembledSection]>> {
+  const memorySection = await buildMemorySection(options.memory, options.currentQuery);
+  const candidates: Array<[string, AssembledSection | null]> = [
+    [VIRTUAL_IDS.STATE, buildStateVarsSection(options.stateStore)],
+    [VIRTUAL_IDS.SCENE_CONTEXT, buildFocusSection(options.focus, activeSegments)],
+    [VIRTUAL_IDS.MEMORY, memorySection],
+    [VIRTUAL_IDS.RULES, buildRulesSection(
+      options.protocolVersion ?? CURRENT_PROTOCOL_VERSION,
+      options.characters ?? [],
+      options.backgrounds ?? [],
+    )],
+  ];
+  return candidates.filter(
+    (e): e is [string, AssembledSection] => e[1] !== null && !disabledIds.has(e[0]),
+  );
+}
+
+function buildStateVarsSection(stateStore: StateStore): AssembledSection {
+  return buildSection(buildStateSection(stateStore.getAll()), 'state', false);
+}
+
+/**
+ * Focus 元信号 + 命中段落清单。focus 全空 → null（不生成）。命中段落数为 0
+ * 时仍输出焦点头，让 LLM 知道"当前在某场景但无专属内容"。
+ */
+function buildFocusSection(
+  focus: FocusState | undefined,
+  activeSegments: ReadonlyArray<PromptSegment>,
+): AssembledSection | null {
+  if (!focus) return null;
+  const focusLines = focusToLines(focus);
+  if (focusLines.length === 0) return null;
+
+  const ranked = rankSegments([...activeSegments], focus, 5);
+  const relevantLines = ranked.length > 0
+    ? ['', 'Most relevant segments:', ...ranked.map((s) => ` - ${s.label || s.id}`)]
+    : [];
+  const body = ['[Current Focus]', ...focusLines, ...relevantLines].join('\n');
+  return buildSection(`---\n${body}\n---`, 'system', true);
+}
+
+function focusToLines(focus: FocusState): string[] {
+  // v2: characters / stage
+  return [focus.scene ? `scene: ${focus.scene}` : undefined].filter(
+    (line): line is string => line !== undefined,
+  );
+}
+
+/**
+ * Memory.retrieve 产出 summaries + pinned（legacy）/ 向量检索结果（mem0）。
+ * summary 为空字符串时返回 null，section 不进 prompt。
+ */
+async function buildMemorySection(
+  memory: Memory,
+  query: string,
+): Promise<AssembledSection | null> {
+  const retrieval = await memory.retrieve(query);
+  if (!retrieval.summary) return null;
+  return buildSection(`---\n[Memory Summary]\n${retrieval.summary}\n---`, 'summary', true);
+}
+
+function buildRulesSection(
+  protocolVersion: ProtocolVersion,
+  characters: ReadonlyArray<CharacterAsset>,
+  backgrounds: ReadonlyArray<BackgroundAsset>,
+): AssembledSection {
+  return buildSection(
+    buildEngineRules({ protocolVersion, characters, backgrounds }),
+    'system',
+    false,
+  );
+}
+
+function buildSection(
+  content: string,
+  category: SectionCategory,
+  trimmable: boolean,
+): AssembledSection {
+  return { content, tokens: estimateTokens(content), category, trimmable };
+}
+
+// ----------------------------------------------------------------------------
+// Step 4: assembly order
+// ----------------------------------------------------------------------------
+
+function decideAssemblyOrder(
+  sections: ReadonlyMap<string, AssembledSection>,
+  activeSegments: ReadonlyArray<PromptSegment>,
+  customOrder: ReadonlyArray<string> | undefined,
+): string[] {
+  const ordered = customOrder?.length
+    ? applyCustomOrder(customOrder, sections)
+    : defaultOrder(sections, activeSegments);
+  // history / initial_prompt 走 messages 不进 systemPrompt 顺序
+  return ordered.filter(
     (id) => id !== VIRTUAL_IDS.HISTORY && id !== VIRTUAL_IDS.INITIAL_PROMPT,
   );
+}
 
-  // --- 4. Assemble system prompt following order, respecting budget ---
-  const systemPromptSections: string[] = [];
+function applyCustomOrder(
+  customOrder: ReadonlyArray<string>,
+  sections: ReadonlyMap<string, AssembledSection>,
+): string[] {
+  const inCustom = new Set(customOrder);
+  return [
+    ...customOrder.filter((id) => sections.has(id)),
+    ...Array.from(sections.keys()).filter((id) => !inCustom.has(id)),
+  ];
+}
+
+/** 默认顺序：system segs → state → focus → memory → context segs → rules */
+function defaultOrder(
+  sections: ReadonlyMap<string, AssembledSection>,
+  activeSegments: ReadonlyArray<PromptSegment>,
+): string[] {
+  const segmentIdsByRole = (role: PromptSegment['role']): string[] =>
+    activeSegments
+      .filter((s) => s.role === role)
+      .sort((a, b) => a.priority - b.priority)
+      .map((s) => s.id);
+  const includeIfPresent = (id: string): string[] => sections.has(id) ? [id] : [];
+
+  return [
+    ...segmentIdsByRole('system'),
+    ...includeIfPresent(VIRTUAL_IDS.STATE),
+    ...includeIfPresent(VIRTUAL_IDS.SCENE_CONTEXT),
+    ...includeIfPresent(VIRTUAL_IDS.MEMORY),
+    ...segmentIdsByRole('context'),
+    ...includeIfPresent(VIRTUAL_IDS.RULES),
+  ];
+}
+
+// ----------------------------------------------------------------------------
+// Step 5: pack into budget
+//
+// AGENTS.md 明确说"token-budget trimming with early exit"保留命令式：for 循环
+// 顺序遍历 + 早退判断 + 累加器，比 reduce 链更直观。
+// ----------------------------------------------------------------------------
+
+function packSectionsIntoBudget(
+  orderedIds: ReadonlyArray<string>,
+  sections: ReadonlyMap<string, AssembledSection>,
+  available: number,
+): PackedPrompt {
+  const lines: string[] = [];
   const breakdown: Record<SectionCategory, number> = { system: 0, context: 0, state: 0, summary: 0 };
+  let usedTokens = 0;
 
   for (const id of orderedIds) {
     const section = sections.get(id);
     if (!section) continue;
-    if (section.trimmable && usedTokens + section.tokens > availableBudget) continue;
-
-    systemPromptSections.push(section.content);
+    if (section.trimmable && usedTokens + section.tokens > available) continue;
+    lines.push(section.content);
     usedTokens += section.tokens;
     breakdown[section.category] += section.tokens;
   }
 
-  const systemPrompt = systemPromptSections.join('\n\n');
+  return { systemPrompt: lines.join('\n\n'), breakdown, usedTokens };
+}
 
-  // --- 5. Recent history (always after system prompt, as messages) ---
-  // role 翻译 + budget cap 的职责从这里挪进 Memory adapter 内部，
-  // assembler 一行调用拿到 ModelMessage[]。
-  const budgetRemaining = availableBudget - usedTokens;
-  const { messages: historyMessages, tokensUsed: historyTokens } =
-    await memory.getRecentAsMessages({ budget: budgetRemaining });
-  usedTokens += historyTokens;
+// ----------------------------------------------------------------------------
+// Step 6: load recent history
+// ----------------------------------------------------------------------------
 
-  // AI SDK requires at least one message — use initialPrompt or fallback
-  // 这是对 AI SDK "messages 不能为空" 约束的兜底，不归 Memory 接口管。
-  const messages: ModelMessage[] = historyMessages.length > 0
-    ? historyMessages
-    : [{
-        role: 'user',
-        content: options.initialPrompt ?? '[Game session started. Begin narration.]',
-      }];
-
+/**
+ * 历史 messages 走 Memory adapter；空 history 时用 initialPrompt 兜底（AI SDK
+ * 要求 messages 至少一条，是接口侧约束不归 Memory 管）。
+ */
+async function loadRecentHistory(
+  memory: Memory,
+  budget: number,
+  initialPrompt: string | undefined,
+): Promise<RecentHistory> {
+  const { messages, tokensUsed } = await memory.getRecentAsMessages({ budget });
+  if (messages.length > 0) return { messages, tokensUsed };
   return {
-    systemPrompt,
-    messages,
-    tokenBreakdown: {
-      system: breakdown.system,
-      state: breakdown.state,
-      summaries: breakdown.summary,
-      recentHistory: historyTokens,
-      contextSegments: breakdown.context,
-      total: usedTokens,
-      budget: availableBudget,
-    },
+    messages: [{
+      role: 'user',
+      content: initialPrompt ?? '[Game session started. Begin narration.]',
+    }],
+    tokensUsed: 0,
   };
 }
 
-export { evaluateCondition };
+// ----------------------------------------------------------------------------
+// Step 7: shape return
+// ----------------------------------------------------------------------------
+
+function toAssembledContext(
+  packed: PackedPrompt,
+  history: RecentHistory,
+  budget: Budget,
+): AssembledContext {
+  return {
+    systemPrompt: packed.systemPrompt,
+    messages: history.messages,
+    tokenBreakdown: {
+      system: packed.breakdown.system,
+      state: packed.breakdown.state,
+      summaries: packed.breakdown.summary,
+      contextSegments: packed.breakdown.context,
+      recentHistory: history.tokensUsed,
+      total: packed.usedTokens + history.tokensUsed,
+      budget: budget.available,
+    },
+  };
+}
