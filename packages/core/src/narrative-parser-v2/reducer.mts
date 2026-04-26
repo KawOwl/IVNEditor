@@ -104,6 +104,15 @@ function onOpenTag(
   const flushed = flushBareText(state);
 
   if (isTopLevelTag(name)) {
+    // <scratch> 内部出现的 top-level open tag 字面量（典型：LLM 在 scratch
+    // 里讨论格式 "拆为多个 <narration> 单元"）。原本会触发
+    // drainStackAsTruncated 把 scratch 强制截断，后续到 </scratch> 之前的内容
+    // 跑进伪 narration 容器、污染玩家 UI（trace bab24e15-04ae 实测复现）。
+    // scratch 是不渲染的内部思考容器，丢掉这个 tag 字面量不影响 UI；保留
+    // scratch 容器存活直到看到真正的 </scratch> 才闭合。
+    if (peekContainer(flushed.state.containerStack)?.kind === 'scratch') {
+      return flushed;
+    }
     return mergeResult(flushed, openTopLevel(flushed.state, name, attrs, manifest));
   }
 
@@ -431,6 +440,14 @@ function onCloseTag(
         degrades: [{ code: 'unknown-close-tag', detail: name }],
       },
     };
+  }
+
+  // <scratch> 内部出现的非 scratch 的 top-level close 字面量（典型：LLM 在
+  // scratch 里写完整的 `<narration>...</narration>` 字面量讨论结构）。和
+  // onOpenTag 对称——不弹栈、不 emit、不 degrade，让 scratch 继续到真正的
+  // </scratch> 才闭合。
+  if (name !== 'scratch' && peekContainer(state.containerStack)?.kind === 'scratch') {
+    return identityResult(state);
   }
 
   const { rest, top } = popContainer(state.containerStack);

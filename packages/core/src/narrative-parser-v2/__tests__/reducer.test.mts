@@ -715,6 +715,69 @@ describe('reduce · <scratch>', () => {
     expect(outputs.sentences[0]!.index).toBe(1);
     expect(state.nextIndex).toBe(2);
   });
+
+  // 回归：trace bab24e15-04ae —— LLM 在 <scratch> 里写"拆为多个 <narration>
+  // 单元"这种格式说明，<narration> 字面量被 parser 错认为真标签开关，导致
+  // scratch 被强制截断、后续文本跑进伪 narration 渲染到 UI。
+  it('<scratch> 内的 <narration> 字面量不开新容器，scratch 保持存活', () => {
+    const { outputs, state } = run([
+      { type: 'opentag', name: 'scratch', attrs: {} },
+      { type: 'text', data: '拆为多个' },
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: '单元，每单元≤60字' },
+      { type: 'closetag', name: 'scratch' },
+    ]);
+    expect(outputs.scratches).toHaveLength(1);
+    expect(outputs.scratches[0]!.text).toBe('拆为多个单元，每单元≤60字');
+    expect(outputs.sentences).toHaveLength(0);
+    expect(state.containerStack).toEqual([]);
+  });
+
+  it('<scratch> 内完整的 <narration>...</narration> 字面量对不影响 scratch', () => {
+    const { outputs, state } = run([
+      { type: 'opentag', name: 'scratch', attrs: {} },
+      { type: 'text', data: '示例：' },
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: '某段叙事' },
+      { type: 'closetag', name: 'narration' },
+      { type: 'text', data: ' 结束' },
+      { type: 'closetag', name: 'scratch' },
+    ]);
+    expect(outputs.scratches).toHaveLength(1);
+    expect(outputs.scratches[0]!.text).toBe('示例：某段叙事 结束');
+    expect(outputs.sentences).toHaveLength(0);
+    expect(state.containerStack).toEqual([]);
+  });
+
+  it('<scratch> 内的 <dialogue> 字面量同样被忽略', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'scratch', attrs: {} },
+      { type: 'text', data: '对白格式：' },
+      { type: 'opentag', name: 'dialogue', attrs: { speaker: 'sakuya' } },
+      { type: 'text', data: '...' },
+      { type: 'closetag', name: 'dialogue' },
+      { type: 'closetag', name: 'scratch' },
+    ]);
+    expect(outputs.scratches).toHaveLength(1);
+    expect(outputs.scratches[0]!.text).toBe('对白格式：...');
+    expect(outputs.sentences).toHaveLength(0);
+  });
+
+  it('scratch 闭合后，紧接着真正的 <narration> 仍能正常开 + emit', () => {
+    const { outputs } = run([
+      { type: 'opentag', name: 'scratch', attrs: {} },
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: '这是 scratch 内的字面量' },
+      { type: 'closetag', name: 'scratch' },
+      { type: 'opentag', name: 'narration', attrs: {} },
+      { type: 'text', data: '这是真正的 narration' },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.scratches).toHaveLength(1);
+    expect(outputs.scratches[0]!.text).toBe('这是 scratch 内的字面量');
+    expect(outputs.sentences).toHaveLength(1);
+    expect(outputs.sentences[0]!.kind).toBe('narration');
+  });
 });
 
 // ============================================================================
