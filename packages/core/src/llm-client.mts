@@ -800,22 +800,39 @@ export class LLMClient {
               : '\n\n') +
             '现在立即调用 signal_input_needed：把当前局面总结为 hint（1-2 句），并提供 2-4 个推进选项作为 choices。不要再写任何旁白文本或 <d> 标签。',
         };
+        // DeepSeek thinking 模式（reasoner family）拒绝任何非默认 tool_choice：
+        // 既不支持 `{type:'tool', toolName:...}` 也不支持 `'required'`，全部
+        // 返回 400 "deepseek-reasoner does not support this tool_choice"。
+        //
+        // Fallback：thinking 模式下省略 toolChoice（= 'auto'），把 follow-up
+        // 的 tool set 缩到只剩 signal_input_needed + end_scenario —— 模型能调
+        // 的工具只有这两个 + 出文本，配合 nudge prompt 大概率会调。
+        //
+        // 非 thinking 模式（默认）仍然用具名强制，最确定的协议级保证。
+        const isThinking = this.config.thinkingEnabled === true;
+        const followupTools = isThinking
+          ? Object.fromEntries(
+              Object.entries(aiTools).filter(
+                ([name]) => name === 'signal_input_needed' || name === 'end_scenario',
+              ),
+            )
+          : aiTools;
+
         const followupStream = streamText({
           ...baseStreamArgs,
+          tools: followupTools,
           messages: [...messages, nudgeMessage],
-          // 硬 cap 2 步：正常情况 step 0 就应该调到 signal_input_needed，
-          // 留 1 步冗余以防 provider 先吐 text 再 tool_call 分步走。
+          // 硬 cap 2 步：正常情况 step 0 就应该调到 signal/end，留 1 步冗余以
+          // 防 provider 先吐 text 再 tool_call 分步走。
           stopWhen: [
             hasToolCall('signal_input_needed'),
             hasToolCall('end_scenario'),
             stepCountIs(2),
           ],
           maxOutputTokens: 1024,
-          // 协议级强制：Anthropic 和 OpenAI-compatible 都支持 per-call
-          // tool 强制（解码器层面）。这是和主 generate 语义最大差别：
-          // 主 generate 用 'auto'，让 LLM 自由叙事；follow-up 用具名 tool
-          // 强制，保证一定产生 signal_input_needed tool_call。
-          toolChoice: { type: 'tool', toolName: 'signal_input_needed' },
+          ...(isThinking
+            ? {} // thinking: 省略 toolChoice，靠 trimmed tools + prompt nudge
+            : { toolChoice: { type: 'tool' as const, toolName: 'signal_input_needed' } }),
         });
 
         // text-delta / reasoning-delta 不转发也不累加进 fullText —— toolChoice
