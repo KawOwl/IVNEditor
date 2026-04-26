@@ -35,6 +35,7 @@ export function VNStageContainer({ characters, backgrounds }: VNStageContainerPr
   const currentScene = useGameStore((s) => s.currentScene);
   const visibleSentenceIndex = useGameStore((s) => s.visibleSentenceIndex);
   const advanceSentence = useGameStore((s) => s.advanceSentence);
+  const setTypewriterDone = useGameStore((s) => s.setCurrentSentenceTypewriterDone);
   const lastSceneTransition = useGameStore((s) => s.lastSceneTransition);
   const status = useGameStore((s) => s.status);
 
@@ -66,6 +67,14 @@ export function VNStageContainer({ characters, backgrounds }: VNStageContainerPr
       : '';
   const cps = getTypewriterSpeed();
   const typewriter = useDialogTypewriter(fullText, cps);
+
+  // 打字机完成状态同步进 store（语义见 game-store.currentSentenceTypewriterDone）。
+  // sentence 没文本（例如 null / scene_change / signal_input）时直接当 done=true，
+  // 这样 InputPanel 的选项 gate 不会被误锁。
+  const typewriterDoneForStore = fullText.length === 0 || typewriter.done;
+  useEffect(() => {
+    setTypewriterDone(typewriterDoneForStore);
+  }, [typewriterDoneForStore, setTypewriterDone]);
 
   // click 行为：
   //   - 打字机进行中 → skipToEnd 直接全显

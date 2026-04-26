@@ -127,6 +127,17 @@ export interface GameState {
   visibleSentenceIndex: number | null;
 
   /**
+   * 当前正在展示的 Sentence 上的打字机是否已经显示完整段。
+   *
+   * 由 VNStageContainer 的 typewriter hook 同步进 store；InputPanel 用它
+   * 当 gate 控制选项 / hint 显示时机——只在打字机完整结束后才让玩家看到
+   * 选项面板，避免"末位 dialogue 还在打字，选项就闪出来"的跳戏。
+   *
+   * 默认 true（没有正在打字的 Sentence 时不阻塞 UI 显示选项）。
+   */
+  currentSentenceTypewriterDone: boolean;
+
+  /**
    * 是否有一个"追赶"（catch-up）动作待执行。
    *
    * 语义：玩家做完一次主动动作后处于"等内容"状态；这时 LLM 吐出的第一条新
@@ -157,6 +168,8 @@ export interface GameState {
   setCurrentScene: (scene: SceneState, transition?: 'fade' | 'cut' | 'dissolve') => void;
   /** M1: 游标 +1；自动跳过 scene_change（它们只驱动视觉切换，不占 click 次数） */
   advanceSentence: () => void;
+  /** 由 VNStageContainer 同步当前 Sentence 的打字机完成状态 */
+  setCurrentSentenceTypewriterDone: (done: boolean) => void;
   /** M1: 游标直接设值（用于 backlog / 恢复） */
   setVisibleSentenceIndex: (n: number | null) => void;
   /**
@@ -241,6 +254,8 @@ const initialState = {
   parsedSentences: [] as Sentence[],
   currentScene: { background: null, sprites: [] } as SceneState,
   visibleSentenceIndex: null as number | null,
+  // 默认 true：没有正在播放的 Sentence 时不阻塞选项面板
+  currentSentenceTypewriterDone: true,
   // 初始 true：剧本刚开始时第一条 Sentence 到达就能自动显示给玩家
   catchUpPending: true,
   lastSceneTransition: 'fade' as 'fade' | 'cut' | 'dissolve',
@@ -376,6 +391,8 @@ export const useGameStore = create<GameState>((set) => ({
 
   setVisibleSentenceIndex: (n) => set({ visibleSentenceIndex: n, catchUpPending: true }),
 
+  setCurrentSentenceTypewriterDone: (done) => set({ currentSentenceTypewriterDone: done }),
+
   seedOpeningSentences: (messages, scene) =>
     set((state) => {
       if (messages.length === 0) return state;
@@ -502,6 +519,7 @@ export const useGameStore = create<GameState>((set) => ({
     parsedSentences: [],
     currentScene: { background: null, sprites: [] },
     visibleSentenceIndex: null,
+    currentSentenceTypewriterDone: true,
     catchUpPending: true,
     lastSceneTransition: 'fade',
     memoryRetrievals: [],

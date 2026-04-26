@@ -31,6 +31,11 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
   // 避免"文字还没读完，选项就闪出来"的跳戏。
   const parsedSentences = useGameStore((s) => s.parsedSentences);
   const visibleSentenceIndex = useGameStore((s) => s.visibleSentenceIndex);
+  // 末位 Sentence 的打字机是否已经显示完。新一轮 dialogue 抵达 + status 切到
+  // waiting-input 几乎同时发生；如果只看 visibleSentenceIndex 是否在末位，
+  // 选项面板会在打字机才刚开跑时就露出来，造成"话没说完，选项就出现了"。
+  // 加上这条 gate，等末位 sentence 打完字再显示选项 / hint。
+  const typewriterDone = useGameStore((s) => s.currentSentenceTypewriterDone);
   const [text, setText] = useState('');
 
   // M1 Step 1.7：不再依赖 entries 打字机状态。VN 对话框打字机由 VNStageContainer
@@ -41,6 +46,8 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
   // 是否已读到最末有效 Sentence（跳过 scene_change + signal_input）。
   // 读档兜底：如果历史回放没解析出可读句子，也允许 waiting-input 选项显示。
   const isAtEnd = isAtReadableEnd(parsedSentences, visibleSentenceIndex);
+  // 选项 / hint 显示的最终条件：在末位 + 末位的打字机已显示完
+  const isReadyForChoices = isAtEnd && typewriterDone;
   const hasText = text.trim().length > 0;
 
   const handleSubmit = useCallback(() => {
@@ -81,15 +88,15 @@ export function InputPanel({ onSubmit }: InputPanelProps) {
 
   return (
     <div className="border-t border-zinc-800 px-4 py-3 space-y-2">
-      {/* Hint — 等待输入 + 玩家已读到最末 Sentence 才显示 */}
-      {status === 'waiting-input' && isAtEnd && (
+      {/* Hint — 等待输入 + 玩家已读到最末 Sentence + 打字机播完才显示 */}
+      {status === 'waiting-input' && isReadyForChoices && (
         <div className="text-sm text-zinc-400 italic">
           {displayHint}
         </div>
       )}
 
-      {/* Choice buttons — 同样要等读到末尾，不然没读完就跳戏 */}
-      {hasChoices && isAtEnd && (
+      {/* Choice buttons — 同样要等读到末尾 + 打字机播完 */}
+      {hasChoices && isReadyForChoices && (
         <div className="flex flex-wrap gap-2">
           {choices!.map((choice, i) => (
             <button
