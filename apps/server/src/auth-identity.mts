@@ -17,9 +17,13 @@ import { db, schema } from '#internal/db';
 // ============================================================================
 
 /**
- * 'anonymous'  — users.username 为空（未登录、自动创建的匿名行）
- * 'registered' — 注册普通玩家（users.username 非空，role_id='user'）
+ * 'anonymous'  — users.password_hash 为空（自动创建的匿名行，没设密码）
+ * 'registered' — 注册普通玩家（password_hash 非空，role_id='user'）
  * 'admin'      — users.role_id='admin'
+ *
+ * PFB.2 起 kind 判定从 'username 非空' 改为 'password_hash 非空'。
+ * 引入 email 后注册主键是 email 不是 username，且 password_hash 是真正
+ * 的"能登录"信号；admin role_id 优先判定不变。
  */
 export type IdentityKind = 'anonymous' | 'registered' | 'admin';
 
@@ -29,8 +33,10 @@ export interface Identity {
   userId: string;
   /** 便捷字段：kind !== 'anonymous' */
   isRegistered: boolean;
-  /** 用户名（anonymous 无） */
+  /** 用户名（anonymous 无），PFB.2 起注册主键改用 email，username 留作显示名预留 */
   username: string | null;
+  /** 注册邮箱（anonymous 无） */
+  email: string | null;
   /** users.role_id */
   roleId: string;
   /** 显示名（可能为空） */
@@ -65,6 +71,8 @@ export async function resolvePlayerSession(token: string): Promise<Identity | nu
     .select({
       userId: schema.userSessions.userId,
       username: schema.users.username,
+      email: schema.users.email,
+      passwordHash: schema.users.passwordHash,
       displayName: schema.users.displayName,
       roleId: schema.users.roleId,
     })
@@ -92,7 +100,7 @@ export async function resolvePlayerSession(token: string): Promise<Identity | nu
   const kind: IdentityKind =
     row.roleId === 'admin'
       ? 'admin'
-      : row.username !== null
+      : row.passwordHash !== null
         ? 'registered'
         : 'anonymous';
 
@@ -101,6 +109,7 @@ export async function resolvePlayerSession(token: string): Promise<Identity | nu
     userId: row.userId,
     isRegistered: kind !== 'anonymous',
     username: row.username,
+    email: row.email,
     roleId: row.roleId,
     displayName: row.displayName,
   };

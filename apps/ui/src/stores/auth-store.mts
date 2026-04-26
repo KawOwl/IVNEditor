@@ -42,14 +42,21 @@ interface MeResponse {
   kind: 'anonymous' | 'registered' | 'admin';
   userId: string;
   username: string | null;
+  email: string | null;
   displayName: string | null;
   roleId: string;
   isAdmin: boolean;
 }
 
+export type IdentityKind = 'anonymous' | 'registered' | 'admin';
+
 interface AuthState {
-  /** 当前用户名（登录状态才有值，匿名玩家为 null） */
+  /** 身份种类（PFB.2 起暴露给业务层做 register / feedback 路由） */
+  kind: IdentityKind;
+  /** 当前用户名（注册玩家可能为 null —— PFB.2 起注册主键是 email） */
   username: string | null;
+  /** 注册邮箱（仅 registered 有值） */
+  email: string | null;
   /** 是否 admin（roleId === 'admin'） */
   isAdmin: boolean;
   /** 正在校验 session */
@@ -72,7 +79,9 @@ interface AuthState {
 // ============================================================================
 
 export const useAuthStore = create<AuthState>((set) => ({
+  kind: 'anonymous',
   username: null,
+  email: null,
   isAdmin: false,
   checking: true,
 
@@ -90,7 +99,9 @@ export const useAuthStore = create<AuthState>((set) => ({
       // 用新的 sessionId 覆盖当前（可能是匿名的）session
       setSessionId(data.sessionId);
       set({
+        kind: data.isAdmin ? 'admin' : 'registered',
         username: data.username ?? null,
+        email: null, // /login 不返回 email；checkMe 时再补
         isAdmin: data.isAdmin ?? false,
         checking: false,
       });
@@ -108,7 +119,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       // ignore
     }
     clearSessionId();
-    set({ username: null, isAdmin: false, checking: false });
+    set({ kind: 'anonymous', username: null, email: null, isAdmin: false, checking: false });
     // 立即重新 ensure 一个新的匿名 session，让后续请求能用
     try {
       await ensureSessionId();
@@ -129,15 +140,17 @@ export const useAuthStore = create<AuthState>((set) => ({
       if (res.ok) {
         const data = (await res.json()) as MeResponse;
         set({
+          kind: data.kind,
           username: data.username,
+          email: data.email,
           isAdmin: data.isAdmin,
           checking: false,
         });
       } else {
-        set({ username: null, isAdmin: false, checking: false });
+        set({ kind: 'anonymous', username: null, email: null, isAdmin: false, checking: false });
       }
     } catch {
-      set({ username: null, isAdmin: false, checking: false });
+      set({ kind: 'anonymous', username: null, email: null, isAdmin: false, checking: false });
     }
   },
 

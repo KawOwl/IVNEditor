@@ -5,7 +5,7 @@
  * Route 层和 middleware 都通过这个 service 交互 DB。
  */
 
-import { eq, and, gt, lt } from 'drizzle-orm';
+import { eq, and, gt, lt, isNull, sql } from 'drizzle-orm';
 import { db, schema } from '#internal/db';
 
 // ============================================================================
@@ -141,6 +141,77 @@ export class UserService {
       .where(lt(schema.userSessions.expiresAt, new Date()))
       .returning({ id: schema.userSessions.id });
     return result.length;
+  }
+
+  /**
+   * 把当前匿名 user 升级为注册用户（PFB.2）。
+   *
+   * 只在 users 行 password_hash IS NULL 时升级（用 WHERE 子句保证幂等 +
+   * 防 race），同 transaction 内 insert user_profiles。失败按 reason 回报：
+   *   - 'not-anonymous' — 当前 user 已有 password_hash（非匿名）
+   *   - 'email-taken'   — email 被其他 user 占用（unique constraint 撞 23505）
+   *
+   * 不签发新 token —— sessionId 仍指向同一 user.id，调用方 checkMe()
+   * 后 kind 自然从 anonymous 变 registered。
+   */
+  async upgradeAnonymousToRegistered(input: {
+    userId: string;
+    email: string;
+    passwordHash: string;
+    profile: {
+      affiliation: string;
+      gender: string;
+      grade: string;
+      major: string;
+      monthlyBudget: string;
+      hobbies: string[];
+    };
+  }): Promise<{ ok: true } | { ok: false; reason: 'not-anonymous' | 'email-taken' }> {
+    try {
+      return await db.transaction(async (tx) => {
+        const updated = await tx
+          .update(schema.users)
+          .set({
+            email: input.email,
+            passwordHash: input.passwordHash,
+            lastSeenAt: sql`NOW()`,
+          })
+          .where(
+            and(
+              eq(schema.users.id, input.userId),
+              isNull(schema.users.passwordHash),
+            ),
+          )
+          .returning({ id: schema.users.id });
+
+        if (updated.length === 0) {
+          return { ok: false, reason: 'not-anonymous' as const };
+        }
+
+        await tx.insert(schema.userProfiles).values({
+          userId: input.userId,
+          affiliation: input.profile.affiliation,
+          gender: input.profile.gender,
+          grade: input.profile.grade,
+          major: input.profile.major,
+          monthlyBudget: input.profile.monthlyBudget,
+          hobbies: input.profile.hobbies,
+        });
+
+        return { ok: true as const };
+      });
+    } catch (err: unknown) {
+      // pg unique violation = SQLSTATE 23505。email 唯一约束撞了。
+      if (
+        err !== null &&
+        typeof err === 'object' &&
+        'code' in err &&
+        (err as { code?: string }).code === '23505'
+      ) {
+        return { ok: false, reason: 'email-taken' };
+      }
+      throw err;
+    }
   }
 }
 

@@ -158,17 +158,18 @@ describe('auth-identity', () => {
 
     it('should mark registered user correctly', async () => {
       const { userId, sessionId } = await userService.createAnonymous();
-      // 模拟"注册"：设置 username
+      // 模拟"注册"：设置 password_hash + email（PFB.2 起注册主键改用 email，
+      // kind='registered' 判定基于 password_hash 非空）
       await db
         .update(schema.users)
-        .set({ username: 'testuser' })
+        .set({ email: `testuser-${userId.slice(0, 8)}@example.com`, passwordHash: 'bcrypt-hash' })
         .where(eq(schema.users.id, userId));
 
       const identity = await resolvePlayerSession(sessionId);
       expect(identity).not.toBeNull();
       expect(identity!.kind).toBe('registered');
       expect(identity!.isRegistered).toBe(true);
-      expect(identity!.username).toBe('testuser');
+      expect(identity!.email).toBe(`testuser-${userId.slice(0, 8)}@example.com`);
     });
   });
 

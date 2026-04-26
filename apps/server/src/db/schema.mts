@@ -68,8 +68,13 @@ export const roles = pgTable('roles', {
  */
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
-  username: text('username').unique(), // NULL = 未注册（匿名）
-  passwordHash: text('password_hash'), // NULL = 未注册
+  username: text('username').unique(), // NULL = 未注册（匿名）；当前 PFB.2 注册主键改用 email，username 留作未来"显示名"
+  /**
+   * 注册玩家邮箱，唯一。匿名 / admin 可为 NULL。
+   * PFB.2 起作为注册主键（email + passwordHash 同步从 NULL 升级为非空）。
+   */
+  email: text('email').unique(),
+  passwordHash: text('password_hash'), // NULL = 未设密码（匿名 / 可登录性由此判定）
   displayName: text('display_name'),
   roleId: text('role_id')
     .notNull()
@@ -342,6 +347,34 @@ export const scriptAssets = pgTable('script_assets', {
 }, (table) => [
   index('idx_script_assets_script').on(table.scriptId),
 ]);
+
+// ============================================================================
+// User Profiles — 注册时填的 6 题用户画像（PFB.2）
+// ============================================================================
+//
+// 一对一关系（userId 是 PK 也是 FK），用 cascade 删 user 时同步删画像。
+// 字段值是中文选项原文（hobbies 是 1-2 个原文字符串数组，jsonb 跟现有
+// playthroughs.choices 风格一致），后端用 zod enum 严格校验防漂移。
+// affiliation 是 free text（单位/学号），最大 200 字符在 route 层 zod 限。
+export const userProfiles = pgTable('user_profiles', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  /** Q1 单位 / 学号（free text） */
+  affiliation: text('affiliation').notNull(),
+  /** Q2 性别 */
+  gender: text('gender').notNull(),
+  /** Q3 年级 */
+  grade: text('grade').notNull(),
+  /** Q4 专业大类 */
+  major: text('major').notNull(),
+  /** Q5 月娱乐消费区间 */
+  monthlyBudget: text('monthly_budget').notNull(),
+  /** Q6 课余爱好（1-2 选） */
+  hobbies: jsonb('hobbies').$type<string[]>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
 
 // ============================================================================
 // Feedback — 玩家游玩内问卷反馈（PFB.1）

@@ -9,13 +9,16 @@
 
 ## 当前任务
 
-**PFB.1 玩家游玩内问卷反馈：5 题问卷直接落库**（in-progress）
+**PFB.2 反馈前置匿名注册 + 用户画像（in-progress）**
 - 类型：实现（产品 feature，e2e）
-- 来源：用户临时插入。原诉求是把玩家页右上角"反馈"按钮接入飞书表单（prefill playthrough_id / user_id），讨论中权衡 iframe vs 跳转 vs 自家落库后选 D = 自家 `feedback` 表
-- 目标：5 题问卷 modal + POST /api/feedback 直接写自家 DB；规避 iframe（X-Frame-Options）+ 跳转新 tab（手机端切走 WS 大概率断 + 现状 onclose 不自动重连）双重风险
-- 进展：选型已定 + main 同步完成（fast-forward 拉入 700addd `feat(mcp): add script.patch_manifest_structure op`）+ feature_list.json 加 PFB.1 entry。下一步：schema.mts 加 feedback 表 → drizzle-kit generate 0000 baseline 后第一条 migration → feedback-service + route → PlayPanel.tsx FeedbackModal 重写 → typecheck + tests + 浏览器 smoke
+- 来源：用户临时插入。PFB.1 完工后用户希望反馈样本带身份 + 画像，匿名玩家先做"简单注册"（邮箱 + 密码 + 6 题画像）才能进反馈问卷
+- 目标：反馈 modal 两阶段路由——`identity.kind === 'anonymous'` 先弹注册（升级当前匿名 user → 填 email + passwordHash + 写 user_profiles），其他直接进反馈问卷；不换 sessionId（同一行 user 升级），auth-store `checkMe()` 刷新 identity 即可
+- 进展：选型 + 6 个决策（升级而非新建 user / email unique / pwd ≥ 8 / 不发验证邮件 / 单位学号 free text / hobbies 限 1-2）已对齐。当前在探索完 routes/auth.mts + user-service + auth-identity 后开工 schema 改造
 
-**OP.5 = Op A: `script.extract_referenced_ids`**（暂停，PFB.1 完了再回来）
+**PFB.1 玩家游玩内问卷反馈：5 题问卷直接落库**（done）
+- 已合入 main（67ae46b feat(feedback)），feedback 表 + POST /api/feedback + 5 题 FeedbackModal 全套上线，等 ops 在 RDS 加表后端到端测
+
+**OP.5 = Op A: `script.extract_referenced_ids`**（暂停，PFB.2 完了再回来）
 - 类型：实现（op-kit 业务能力扩展）
 - 来源：op-kit roadmap 下一批 P0 lint 套件首个
 - 目标：补完"修复型 agent"工具链中的"知道剧本实际引用了什么"这块拼图，作为 OP.7 propose_manifest_alignment 的纯函数上游
