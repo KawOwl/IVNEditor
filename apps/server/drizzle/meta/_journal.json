@@ -29,6 +29,13 @@
       "when": 1777216898232,
       "tag": "0003_add_user_profiles_and_email",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777219700298,
+      "tag": "0004_add_bug_reports",
+      "breakpoints": true
     }
   ]
 }
