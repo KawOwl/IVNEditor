@@ -20,6 +20,31 @@
 
 ## 最近完成
 
+**Memory eval infra 全套（2026-04-26，本会话）**
+- 用户目标：搭对比评测 noop / mem0 / DeepSeek thinking 模式的 harness
+- 一波 13 commit 在 `claude/compassionate-goodall-1acdca` 上演化，最后做 clean replay 重新落到 main 上变成 1 个大 feat commit
+- 加的东西：
+  - **noop memory provider**（`packages/core/src/memory/noop/adapter.mts`）—— 评测零基线。retrieve 永远空 summary，但 getRecentAsMessages 仍走 CoreEventHistoryReader 投影 chat history（DeepSeek thinking + tool 协议要求）。factory 注册 `'noop'` case。+ 7 个单测
+  - **PlayerSimulator**（`packages/core/src/evaluation/player-simulator.mts`）—— LLM-driven 模拟玩家。persona = `{goal, style?, llmConfig}`，每个 simulator 实例维护自己的 chat history。绕过 LLMClient.generate 直接用 AI SDK generateText（不需要 agentic loop / tool / signal_input follow-up）。+ 16 个单测
+  - **Transcript renderer**（`packages/core/src/evaluation/transcript-renderer.mts`）—— `MemoryEvaluationReport` → markdown，每 variant 一段，turn 按 turnNumber 升序展开。LLM judge / 人读两用。+ 12 个单测
+  - **harness 改造**：`PlayerSource` union（`scripted | simulated`），simulated 用 `createSimulator: () => PlayerSimulator` factory pattern（每 variant 一个 fresh instance，不跨 variant 累积 history）；移除两层 `createNoThinkingLLMConfig` 强制 wrap，让 caller 控制 thinking；加 per-variant + per-turn stderr 进度日志
+  - **assembleContext 6 步 stepdown 重写**（`context-assembler.mts`）—— 主函数 199 行 → 9 行，每步顶层函数：computeBudget → filterActiveSegments → buildAllSections → decideAssemblyOrder → packSectionsIntoBudget → loadRecentHistory → toAssembledContext
+  - **DeepSeek thinking follow-up 修复**（`llm-client.mts`）—— DeepSeek reasoner family 拒绝任何非默认 toolChoice（`{type:'tool', toolName:...}` 和 `'required'` 都 400）。thinking 模式下省略 toolChoice + 把 follow-up tools 缩到 `{signal_input_needed, end_scenario}`，靠 nudge prompt 引导。非 thinking 路径不变
+  - **typed scenario + 多个 entry .mts**（`scripts/evals/`）：
+    - `_helpers.mts` —— `requireEnv` / `readGMLLMConfig`（带 `LLM_THINKING=on/default/off` 解析）/ `readPlayerLLMConfig` / `writeReport` / `writeTranscript` / `summarizeReport` / `exitOnHarnessFailure`
+    - `scenarios/silver-key.mts` —— silverKeyScenario / silverKeyMemoryConfig / silverKeyPersona（纯数据）
+    - `silver-key-scripted.mts` —— scripted inputs，跑 noop/legacy/llm-summarizer 三 variant
+    - `silver-key-simulator.mts` —— simulator 玩家，REPS env（默认 1）控制每 provider 跑几次，VARIANTS env（默认 noop,mem0）控制跑哪些 provider，OUTPUT env 控制输出路径
+    - `extract-scenario.mts` —— 接 op-kit `script.get_full_manifest` HTTP，把 live manifest 渲染成 typed scenario .mts
+    - `render-transcript.mts` —— 老 .json report 不重跑直接重渲 .md
+  - **scripts/tsconfig.json** —— extends parent + 加 bun types，让 `pnpm typecheck` 也覆盖 scripts/。`Bun.exit` 不在 @types/bun → 全切 `process.exit`
+- 验证：`pnpm typecheck` 4 package + scripts 全绿；`pnpm test:core` 278/278；本地跑了一次 noop + thinking + 20 turn live eval，4 个 thinking-related bug 都修了，最终 20 turn 全 choice 模式无 API 错
+- 已知遗留观察（noop baseline 的预期"病症"，留作 mem0 对比 baseline）：
+  - 同一情节反复重置（开门事件在 turn 4-20 出现 7 次）
+  - NPC 人物背景被现编多套不一致版本
+  - 物品分裂（出现"另一把真正的银钥匙"）
+- 未做（list 给下一会话）：mem0 对比跑、LLM judge 步骤（读 .md 出 issues JSON）、`update_state` 工具按 stateSchema 校验未声明字段
+
 **V.9 dialogue speaker 立绘兜底（2026-04-26，本会话）**
 - 起因：用户报 trace `784ab8fc-3915-47f0-b757-f7feae0604df`（ivn-engine）—— `<dialogue speaker="carina" to="player" mood="curious">` 没 `<sprite>` 子标签 + 上一句也没 carina，玩家屏幕看不到 carina 立绘。dialogue 上的 `mood="curious"` 是 silent tolerance 忽略（白名单只认 speaker/to/hear/eavesdroppers），不能靠它自动补 sprite。
 - 触发条件（全部满足才补）：`<dialogue>` 关闭时 + speaker 是 manifest 已知角色 + speaker 不是 ad-hoc + manifest 给该角色配过至少一个 sprite + 当前 resolved sprites 不含 speaker 立绘 + 三个 position 至少一个空闲。
