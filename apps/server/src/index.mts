@@ -144,7 +144,11 @@ async function bootstrapDefaultLlmConfig() {
 async function startup() {
   try {
     await testConnection();
-    await runMigrations();
+    if (getServerEnv().RUN_MIGRATIONS_ON_START) {
+      await runMigrations();
+    } else {
+      console.log('[DB] Migrations skipped (RUN_MIGRATIONS_ON_START=false)');
+    }
     await bootstrapDefaultLlmConfig();
   } catch (err) {
     console.error('[startup] DB initialization failed:', err);

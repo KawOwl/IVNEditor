@@ -192,6 +192,16 @@ export const ServerEnvSchema = z.object({
   S3_BUCKET: optionalEnvString,
   S3_FORCE_PATH_STYLE: booleanFromEnv('S3_FORCE_PATH_STYLE', true),
 
+  /**
+   * 服务启动时是否跑 drizzle migrator。
+   *
+   * 默认 true（部署到 k8s pod 时不设这个 env，沿用现状）。
+   * 本地 dev 起 server 时建议设 false —— 避免本地 ivn_dev/ivn_test 在
+   * baseline reset 之后被 migrator 撞 already-exists 拒绝启动。本地想
+   * 同步 schema 走 `drizzle-kit push --force` / 一次性 SQL 脚本。
+   */
+  RUN_MIGRATIONS_ON_START: booleanFromEnv('RUN_MIGRATIONS_ON_START', true),
+
   ADMIN_USERS: adminUsersSchema,
 });
 
