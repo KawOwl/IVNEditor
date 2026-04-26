@@ -14,14 +14,15 @@
 
 import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { eq, sql } from 'drizzle-orm';
+import { eq, or, sql } from 'drizzle-orm';
 import { db, schema } from '#internal/db';
 
 /** 登录返回体 */
 export interface LoginResult {
   sessionId: string;
   userId: string;
-  username: string;
+  username: string | null;
+  email: string | null;
   displayName: string | null;
   roleId: string;
   isAdmin: boolean;
@@ -31,23 +32,39 @@ export interface LoginResult {
 const SESSION_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
 /**
- * 验证用户名密码，成功则返回一个新的 session。
+ * 验证 identifier（email 或 username）+ 密码，成功则返回一个新的 session。
  * 失败（用户不存在 / 密码错 / 密码 hash 为空）都返回 null。
+ *
+ * PFB.3 起 identifier 字段同时匹配 email 和 username —— 兼容 PFB.2 引入
+ * 的 email 注册流（用户没有 username）+ 既有 admin（用 username + bcrypt
+ * password seed）。`email = identifier OR username = identifier` 一句 SQL
+ * 解决，DB 层 unique 约束保证不会撞行。
  */
 export async function login(
-  username: string,
+  identifier: string,
   password: string,
 ): Promise<LoginResult | null> {
+  const trimmed = identifier.trim();
+  if (!trimmed) return null;
+  // email 比对走 lowercase（注册时也 toLowerCase 入库）；username 大小写敏感不变
+  const emailNormalized = trimmed.toLowerCase();
+
   const rows = await db
     .select({
       id: schema.users.id,
       username: schema.users.username,
+      email: schema.users.email,
       passwordHash: schema.users.passwordHash,
       displayName: schema.users.displayName,
       roleId: schema.users.roleId,
     })
     .from(schema.users)
-    .where(eq(schema.users.username, username))
+    .where(
+      or(
+        eq(schema.users.email, emailNormalized),
+        eq(schema.users.username, trimmed),
+      ),
+    )
     .limit(1);
 
   const user = rows[0];
@@ -79,7 +96,8 @@ export async function login(
   return {
     sessionId,
     userId: user.id,
-    username: user.username!,
+    username: user.username,
+    email: user.email,
     displayName: user.displayName,
     roleId: user.roleId,
     isAdmin: user.roleId === 'admin',

@@ -31,7 +31,8 @@ interface LoginResponse {
   ok: boolean;
   sessionId: string;
   userId: string;
-  username: string;
+  username: string | null;
+  email: string | null;
   displayName: string | null;
   roleId: string;
   isAdmin: boolean;
@@ -62,7 +63,8 @@ interface AuthState {
   /** 正在校验 session */
   checking: boolean;
 
-  login: (username: string, password: string) => Promise<{ ok: boolean; error?: string }>;
+  /** identifier 同时接受 email（PFB.2 注册玩家）和 username（admin） */
+  login: (identifier: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => Promise<void>;
   /** 应用启动时调用，从当前 sessionId 读身份填充 store */
   checkMe: () => Promise<void>;
@@ -85,12 +87,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAdmin: false,
   checking: true,
 
-  login: async (username, password) => {
+  login: async (identifier, password) => {
     try {
       const res = await fetch(`${getBackendUrl()}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ identifier, password }),
       });
       const data = (await res.json()) as Partial<LoginResponse> & { error?: string };
       if (!res.ok || !data.sessionId) {
@@ -101,7 +103,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({
         kind: data.isAdmin ? 'admin' : 'registered',
         username: data.username ?? null,
-        email: null, // /login 不返回 email；checkMe 时再补
+        email: data.email ?? null,
         isAdmin: data.isAdmin ?? false,
         checking: false,
       });

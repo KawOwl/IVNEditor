@@ -22,17 +22,22 @@ import { userService } from '#internal/services/user-service';
 export const authRoutes = new Elysia({ prefix: '/api/auth' })
 
   // ============================================================================
-  // POST /login — 用户名/密码登录
+  // POST /login — identifier (email 或 username) + 密码登录
+  //
+  // PFB.3：identifier 字段兼容 email（注册玩家）和 username（admin）。
+  // 兼容老 client：body 里 'identifier' / 'username' 任一非空都接受。
   // ============================================================================
   .post('/login', async ({ body }) => {
-    const { username, password } = body as { username: string; password: string };
-    if (!username || !password) {
-      return new Response(JSON.stringify({ error: '请输入用户名和密码' }), { status: 400 });
+    const b = body as { identifier?: string; username?: string; password?: string };
+    const identifier = b.identifier ?? b.username ?? '';
+    const password = b.password ?? '';
+    if (!identifier || !password) {
+      return new Response(JSON.stringify({ error: '请输入邮箱/用户名和密码' }), { status: 400 });
     }
 
-    const result = await login(username, password);
+    const result = await login(identifier, password);
     if (!result) {
-      return new Response(JSON.stringify({ error: '用户名或密码错误' }), { status: 401 });
+      return new Response(JSON.stringify({ error: '邮箱/用户名或密码错误' }), { status: 401 });
     }
 
     return {
@@ -40,6 +45,7 @@ export const authRoutes = new Elysia({ prefix: '/api/auth' })
       sessionId: result.sessionId,
       userId: result.userId,
       username: result.username,
+      email: result.email,
       displayName: result.displayName,
       roleId: result.roleId,
       isAdmin: result.isAdmin,
