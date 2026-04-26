@@ -122,6 +122,31 @@ imports. Avoid `../../../` package boundary escapes.
 
 ---
 
+## Database Migrations
+
+All DB schema changes must go through Drizzle's migration workflow.
+
+- The current migration directory is intentionally reset to an empty baseline.
+  Existing dev/staging/test databases keep their schema and data; their
+  `drizzle.__drizzle_migrations` rows were cleared as an operational reset.
+- Edit `apps/server/src/db/schema.mts` first.
+- Generate normal migrations with
+  `cd apps/server && bun --env-file=.env.test drizzle-kit generate --config drizzle.config.mts --name <slug>`.
+- For custom SQL, still start from Drizzle:
+  `cd apps/server && bun --env-file=.env.test drizzle-kit generate --config drizzle.config.mts --custom --name <slug>`,
+  then edit only the generated SQL file.
+- Commit the generated SQL, `drizzle/meta/_journal.json`, and the generated
+  `drizzle/meta/*_snapshot.json` together.
+- Do not hand-create migration SQL files, hand-edit `_journal.json`, or omit
+  snapshots. A one-off repair may touch metadata only when the repair itself is
+  scripted, reviewed, and documented.
+- Migration record resets are operational one-offs: document the target DBs,
+  run explicit SQL against the intended environment, and verify
+  `drizzle.__drizzle_migrations` afterward. Do not mix a record reset with a
+  schema migration.
+
+---
+
 ## Verification
 
 Choose verification proportional to the change:
@@ -130,6 +155,7 @@ Choose verification proportional to the change:
 - ESM/import changes: `pnpm check:esm`
 - Core logic/parser/memory changes: `pnpm test:core`
 - Server DB/session changes: `bun --env-file ../../.env test` from `apps/server`
+- Server DB migration changes: `cd apps/server && bun --env-file=.env.test drizzle-kit check --config drizzle.config.mts`
 - UI changes: run the UI and inspect the relevant flow in the browser
 
 For commits in this refactor line, run negentropy before committing. Save the
