@@ -148,9 +148,7 @@ async function startup() {
     await bootstrapDefaultLlmConfig();
   } catch (err) {
     console.error('[startup] DB initialization failed:', err);
-    console.error('[startup] 如果线上首次部署，请先运行:');
-    console.error('  bun run scripts/migrate-player-identity.mts   # 升级老 schema');
-    console.error('  bun run scripts/bootstrap-drizzle-migrations.mts   # 标记 baseline');
+    console.error('[startup] 请确认 DATABASE_URL 指向已备份且可迁移的数据库；新库可直接启动应用迁移。');
     console.error('[startup] 拒绝启动服务，避免半残状态');
     process.exit(1);
   }

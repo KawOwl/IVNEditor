@@ -100,32 +100,12 @@ describe('SessionPersistence CoreEvent sink', () => {
     expect(calls).toEqual([
       { name: 'onGenerateStart', data: 1 },
       {
-        name: 'onNarrativeSegmentFinalized',
-        data: {
-          entry: { role: 'generate', content: 'hello', reasoning: 'thought', finishReason: 'stop' },
-          batchId: 'batch-main',
-        },
-      },
-      {
-        name: 'onToolCallRecorded',
-        data: {
-          toolName: 'update_state',
-          input: { key: 'mood' },
-          output: { ok: true },
-          batchId: 'batch-main',
-        },
-      },
-      {
         name: 'onGenerateComplete',
         data: {
           memorySnapshot: { entries: 1 },
           preview: 'hello',
           currentScene: emptyScene,
         },
-      },
-      {
-        name: 'onSignalInputRecorded',
-        data: { hint: 'next?', choices: ['go'], batchId: 'batch-main' },
       },
       {
         name: 'onWaitingInput',
@@ -141,12 +121,9 @@ describe('SessionPersistence CoreEvent sink', () => {
       {
         name: 'onReceiveComplete',
         data: {
-          entry: { role: 'receive', content: 'go' },
           stateVars: { hp: 5 },
           turn: 1,
           memorySnapshot: { entries: 3 },
-          payload: { inputType: 'choice', selectedIndex: 0 },
-          batchId: 'receive-1',
         },
       },
       { name: 'onScenarioFinished', data: { reason: 'done' } },
@@ -194,20 +171,11 @@ function createPersistenceRecorder(
     async onGenerateStart(turn) {
       calls.push({ name: 'onGenerateStart', data: turn });
     },
-    async onNarrativeSegmentFinalized(data) {
-      calls.push({ name: 'onNarrativeSegmentFinalized', data });
-    },
     async onGenerateComplete(data) {
       calls.push({ name: 'onGenerateComplete', data });
     },
     async onWaitingInput(data) {
       calls.push({ name: 'onWaitingInput', data });
-    },
-    async onSignalInputRecorded(data) {
-      calls.push({ name: 'onSignalInputRecorded', data });
-    },
-    async onToolCallRecorded(data) {
-      calls.push({ name: 'onToolCallRecorded', data });
     },
     async onReceiveComplete(data) {
       calls.push({ name: 'onReceiveComplete', data });

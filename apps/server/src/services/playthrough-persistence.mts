@@ -6,7 +6,6 @@
  */
 
 import type { SessionPersistence } from '@ivn/core/game-session';
-import { extractPlainText } from '@ivn/core/narrative-parser';
 import { playthroughService } from '#internal/services/playthrough-service';
 
 /**
@@ -22,80 +21,13 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
     },
 
     /**
-     * 每段叙事 finalize 前调用（signal_input_needed 挂起前 / generate 返回后）
-     * 每次调用都新增一条 narrative_entry 记录 + 更新 preview。
-     *
-     * 接受 content='' 但 reasoning 非空 的"stub" 入参 —— game-session 给
-     * tool-only step 写 reasoning 占位 entry 用（DeepSeek V4 thinking replay
-     * 修复，详见 game-session.mts persistToolOnlyStepReasoning 注释）。
-     * 真正空段（content+reasoning 都空）才提前返回。
-     * preview 仅在 content 非空时更新——stub entry 不该把 preview 清空。
-     */
-    async onNarrativeSegmentFinalized(data): Promise<void> {
-      if (!data.entry.content && !data.entry.reasoning) return;
-
-      await playthroughService.appendNarrativeEntry({
-        playthroughId,
-        role: data.entry.role,
-        // kind 默认 'narrative'（onNarrativeSegmentFinalized 的语义就是常规叙事段）
-        content: data.entry.content,
-        reasoning: data.entry.reasoning,
-        finishReason: data.entry.finishReason,
-        batchId: data.batchId ?? null,
-      });
-
-      // 更新 preview 为最新的这段（走 parser 提取纯文本，避免在 UI 的
-      // playthrough 列表里显示 XML-lite 裸标签：
-      // `你目光落在那扇... <d s="jenkins" to="...` → `你目光落在那扇... 你说完了我们就离开吧...`）
-      if (data.entry.content) {
-        const preview = extractPlainText(data.entry.content)
-          .slice(0, 80)
-          .replace(/\n/g, ' ')
-          .trim();
-        await playthroughService.updateState(playthroughId, { preview });
-      }
-    },
-
-    /**
      * generate() 整体结束后同步 memory 快照 + VN 场景（M3）
-     * entry 入库已由 onNarrativeSegmentFinalized 负责
      */
     async onGenerateComplete(data): Promise<void> {
       await playthroughService.updateState(playthroughId, {
         memorySnapshot: data.memorySnapshot,
         ...(data.preview !== undefined ? { preview: data.preview } : {}),
         ...(data.currentScene !== undefined ? { currentScene: data.currentScene } : {}),
-      });
-    },
-
-    /**
-     * 把 signal_input_needed 一次调用写成一条 narrative_entry。
-     * role='system' + kind='signal_input' + content=hint + payload={choices}。
-     * 见 .claude/plans/conversation-persistence.md Step 2。
-     */
-    async onSignalInputRecorded(data): Promise<void> {
-      await playthroughService.appendNarrativeEntry({
-        playthroughId,
-        role: 'system',
-        kind: 'signal_input',
-        content: data.hint,
-        payload: { choices: data.choices },
-        batchId: data.batchId ?? null,
-      });
-    },
-
-    /**
-     * 普通工具（update_state / change_scene 等）调用完成时触发，写成 kind='tool_call' 条目。
-     * 见 .claude/plans/messages-model.md Step 5 & migration 0011。
-     */
-    async onToolCallRecorded(data): Promise<void> {
-      await playthroughService.appendNarrativeEntry({
-        playthroughId,
-        role: 'system',
-        kind: 'tool_call',
-        content: data.toolName,
-        payload: { input: data.input, output: data.output },
-        batchId: data.batchId,
       });
     },
 
@@ -119,19 +51,6 @@ export function createPlaythroughPersistence(playthroughId: string): SessionPers
     },
 
     async onReceiveComplete(data): Promise<void> {
-      // 保存玩家输入条目（migration 0010 / 0011）
-      //   kind='player_input'，payload 带 inputType + selectedIndex（如果选了 choice）
-      //   batchId 由 game-session 每次提交独立生成 —— 未来多模态一次提交多 entry 会复用
-      await playthroughService.appendNarrativeEntry({
-        playthroughId,
-        role: data.entry.role,
-        kind: 'player_input',
-        content: data.entry.content,
-        payload: data.payload as Record<string, unknown> | undefined,
-        batchId: data.batchId ?? null,
-      });
-
-      // 更新状态 + memory
       await playthroughService.updateState(playthroughId, {
         status: 'idle',
         stateVars: data.stateVars,

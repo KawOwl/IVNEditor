@@ -321,8 +321,7 @@ export interface ToolCallResult {
 }
 
 // 注：旧版的 SaveData（IndexedDB 存档结构）已随 v2.5 后端 playthroughs
-// 持久化上线而废弃。相应数据在 playthroughs + narrative_entries 两张表
-// 里，前端不再需要这个类型。删除时间：2026-04-11。
+// 持久化上线而废弃。运行时历史现在由 core_event_envelopes 记录。
 
 // ============================================================================
 // Segment Activation — Segment 激活状态管理

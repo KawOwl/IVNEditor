@@ -105,7 +105,7 @@ const TINY_PNG_B64 =
 
 async function cleanTables() {
   await assertTestDatabase();
-  await db.delete(schema.narrativeEntries);
+  await db.delete(schema.coreEventEnvelopes);
   await db.delete(schema.playthroughs);
   await db.delete(schema.scriptAssets);
   await db.delete(schema.scriptVersions);

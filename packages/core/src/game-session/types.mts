@@ -8,7 +8,7 @@ import type {
   BackgroundAsset,
 } from '#internal/types';
 import type { LLMConfig } from '#internal/llm-client';
-import type { NarrativeHistoryReader } from '#internal/memory/narrative-reader';
+import type { CoreEventHistoryReader } from '#internal/game-session/core-event-history';
 import type { ParserManifest } from '#internal/narrative-parser-v2';
 import type { CoreEventSink } from '#internal/game-session/core-events';
 
@@ -19,11 +19,6 @@ import type { CoreEventSink } from '#internal/game-session/core-events';
  */
 export interface SessionPersistence {
   onGenerateStart(turn: number): Promise<void>;
-
-  onNarrativeSegmentFinalized(data: {
-    entry: { role: string; content: string; reasoning?: string; finishReason?: string };
-    batchId?: string | null;
-  }): Promise<void>;
 
   onGenerateComplete(data: {
     memorySnapshot: Record<string, unknown>;
@@ -40,29 +35,10 @@ export interface SessionPersistence {
     stateVars?: Record<string, unknown>;
   }): Promise<void>;
 
-  onSignalInputRecorded?(data: {
-    hint: string;
-    choices: string[];
-    batchId?: string | null;
-  }): Promise<void>;
-
-  onToolCallRecorded?(data: {
-    toolName: string;
-    input: unknown;
-    output: unknown;
-    batchId: string;
-  }): Promise<void>;
-
   onReceiveComplete(data: {
-    entry: { role: string; content: string };
     stateVars: Record<string, unknown>;
     turn: number;
     memorySnapshot: Record<string, unknown>;
-    payload?: {
-      inputType: 'choice' | 'freetext';
-      selectedIndex?: number;
-    };
-    batchId?: string | null;
   }): Promise<void>;
 
   onScenarioFinished?(data: {
@@ -135,7 +111,7 @@ export interface RestoreConfig {
   currentScene?: SceneState | null;
   defaultScene?: SceneState;
   mem0ApiKey?: string;
-  narrativeReader?: NarrativeHistoryReader;
+  coreEventReader?: CoreEventHistoryReader;
   protocolVersion?: ProtocolVersion;
   parserManifest?: ParserManifest;
   characters?: ReadonlyArray<CharacterAsset>;
@@ -161,7 +137,7 @@ export interface GameSessionConfig {
   coreEventSink?: CoreEventSink;
   defaultScene?: SceneState;
   mem0ApiKey?: string;
-  narrativeReader?: NarrativeHistoryReader;
+  coreEventReader?: CoreEventHistoryReader;
   protocolVersion?: ProtocolVersion;
   parserManifest?: ParserManifest;
   characters?: ReadonlyArray<CharacterAsset>;

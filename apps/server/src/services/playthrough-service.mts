@@ -1,11 +1,11 @@
 /**
  * PlaythroughService — 游玩记录业务逻辑层
  *
- * 封装 playthrough + narrative_entries 的所有数据库操作。
+ * 封装 playthrough 元数据和状态字段的数据库操作。
  * Route 层只负责 HTTP/参数处理，不直接访问 db/schema。
  */
 
-import { eq, and, desc, asc, sql, inArray, isNull } from 'drizzle-orm';
+import { eq, and, desc, sql, inArray, isNull } from 'drizzle-orm';
 import { db, schema } from '#internal/db';
 
 const defined = <T,>(value: T | undefined): value is T => value !== undefined;
@@ -30,7 +30,7 @@ export interface ListFilter {
   kind?: 'production' | 'playtest';
 }
 
-/** 列表项（不含 entries，用于列表展示） */
+/** 列表项（用于列表展示） */
 export interface PlaythroughSummary {
   id: string;
   scriptVersionId: string;
@@ -62,7 +62,7 @@ export interface UpdateInput {
   archived?: boolean;
 }
 
-/** 详情（含 entries 分页） */
+/** 详情 */
 export interface PlaythroughDetail {
   id: string;
   scriptVersionId: string;
@@ -76,7 +76,6 @@ export interface PlaythroughDetail {
   stateVars: Record<string, unknown> | null;
   /**
    * Memory adapter 的 opaque snapshot（0009_memory_snapshot 合并后）。
-   * legacy 格式：{ kind:'legacy-v1', entries, summaries }
    */
   memorySnapshot: Record<string, unknown> | null;
   inputHint: string | null;
@@ -92,34 +91,6 @@ export interface PlaythroughDetail {
   sentenceIndex: number | null;
   createdAt: Date;
   updatedAt: Date;
-  entries: NarrativeEntryRow[];
-  totalEntries: number;
-  hasMore: boolean;
-}
-
-/** narrative_entries 行 */
-export interface NarrativeEntryRow {
-  id: string;
-  playthroughId: string;
-  role: string;
-  /**
-   * 事件类别（migration 0010 / 0011）：
-   *   'narrative' | 'signal_input' | 'tool_call' | 'player_input'
-   * 见 .claude/plans/messages-model.md
-   */
-  kind: string;
-  content: string;
-  reasoning: string | null;
-  /** 按 kind 自描述的结构化载荷（migration 0010 取代 tool_calls dead column） */
-  payload: Record<string, unknown> | null;
-  finishReason: string | null;
-  /**
-   * 同批 entries 的分组标记（migration 0011），见 messages-model.md。
-   * 0010 之前老数据为 null；视图层走启发式兜底。
-   */
-  batchId: string | null;
-  orderIdx: number;
-  createdAt: Date;
 }
 
 // ============================================================================
@@ -210,8 +181,7 @@ export class PlaythroughService {
       status: 'idle',
       turn: 0,
       stateVars: {},
-      // 首次 insert 时不填 snapshot —— LegacyMemory.restore 对 undefined
-      // 或空 object 都能安全兜底为空 entries/summaries。
+      // 首次 insert 时不填 snapshot；具体 adapter 自行兜底空状态。
       memorySnapshot: null,
     });
 
@@ -219,15 +189,13 @@ export class PlaythroughService {
   }
 
   /**
-   * 获取游玩详情 + entries（分页）
+   * 获取游玩详情。
    * 必须传 userId，只返回该用户自己的记录。
    * 不归属当前用户 或 不存在 → 都返回 null（对外都是 404，避免信息泄漏）。
    */
   async getById(
     id: string,
     userId: string,
-    entriesLimit = 50,
-    entriesOffset = 0,
   ): Promise<PlaythroughDetail | null> {
     const rows = await db
       .select()
@@ -237,20 +205,6 @@ export class PlaythroughService {
 
     if (rows.length === 0) return null;
     const pt = rows[0];
-
-    const entries = await db
-      .select()
-      .from(schema.narrativeEntries)
-      .where(eq(schema.narrativeEntries.playthroughId, id))
-      .orderBy(asc(schema.narrativeEntries.orderIdx))
-      .limit(entriesLimit)
-      .offset(entriesOffset);
-
-    const countResult = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(schema.narrativeEntries)
-      .where(eq(schema.narrativeEntries.playthroughId, id));
-    const totalEntries = Number(countResult[0]?.count ?? 0);
 
     return {
       id: pt.id,
@@ -271,9 +225,6 @@ export class PlaythroughService {
       sentenceIndex: pt.sentenceIndex,
       createdAt: pt.createdAt,
       updatedAt: pt.updatedAt,
-      entries: entries as NarrativeEntryRow[],
-      totalEntries,
-      hasMore: entriesOffset + entries.length < totalEntries,
     };
   }
 
@@ -298,10 +249,7 @@ export class PlaythroughService {
     return result.length > 0;
   }
 
-  /**
-   * 硬删除（narrative_entries 通过 CASCADE 自动删除）
-   * 必须传 userId；不属于该用户的记录直接视为不存在（返回 false）。
-   */
+  /** 硬删除。必须传 userId；不属于该用户的记录直接视为不存在（返回 false）。 */
   async delete(id: string, userId: string): Promise<boolean> {
     const result = await db
       .delete(schema.playthroughs)
@@ -374,143 +322,6 @@ export class PlaythroughService {
       .where(eq(schema.playthroughs.id, id));
   }
 
-  /**
-   * 追加叙事条目
-   *
-   * kind 默认 'narrative'。signal_input / tool_call / player_input 条目走同一个入口，
-   * 只是 kind + payload 不同，见 .claude/plans/messages-model.md。
-   */
-  async appendNarrativeEntry(entry: {
-    playthroughId: string;
-    role: string;
-    kind?: string;                       // 默认 'narrative'（migration 0010）
-    content: string;
-    reasoning?: string | null;
-    payload?: Record<string, unknown> | null;  // migration 0010 取代 tool_calls
-    finishReason?: string | null;
-    /**
-     * migration 0011：同一 LLM step / 玩家一次提交产出的 entries 共享的 UUID。
-     * nullable，不传视为 null（老行为兼容）。
-     */
-    batchId?: string | null;
-  }): Promise<string> {
-    const id = crypto.randomUUID();
-
-    // 用 per-playthrough transaction-level advisory lock 串行化 max(orderIdx)
-    // 查询和 insert。普通 READ COMMITTED 事务本身不足以防止两个并发 writer
-    // 同时读到相同 max 值。
-    await db.transaction(async (tx) => {
-      await tx.execute(sql`
-        select pg_advisory_xact_lock(hashtext(${entry.playthroughId}), 0)
-      `);
-
-      const maxResult = await tx
-        .select({ max: sql<number>`coalesce(max(${schema.narrativeEntries.orderIdx}), -1)` })
-        .from(schema.narrativeEntries)
-        .where(eq(schema.narrativeEntries.playthroughId, entry.playthroughId));
-      const nextIdx = Number(maxResult[0]?.max ?? -1) + 1;
-
-      await tx.insert(schema.narrativeEntries).values({
-        id,
-        playthroughId: entry.playthroughId,
-        role: entry.role,
-        kind: entry.kind ?? 'narrative',
-        content: entry.content,
-        reasoning: entry.reasoning ?? null,
-        payload: entry.payload ?? null,
-        finishReason: entry.finishReason ?? null,
-        batchId: entry.batchId ?? null,
-        orderIdx: nextIdx,
-      });
-    });
-
-    return id;
-  }
-
-  /**
-   * 分页加载 entries —— **向前**语义（offset=N 跳过最早 N 条，limit=K 取接下来 K 条）。
-   *
-   * 典型用法：WS 'restored' 消息给客户端回放前 N 条叙事做 UI 恢复。
-   *
-   * ⚠️ 不要用这个读"最近 N 条历史"喂 LLM —— 那是 loadLatestEntries 的职责。
-   * 之前 narrative-reader.readRecent 误用了 loadEntries(limit, 0)，结果 LLM
-   * 在长 session 里永远看到的是最早的 N 条（orderIdx 0-N），最近的 turn
-   * 对 LLM 完全不可见（session 85a8c5c0 reload 后"进度丢失"复盘发现）。
-   */
-  async loadEntries(
-    playthroughId: string,
-    limit: number,
-    offset = 0,
-  ): Promise<NarrativeEntryRow[]> {
-    return await db
-      .select()
-      .from(schema.narrativeEntries)
-      .where(eq(schema.narrativeEntries.playthroughId, playthroughId))
-      .orderBy(asc(schema.narrativeEntries.orderIdx))
-      .limit(limit)
-      .offset(offset) as NarrativeEntryRow[];
-  }
-
-  /**
-   * 统计 playthrough 的 entries 总数（Bug C v29，2026-04-24）。
-   *
-   * 用途：GET /:id/entries 分页端点要让客户端判断是否还有更多可取。
-   * 单独抽一个方法避免 caller 重复写 count sql。
-   */
-  async countEntries(playthroughId: string): Promise<number> {
-    const result = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(schema.narrativeEntries)
-      .where(eq(schema.narrativeEntries.playthroughId, playthroughId));
-    return Number(result[0]?.count ?? 0);
-  }
-
-  /**
-   * 加载"最近 N 条"entries（按 orderIdx 升序返回，即 chronological order）。
-   *
-   * 实现：DB 侧 DESC + limit N 拿到最新 N 条，之后在内存反转成 ASC 返回
-   *      —— 下游 messages-builder / memory adapter 都假设输入是 ASC 排序。
-   *
-   * 典型用法：memory.getRecentAsMessages 通过 NarrativeHistoryReader.readRecent
-   *      拉最近 N 条喂 LLM。
-   */
-  async loadLatestEntries(
-    playthroughId: string,
-    limit: number,
-  ): Promise<NarrativeEntryRow[]> {
-    const rows = await db
-      .select()
-      .from(schema.narrativeEntries)
-      .where(eq(schema.narrativeEntries.playthroughId, playthroughId))
-      .orderBy(desc(schema.narrativeEntries.orderIdx))
-      .limit(limit) as NarrativeEntryRow[];
-    return rows.reverse();
-  }
-
-  /**
-   * 加载 orderIdx 在 [fromOrderIdx, toOrderIdx] 区间内的 entries（闭区间，升序）。
-   * 任一端为 undefined 即不设约束。供 NarrativeHistoryReader.readRange 使用。
-   */
-  async loadEntriesInRange(
-    playthroughId: string,
-    fromOrderIdx?: number,
-    toOrderIdx?: number,
-  ): Promise<NarrativeEntryRow[]> {
-    const conditions = [
-      eq(schema.narrativeEntries.playthroughId, playthroughId),
-      fromOrderIdx !== undefined
-        ? sql`${schema.narrativeEntries.orderIdx} >= ${fromOrderIdx}`
-        : undefined,
-      toOrderIdx !== undefined
-        ? sql`${schema.narrativeEntries.orderIdx} <= ${toOrderIdx}`
-        : undefined,
-    ].filter(defined);
-    return await db
-      .select()
-      .from(schema.narrativeEntries)
-      .where(and(...conditions))
-      .orderBy(asc(schema.narrativeEntries.orderIdx)) as NarrativeEntryRow[];
-  }
 }
 
 // 单例导出

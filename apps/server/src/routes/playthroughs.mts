@@ -21,7 +21,11 @@ import { scriptVersionService } from '#internal/services/script-version-service'
 import { scriptService } from '#internal/services/script-service';
 import { llmConfigService } from '#internal/services/llm-config-service';
 import { requireAnyIdentity, isResponse } from '#internal/auth-identity';
-import { projectReadbackPage } from '#internal/session-readback';
+import { coreEventLogService } from '#internal/services/core-event-log';
+import {
+  coreEventHistoryFromEnvelopes,
+  projectCoreEventHistoryPage,
+} from '@ivn/core/game-session';
 
 export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
 
@@ -228,65 +232,38 @@ export const playthroughRoutes = new Elysia({ prefix: '/api/playthroughs' })
     return result;
   })
 
-  // GET /:id — 游玩详情 + entries（分页），ownership 强制
-  .get('/:id', async ({ params, query, request }) => {
+  // GET /:id — 游玩详情，ownership 强制
+  .get('/:id', async ({ params, request }) => {
     const id = await requireAnyIdentity(request);
     if (isResponse(id)) return id;
 
-    const limit = Number((query as any).limit) || 50;
-    const offset = Number((query as any).offset) || 0;
-
-    const detail = await playthroughService.getById(params.id, id.userId, limit, offset);
+    const detail = await playthroughService.getById(params.id, id.userId);
     if (!detail) {
       return new Response(JSON.stringify({ error: 'Playthrough not found' }), { status: 404 });
     }
     return detail;
   })
 
-  // GET /:id/entries — **轻量**分页读 entries（Bug C v29，2026-04-24）
-  //
-  // 存在意义：断线重连的 restore 流程在 WS 'open' 时只能一次性吃 50 条
-  // （getById 的默认 entriesLimit），超过 50 的老 playthrough 客户端拼不出完整
-  // 历史。GET /:id 也能做到分页，但它每次都 join + SELECT playthroughs 全列
-  // （memorySnapshot / stateVars JSON 很大），fetchMore 每次都传一遍太浪费。
-  //
-  // 这个端点只返回 { sentences, offset, limit, totalEntries, hasMore, nextOffset }。
-  // 前端 ws-client-emitter 收到 'restored' 后如果 hasMore=true，就循环调这个
-  // 端点（用 HTTP 而不是再占 WS，保持 WS 专注推流）直到拉完。
-  //
-  // ownership 校验：先按当前身份读取 playthrough 详情；不存在或不归属都返回 404。
+  // GET /:id/entries — 轻量分页读 CoreEvent 投影出的 Sentence[]。
   .get('/:id/entries', async ({ params, query, request }) => {
     const id = await requireAnyIdentity(request);
     if (isResponse(id)) return id;
 
-    const detail = await playthroughService.getById(params.id, id.userId, 0, 0);
+    const detail = await playthroughService.getById(params.id, id.userId);
     if (!detail) {
       return new Response(JSON.stringify({ error: 'Playthrough not found' }), { status: 404 });
-    }
-
-    const version = await scriptVersionService.getById(detail.scriptVersionId);
-    if (!version) {
-      return new Response(JSON.stringify({ error: 'Script version not found' }), { status: 404 });
     }
 
     const limit = Math.min(Number((query as any).limit) || 100, 500);
     const offset = Number((query as any).offset) || 0;
 
-    const [prefixEntries, pageEntries, totalEntries] = await Promise.all([
-      offset > 0
-        ? playthroughService.loadEntries(params.id, offset, 0)
-        : Promise.resolve([]),
-      playthroughService.loadEntries(params.id, limit, offset),
-      playthroughService.countEntries(params.id),
-    ]);
-
-    return projectReadbackPage({
-      manifest: version.manifest,
-      prefixEntries,
-      pageEntries,
+    const history = coreEventHistoryFromEnvelopes(
+      await coreEventLogService.load(params.id),
+      { sortBySequence: true },
+    );
+    return projectCoreEventHistoryPage(history, {
       offset,
       limit,
-      totalEntries,
     });
   })
 

@@ -25,7 +25,7 @@ import { buildParserManifest, type ParserManifest } from '@ivn/core/narrative-pa
 import { CURRENT_PROTOCOL_VERSION } from '@ivn/core/protocol-version';
 import { createWebSocketCoreEventSink } from '#internal/ws-core-event-sink';
 import { createPlaythroughPersistence } from '#internal/services/playthrough-persistence';
-import { createNarrativeHistoryReader } from '#internal/services/narrative-reader';
+import { createCoreEventHistoryReader } from '#internal/services/core-event-history-reader';
 import { coreEventLogService } from '#internal/services/core-event-log';
 import { createBoundTracing } from '#internal/tracing';
 import { getServerEnv } from '#internal/env';
@@ -78,9 +78,7 @@ export class GameSessionWrapper {
   async attachWebSocket(ws: WS): Promise<void> {
     this.clearTTL();
 
-    // 停掉旧 GameSession，防止 "双活" 竞态：
-    // 旧 session 可能还在 generate 途中写 DB，新 session 恢复后并发写
-    // 会导致 narrative_entries 的 orderIdx 重复/乱序。
+    // 停掉旧 GameSession，防止同一 playthrough 在两个 wrapper 中并发推进。
     if (this.gameSession) {
       this.gameSession.stop();
       this.gameSession = null;
@@ -145,14 +143,7 @@ export class GameSessionWrapper {
       coreEventSink: base.coreEventSink,
       // mem0 key 从 base 带过来（base 已经从 env 读好了）
       mem0ApiKey: base.mem0ApiKey,
-      // 🐛 FIX 2026-04-24（session 85a8c5c0 / 1e5f07db reload 100% 丢进度复盘）：
-      // narrativeReader 原来漏在 restore 路径没传，createMemory 拿到 reader=undefined，
-      // adapter 的 getRecentAsMessages 每次返回空 —— reload 后 LLM 看不到任何历史，
-      // assembler 塞 initialPrompt 兜底，LLM 被诱导"从头开始"。
-      //
-      // start() 走 buildConfig() 整包传所以没踩；restore() 手工挑字段漏了这个。
-      // 下次新增 GameSessionConfig 字段要警惕这里同步更新，或者干脆直接 `...base`。
-      narrativeReader: base.narrativeReader,
+      coreEventReader: base.coreEventReader,
       // V.2：parser 分叉键 + 白名单；restore 路径和 start 走同一份，保证重连后
       // parser 选型不跳变
       protocolVersion: base.protocolVersion,
@@ -248,9 +239,7 @@ export class GameSessionWrapper {
         kind: this.kind,
       }),
       coreEventSink: this.coreEventSink ?? undefined,
-      // Memory Refactor v2：memory adapter 通过 reader 从 canonical
-      // narrative_entries 读历史，不再持有 entries 副本。
-      narrativeReader: createNarrativeHistoryReader(this.playthroughId),
+      coreEventReader: createCoreEventHistoryReader(this.playthroughId),
     };
   }
 }

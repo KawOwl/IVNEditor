@@ -86,6 +86,22 @@ export {
   deriveCoreEventLogRestoreState,
   deriveCoreEventRestoreState,
 } from '#internal/game-session/core-event-log-restore';
+export {
+  buildMessagesFromCoreEventHistory,
+  capMessagesByBudgetFromTail,
+  coreEventHistoryFromEnvelopes,
+  projectCoreEventHistoryPage,
+  projectCoreEventHistoryToMemoryEntries,
+  projectCoreEventHistoryToSentences,
+  serializeMessagesForDebug,
+} from '#internal/game-session/core-event-history';
+export type {
+  BuildCoreEventMessagesOptions,
+  CoreEventHistoryItem,
+  CoreEventHistoryReader,
+  CoreEventMemoryEntry,
+  CoreEventSentencePage,
+} from '#internal/game-session/core-event-history';
 export type {
   CoreEventLogRestoreOptions,
   CoreEventLogRestoreState,
@@ -400,7 +416,7 @@ export class GameSession {
       config: config.memoryConfig,
       llmClient: this.llmClient,
       mem0ApiKey: config.mem0ApiKey,
-      reader: config.narrativeReader,
+      coreEventReader: config.coreEventReader,
     });
     this.segments = config.segments;
     this.enabledTools = config.enabledTools ?? [];

@@ -116,7 +116,7 @@ export interface StepInfo {
   /**
    * 本 step 的 batchId（migration 0011）。
    * 在 experimental_onStepStart 里生成 UUID，该 step 的所有工具调用 + narrative
-   * 写入 narrative_entries 时共享这个 id。
+   * CoreEvent 共享这个 id。
    *
    * 视图层 messages-builder 用 batchId 精确分组"一个 LLM step 的所有事件"，
    * 投影成一对 assistant + tool message。
@@ -174,10 +174,10 @@ export interface GenerateOptions {
   onStepStart?: (info: { stepNumber: number; batchId: string; isFollowup: boolean }) => void;
   /**
    * 每个工具调用 finish 时触发（experimental_onToolCallFinish）—— 方案 B
-   * 前置：把 tool_call 写入 narrative_entries.kind='tool_call'。
+   * 前置：上游可把非特殊工具调用记录成 tool-call CoreEvent。
    *
    * **跳过 signal_input_needed / end_scenario**：
-   *   - signal_input_needed 走专属的 onSignalInputRecorded 路径（hint + choices 写进 signal_input kind）
+   *   - signal_input_needed 由 GenerateTurnRuntime 记录 signal-input CoreEvent
    *   - end_scenario 走 onScenarioFinished 路径
    *
    * 非目标：把 tool output 做任何业务转换 —— 只是原始 input/output 透传给上游做持久化。
@@ -427,8 +427,8 @@ export class LLMClient {
       }
 
       // migration 0011：把非 signal/end 类 tool_call 透传给上游做持久化。
-      // signal_input_needed 走专属 onSignalInputRecorded 路径；end_scenario
-      // 走 onScenarioFinished。其余（update_state / change_scene / ...）进 entries。
+      // signal_input_needed / end_scenario 由外层 runtime 解释；其余工具结果
+      // 会作为 CoreEvent 进入事件日志。
       if (onToolObserved && toolName !== 'signal_input_needed' && toolName !== 'end_scenario') {
         const batchId = stepBatchIdMap.get(currentStepNumber);
         if (batchId) {
@@ -754,30 +754,30 @@ export class LLMClient {
     // toolName: 'signal_input_needed' } 在 provider 解码层强制模型选这个工
     // 具 —— 这是协议级保证，不再依赖 prompt 里的"必须调用"提示词。
     //
-    // 对 narrativeEntries 的影响（关键设计）：
+    // 对 batchId 分组的影响（关键设计）：
     //   1. 主 generate 最后一个 step 的 onStep 回调把 currentStepBatchId 设
     //      到 mainLastBatchId
     //   2. follow-up step 的 handleStepStart 在 llm-client 本地 Map 里生成
     //      新 batchId，但 AI SDK 的 tool.execute（signal_input_needed）在
     //      follow-up step 的 onStepFinish 之前触发
     //   3. execute 里 recordPendingSignal 读 game-session 的
-    //      currentStepBatchId，此时仍是 mainLastBatchId → signal_input entry
+    //      currentStepBatchId，此时仍是 mainLastBatchId → signal-input CoreEvent
     //      挂 mainLastBatchId ✓
     //   4. follow-up step 的 onStepFinish 带 isFollowup=true 触发
     //      game-session 的 onStep 回调，游戏层要识别并**跳过**更新
     //      currentStepBatchId（见 game-session.ts 的 !step.isFollowup 判
     //      断），保持 mainLastBatchId
     //   5. generate() 返回后 game-session 在 coreLoop flush
-    //      currentNarrativeBuffer 进 narrative_entries，batchId 仍是
-    //      mainLastBatchId → narrative entry 也挂 mainLastBatchId ✓
+    //      currentNarrativeBuffer 记录成 CoreEvent，batchId 仍是
+    //      mainLastBatchId → narrative segment 也挂 mainLastBatchId ✓
     //
     // 最终 narrative + signal_input 落在同一个 batchId，messages-builder 按
     // batchId 分组后投成一个干净的 assistant message（reasoning + text +
     // tool_call）。比现状两 step 主生成时拆成两个 assistant message 更清爽，
     // 且对 DeepSeek V4 thinking 模式 replay（要求 reasoning_content 在带
     // tool_calls 的 assistant message 上）完全兼容——reasoning 来自主最后
-    // 一 step 的 narrative entry，tool_call 来自同 batch 的 signal_input
-    // entry，一起上车。
+    // 一 step 的 narrative segment，tool_call 来自同 batch 的 signal-input
+    // event，一起上车。
     //
     // 失败处理：任何 follow-up 异常（provider 错误、模型仍拒绝调工具、abort）
     // 都只 warn/log，不把异常冒上来影响主 generate 的结果。空停兜底到

@@ -14,9 +14,9 @@
  */
 
 import type { ModelMessage } from 'ai';
+import type { CoreEventHistoryReader } from '#internal/game-session/core-event-history';
 import type { MemoryEntry, MemoryConfig } from '#internal/types';
 import type { LLMClient } from '#internal/llm-client';
-import type { NarrativeHistoryReader } from '#internal/memory/narrative-reader';
 
 /**
  * Memory scope —— 绑定到具体的 playthrough
@@ -62,7 +62,7 @@ export interface RecentMessagesResult {
 /**
  * 快照 —— opaque JSON，由 adapter 自己解释
  *
- * - legacy: { kind:'legacy-v1', entries, summaries, watermark }
+ * - legacy: { kind:'legacy-v2', summaries, pinned, compressedUpTo }
  * - mem0:   { kind:'mem0-v1', recentEntries, ... }（云端数据不在 snapshot 里）
  *
  * adapter.restore 必须先检 kind 再解包；不认的 kind 抛错。
@@ -87,8 +87,8 @@ export interface Memory {
    *
    * **Memory Refactor v2 后实际语义变了**（2026-04-23）：
    *   - **Legacy / LLMSummarizer**：**几乎 no-op**。仅返回一个占位 MemoryEntry，
-   *     不存任何 state。历史 entries 由 NarrativeHistoryReader 从 canonical
-   *     narrative_entries 按需读；摘要由 maybeCompact 压缩产生。
+   *     不存任何 state。历史内容由 CoreEventHistoryReader 从 canonical
+   *     core_event_envelopes 按需投影；摘要由 maybeCompact 压缩产生。
    *   - **Mem0**：**真做事** —— 推送到云端做长期语义记忆。本地 recentEntries
    *     窗口也会更新（供 getRecentAsMessages 用）。
    *
@@ -178,14 +178,13 @@ export interface CreateMemoryOptions {
   /** Mem0 adapter 需要；由宿主运行时读取并验证 env 后注入，core 不读 process.env。 */
   mem0ApiKey?: string;
   /**
-   * Memory Refactor v2（2026-04-23）：从 canonical narrative_entries 读历史的
+   * CoreEvent-only content log：从 canonical core_event_envelopes 读历史的
    * 接口。legacy / llm-summarizer 的 retrieve / getRecentAsMessages / maybeCompact
-   * 通过它拉 entries，不再自己持有副本。
+   * 通过它拉事件投影。
    *
    * mem0 adapter 暂不依赖 reader（本地 recentEntries 窗口已够用）。
    * 单元测试可以不传 —— adapter 内部 reader undefined 时保守返回空 messages。
    *
-   * 详见 .claude/plans/memory-refactor-v2.md
    */
-  reader?: NarrativeHistoryReader;
+  coreEventReader?: CoreEventHistoryReader;
 }
