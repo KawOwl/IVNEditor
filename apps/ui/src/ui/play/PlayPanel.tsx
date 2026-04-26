@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { InputPanel } from '#internal/ui/InputPanel';
 import { VNStageContainer } from '#internal/ui/play/vn/VNStageContainer';
+import { MemoryPanel } from '#internal/ui/play/MemoryPanel';
 import { useGameStore } from '@/stores/game-store';
 import {
   createRemoteSession,
@@ -365,6 +366,8 @@ export function PlayPanel({
           characters={manifest.characters ?? []}
           backgrounds={manifest.backgrounds ?? []}
         />
+        {/* ANN.1 Memory deletion annotation panel — Figma stage 1-2 */}
+        <MemoryPanel playthroughId={currentPlaythroughId} />
       </div>
 
       {/* Input area */}

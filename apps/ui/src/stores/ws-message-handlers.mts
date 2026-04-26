@@ -49,6 +49,7 @@ const SESSION_MESSAGE_HANDLERS: Record<string, SessionMessageHandler> = {
   'update-debug': handleUpdateDebugMessage,
   sentence: handleSentenceMessage,
   'scene-change': handleSceneChangeMessage,
+  'memory-retrieval': handleMemoryRetrievalMessage,
 };
 
 export function handleSessionMessage(
@@ -120,6 +121,43 @@ function handleSentenceMessage(msg: WSMessage, { store }: SessionMessageContext)
 
 function handleSceneChangeMessage(msg: WSMessage, { store }: SessionMessageContext): void {
   applySceneChange(msg, store);
+}
+
+/**
+ * ANN.1：每次 server 端 Memory.retrieve 后通过 'memory-retrieval' WS 消息广播。
+ * 客户端塞进 game-store.memoryRetrievals，MemoryPanel 消费。
+ */
+function handleMemoryRetrievalMessage(msg: WSMessage, { store }: SessionMessageContext): void {
+  const retrievalId = readString(msg.retrievalId);
+  const turn = readNumber(msg.turn);
+  const sourceRaw = readString(msg.source);
+  const source = sourceRaw === 'tool-call' ? 'tool-call' : 'context-assembly';
+  const query = readString(msg.query) ?? '';
+  const summary = readString(msg.summary) ?? '';
+  if (!retrievalId || turn === null) return;
+
+  const entriesRaw = Array.isArray(msg.entries) ? msg.entries : [];
+  const entries = entriesRaw
+    .filter((e): e is Record<string, unknown> => isRecord(e))
+    .map((e) => ({
+      id: readString(e.id) ?? '',
+      turn: readNumber(e.turn) ?? -1,
+      role: readString(e.role) ?? 'system',
+      content: readString(e.content) ?? '',
+      tokenCount: readNumber(e.tokenCount) ?? 0,
+      timestamp: readNumber(e.timestamp) ?? 0,
+      pinned: typeof e.pinned === 'boolean' ? e.pinned : undefined,
+    }))
+    .filter((e) => e.id.length > 0);
+
+  store().appendMemoryRetrieval({
+    retrievalId,
+    turn,
+    source,
+    query,
+    entries,
+    summary,
+  });
 }
 
 function restoreSessionSnapshot(

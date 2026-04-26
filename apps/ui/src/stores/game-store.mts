@@ -27,6 +27,41 @@ import type {
 // Types
 // ============================================================================
 
+// ============================================================================
+// ANN.1 Memory annotation types
+// ============================================================================
+
+export type MemoryReasonCode = 'character-broken' | 'memory-confused' | 'logic-error' | 'other';
+
+export interface MemoryRetrievalEntry {
+  id: string;
+  turn: number;
+  role: string;
+  content: string;
+  tokenCount: number;
+  timestamp: number;
+  pinned?: boolean;
+}
+
+export interface MemoryRetrievalView {
+  retrievalId: string;
+  turn: number;
+  source: 'context-assembly' | 'tool-call';
+  query: string;
+  entries: MemoryRetrievalEntry[];
+  summary: string;
+}
+
+export interface MemoryDeletionView {
+  annotationId: string;
+  memoryEntryId: string;
+  reasonCode: MemoryReasonCode;
+  /** 5s 撤销窗内是否仍可撤销 */
+  cancellable: boolean;
+  /** ms epoch */
+  createdAt: number;
+}
+
 export interface GameState {
   // --- Session Status ---
   status: 'idle' | 'loading' | 'generating' | 'waiting-input' | 'compressing' | 'error' | 'finished';
@@ -47,6 +82,18 @@ export interface GameState {
   memoryEntries: Array<{ role: string; content: string; pinned?: boolean }>;
   memorySummaries: string[];
   changelogEntries: Array<{ turn: number; key: string; oldValue: unknown; newValue: unknown; source: string }>;
+
+  // --- ANN.1 Memory annotation ---
+  /**
+   * 最近 N 个 turn 的 retrieval（带 entries），最新在末尾。
+   * MemoryPanel 默认显示最后一个的 entries 集合（去重 by entry.id）。
+   */
+  memoryRetrievals: MemoryRetrievalView[];
+  /**
+   * by entryId 索引的删除标注。包括 active + 5s 撤销窗内的新标注。
+   * 5s 后 cancellable 翻 false（仍保留在 map 里给 UI 用 reasonCode 渲染灰态）。
+   */
+  memoryDeletions: Record<string, MemoryDeletionView>;
   // --- Assembled Context (for editor debug) ---
   assembledSystemPrompt: string | null;
   assembledMessages: Array<{ role: string; content: string }>;
@@ -118,6 +165,23 @@ export interface GameState {
    * 不能再盖一层开场气泡。
    */
   seedOpeningSentences: (messages: string[], scene: SceneState) => void;
+
+  // --- ANN.1 Memory annotation actions ---
+  /** 接收一次 retrieve 的结果（来自 WS 'memory-retrieval' 事件）*/
+  appendMemoryRetrieval: (retrieval: MemoryRetrievalView) => void;
+  /** 接收已存在标注集合（list_turn_retrievals 返回的 activeDeletions）*/
+  setMemoryDeletions: (deletions: Array<{ annotationId: string; memoryEntryId: string; reasonCode: MemoryReasonCode }>) => void;
+  /** 乐观写入：op 调用前本地立即标记，op 失败时再 revert */
+  markMemoryDeletedLocal: (input: {
+    annotationId: string;
+    memoryEntryId: string;
+    reasonCode: MemoryReasonCode;
+  }) => void;
+  /** 撤销窗倒计时结束：把 cancellable 翻 false（保留 reasonCode 用于灰态渲染）*/
+  expireMemoryDeletionCancellable: (annotationId: string) => void;
+  /** 撤销标注：从 deletions 中移除 */
+  removeMemoryDeletion: (annotationId: string) => void;
+
   reset: () => void;
 }
 
@@ -163,6 +227,9 @@ const initialState = {
   // 初始 true：剧本刚开始时第一条 Sentence 到达就能自动显示给玩家
   catchUpPending: true,
   lastSceneTransition: 'fade' as 'fade' | 'cut' | 'dissolve',
+  // ANN.1
+  memoryRetrievals: [] as MemoryRetrievalView[],
+  memoryDeletions: {} as Record<string, MemoryDeletionView>,
 };
 
 export const useGameStore = create<GameState>((set) => ({
@@ -305,6 +372,75 @@ export const useGameStore = create<GameState>((set) => ({
       };
     }),
 
+  // --- ANN.1 Memory annotation ---
+  appendMemoryRetrieval: (retrieval) =>
+    set((state) => {
+      // 去重 by retrievalId（重连时 server 可能重发）
+      if (state.memoryRetrievals.some((r) => r.retrievalId === retrieval.retrievalId)) {
+        return state;
+      }
+      // 保留最近 20 条 retrieval（轮次推进时旧的就老化）
+      const next = [...state.memoryRetrievals, retrieval].slice(-20);
+      return { memoryRetrievals: next };
+    }),
+
+  setMemoryDeletions: (deletions) =>
+    set((state) => {
+      // 合并：保留本地仍 cancellable=true 的乐观标注（用户刚标的，5s 撤销窗内
+      // 还可以撤），不被 server fetch 的"已超过撤销窗的历史标注"覆盖。
+      const map: Record<string, MemoryDeletionView> = {};
+      for (const d of deletions) {
+        map[d.memoryEntryId] = {
+          annotationId: d.annotationId,
+          memoryEntryId: d.memoryEntryId,
+          reasonCode: d.reasonCode,
+          cancellable: false,
+          createdAt: 0,
+        };
+      }
+      // 把本地仍 cancellable 的（且 server 端可能还没 sync 到）保留
+      for (const [k, v] of Object.entries(state.memoryDeletions)) {
+        if (v.cancellable) map[k] = v;
+      }
+      return { memoryDeletions: map };
+    }),
+
+  markMemoryDeletedLocal: (input) =>
+    set((state) => ({
+      memoryDeletions: {
+        ...state.memoryDeletions,
+        [input.memoryEntryId]: {
+          annotationId: input.annotationId,
+          memoryEntryId: input.memoryEntryId,
+          reasonCode: input.reasonCode,
+          cancellable: true,
+          createdAt: Date.now(),
+        },
+      },
+    })),
+
+  expireMemoryDeletionCancellable: (annotationId) =>
+    set((state) => {
+      const next = { ...state.memoryDeletions };
+      for (const [k, v] of Object.entries(next)) {
+        if (v.annotationId === annotationId && v.cancellable) {
+          next[k] = { ...v, cancellable: false };
+        }
+      }
+      return { memoryDeletions: next };
+    }),
+
+  removeMemoryDeletion: (annotationId) =>
+    set((state) => {
+      const next = { ...state.memoryDeletions };
+      for (const [k, v] of Object.entries(next)) {
+        if (v.annotationId === annotationId) {
+          delete next[k];
+        }
+      }
+      return { memoryDeletions: next };
+    }),
+
   reset: () => set({
     ...initialState,
     parsedSentences: [],
@@ -312,6 +448,8 @@ export const useGameStore = create<GameState>((set) => ({
     visibleSentenceIndex: null,
     catchUpPending: true,
     lastSceneTransition: 'fade',
+    memoryRetrievals: [],
+    memoryDeletions: {},
   }),
 }));
 
