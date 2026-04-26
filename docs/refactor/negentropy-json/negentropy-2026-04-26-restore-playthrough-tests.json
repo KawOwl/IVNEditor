@@ -1,0 +1,237 @@
+{
+  "tool_version": "0.1.0",
+  "target_path": "/Users/kawowl/.codex/worktrees/8023/IVNEditor",
+  "effective_extensions": [
+    ".cjs",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".mts",
+    ".ts",
+    ".tsx"
+  ],
+  "summary": {
+    "files_scanned": 225,
+    "modules": 225,
+    "overall_risk": "medium"
+  },
+  "dimensions": [
+    {
+      "id": "module_abstraction",
+      "metric": "IIE",
+      "raw": 0.025,
+      "risk": "low"
+    },
+    {
+      "id": "logic_cohesion",
+      "metric": "EAD",
+      "raw": 2.0,
+      "risk": "medium"
+    },
+    {
+      "id": "change_blast_radius",
+      "metric": "TCR",
+      "raw": 0.0,
+      "risk": "low"
+    },
+    {
+      "id": "architecture_decoupling",
+      "metric": "TCE",
+      "raw": 0.0,
+      "risk": "low"
+    },
+    {
+      "id": "testability_pluggability",
+      "metric": "EDR",
+      "raw": 0.877,
+      "risk": "low"
+    },
+    {
+      "id": "intent_redundancy",
+      "metric": "PLME",
+      "raw": 0.0,
+      "risk": "low"
+    },
+    {
+      "id": "state_encapsulation",
+      "metric": "SSE+OA",
+      "raw": {
+        "oa": 0.051,
+        "sse": 1.404
+      },
+      "risk": "medium"
+    }
+  ],
+  "hotspots": [
+    {
+      "dimension_id": "logic_cohesion",
+      "entity": "packages/core/src/game-session/generate-turn-runtime.mts::drainNarrativeBatch",
+      "metric_value": 23.0,
+      "location": "packages/core/src/game-session/generate-turn-runtime.mts:173",
+      "reason": "Reads external attributes more than self attributes"
+    },
+    {
+      "dimension_id": "logic_cohesion",
+      "entity": "apps/server/src/operations/script/add-character-sprite.mts::exec",
+      "metric_value": 20.0,
+      "location": "apps/server/src/operations/script/add-character-sprite.mts:77",
+      "reason": "Reads external attributes more than self attributes"
+    },
+    {
+      "dimension_id": "logic_cohesion",
+      "entity": "apps/server/src/operations/script/add-background.mts::exec",
+      "metric_value": 15.0,
+      "location": "apps/server/src/operations/script/add-background.mts:63",
+      "reason": "Reads external attributes more than self attributes"
+    },
+    {
+      "dimension_id": "module_abstraction",
+      "entity": "packages/core/src/schemas.mts",
+      "metric_value": 22.0,
+      "location": "file",
+      "reason": "High interface-to-implementation ratio"
+    },
+    {
+      "dimension_id": "module_abstraction",
+      "entity": "apps/server/src/db/schema.mts",
+      "metric_value": 9.0,
+      "location": "file",
+      "reason": "High interface-to-implementation ratio"
+    },
+    {
+      "dimension_id": "module_abstraction",
+      "entity": "packages/core/src/messages-builder.mts",
+      "metric_value": 9.0,
+      "location": "file",
+      "reason": "High interface-to-implementation ratio"
+    },
+    {
+      "dimension_id": "state_encapsulation",
+      "entity": "packages/core/src/__tests__/narration-cut.test.mts",
+      "metric_value": 4.0,
+      "location": "file",
+      "reason": "High mutable declaration expansion (SSE)"
+    },
+    {
+      "dimension_id": "state_encapsulation",
+      "entity": "packages/core/src/__tests__/narration-pipeline.test.mts",
+      "metric_value": 3.0,
+      "location": "file",
+      "reason": "High mutable declaration expansion (SSE)"
+    },
+    {
+      "dimension_id": "state_encapsulation",
+      "entity": "packages/core/src/game-session/core-event-history.mts",
+      "metric_value": 3.0,
+      "location": "file",
+      "reason": "High mutable declaration expansion (SSE)"
+    },
+    {
+      "dimension_id": "testability_pluggability",
+      "entity": "apps/server/src/__tests__/_db-guard.mts::assertTestDatabase",
+      "metric_value": 1.0,
+      "location": "apps/server/src/__tests__/_db-guard.mts:28",
+      "reason": "Hardcoded dependency pressure"
+    },
+    {
+      "dimension_id": "testability_pluggability",
+      "entity": "apps/server/src/__tests__/app-smoke.test.mts::anonymous@21",
+      "metric_value": 1.0,
+      "location": "apps/server/src/__tests__/app-smoke.test.mts:21",
+      "reason": "Hardcoded dependency pressure"
+    },
+    {
+      "dimension_id": "testability_pluggability",
+      "entity": "apps/server/src/__tests__/app-smoke.test.mts::anonymous@22",
+      "metric_value": 1.0,
+      "location": "apps/server/src/__tests__/app-smoke.test.mts:22",
+      "reason": "Hardcoded dependency pressure"
+    }
+  ],
+  "delta": {
+    "baseline_path": "docs/refactor/negentropy-json/negentropy-2026-04-26-reset-drizzle-baseline.json",
+    "dimensions": [
+      {
+        "id": "module_abstraction",
+        "metric": "IIE",
+        "baseline_raw": 0.028,
+        "current_raw": 0.025,
+        "raw_delta": -0.003,
+        "baseline_risk": "low",
+        "current_risk": "low",
+        "risk_delta": 0
+      },
+      {
+        "id": "logic_cohesion",
+        "metric": "EAD",
+        "baseline_raw": 2.0,
+        "current_raw": 2.0,
+        "raw_delta": 0.0,
+        "baseline_risk": "medium",
+        "current_risk": "medium",
+        "risk_delta": 0
+      },
+      {
+        "id": "change_blast_radius",
+        "metric": "TCR",
+        "baseline_raw": 0.0,
+        "current_raw": 0.0,
+        "raw_delta": 0.0,
+        "baseline_risk": "low",
+        "current_risk": "low",
+        "risk_delta": 0
+      },
+      {
+        "id": "architecture_decoupling",
+        "metric": "TCE",
+        "baseline_raw": 0.0,
+        "current_raw": 0.0,
+        "raw_delta": 0.0,
+        "baseline_risk": "low",
+        "current_risk": "low",
+        "risk_delta": 0
+      },
+      {
+        "id": "testability_pluggability",
+        "metric": "EDR",
+        "baseline_raw": 0.885,
+        "current_raw": 0.877,
+        "raw_delta": -0.008,
+        "baseline_risk": "low",
+        "current_risk": "low",
+        "risk_delta": 0
+      },
+      {
+        "id": "intent_redundancy",
+        "metric": "PLME",
+        "baseline_raw": 0.0,
+        "current_raw": 0.0,
+        "raw_delta": 0.0,
+        "baseline_risk": "low",
+        "current_risk": "low",
+        "risk_delta": 0
+      },
+      {
+        "id": "state_encapsulation",
+        "metric": "SSE+OA",
+        "baseline_raw": {
+          "oa": 0.051,
+          "sse": 1.404
+        },
+        "current_raw": {
+          "oa": 0.051,
+          "sse": 1.404
+        },
+        "raw_delta": {
+          "oa": 0.0,
+          "sse": 0.0
+        },
+        "baseline_risk": "medium",
+        "current_risk": "medium",
+        "risk_delta": 0
+      }
+    ],
+    "resolved_hotspots": [],
+    "new_hotspots": []
+  }
+}
