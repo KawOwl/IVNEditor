@@ -222,10 +222,12 @@ export function ScriptInfoPanel({
             />
           </Field>
           {/*
-            Memory adapter 选择（Phase 3-B）
+            Memory adapter 选择
             - legacy：截断拼接"压缩"，无外部依赖（默认）
             - llm-summarizer：真 LLM 摘要，用主模型，质量更高
             - mem0：mem0 云端托管向量检索，需要 server 配 MEM0_API_KEY
+            - memorax：self-hosted Memorax HTTP backend，需要 MEMORAX_BASE_URL / MEMORAX_API_KEY / MEMORAX_APP_ID
+            - parallel：fan-out 写 memorax + mem0，retrieve memorax 优先 mem0 fallback；需要两套 env 都齐
             切换后**现有 playthrough 的 snapshot 不兼容**，restore 会抛错。
             新剧本选好 provider，跟着剧本一辈子。想切需要另建剧本或重置所有 playthrough。
           */}
@@ -234,18 +236,42 @@ export function ScriptInfoPanel({
               value={memoryConfig.provider ?? 'legacy'}
               onChange={(e) => onMemoryConfigChange({
                 ...memoryConfig,
-                provider: e.target.value as 'legacy' | 'llm-summarizer' | 'mem0',
+                provider: e.target.value as
+                  | 'legacy'
+                  | 'llm-summarizer'
+                  | 'mem0'
+                  | 'memorax'
+                  | 'parallel',
               })}
               className={cn(inputClass, 'w-48')}
             >
               <option value="legacy">legacy（截断拼接，默认）</option>
               <option value="llm-summarizer">llm-summarizer（LLM 摘要）</option>
               <option value="mem0">mem0（云端向量检索）</option>
+              <option value="memorax">memorax（自部署 HTTP）</option>
+              <option value="parallel">parallel（memorax 主 + mem0 备）</option>
             </select>
           </Field>
           {memoryConfig.provider === 'mem0' && (
             <div className="text-[11px] text-amber-500/80 pl-1">
               ⓘ mem0 需要 server 端配 <code className="bg-zinc-800 px-1 rounded">MEM0_API_KEY</code> 环境变量。
+            </div>
+          )}
+          {memoryConfig.provider === 'memorax' && (
+            <div className="text-[11px] text-amber-500/80 pl-1">
+              ⓘ memorax 需要 server 端配{' '}
+              <code className="bg-zinc-800 px-1 rounded">MEMORAX_BASE_URL</code>{' '}
+              <code className="bg-zinc-800 px-1 rounded">MEMORAX_API_KEY</code>{' '}
+              <code className="bg-zinc-800 px-1 rounded">MEMORAX_APP_ID</code> 三个环境变量。
+            </div>
+          )}
+          {memoryConfig.provider === 'parallel' && (
+            <div className="text-[11px] text-amber-500/80 pl-1">
+              ⓘ parallel 同时写 memorax + mem0、读优先 memorax fallback mem0；需要 server 端两套 env 都配齐：
+              <code className="bg-zinc-800 px-1 rounded">MEM0_API_KEY</code> 加{' '}
+              <code className="bg-zinc-800 px-1 rounded">MEMORAX_BASE_URL</code>{' '}
+              <code className="bg-zinc-800 px-1 rounded">MEMORAX_API_KEY</code>{' '}
+              <code className="bg-zinc-800 px-1 rounded">MEMORAX_APP_ID</code>。
             </div>
           )}
           {memoryConfig.provider && memoryConfig.provider !== 'legacy' && (
