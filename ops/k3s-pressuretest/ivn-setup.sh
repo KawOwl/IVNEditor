@@ -26,6 +26,14 @@
 #   IVN_PG_SSLMODE   默认 require
 #   NODE_PORT        默认 30081（对外访问端口）
 #   ACR_SERVER       默认 memoryx-registry-registry-vpc.cn-shenzhen.cr.aliyuncs.com
+#
+#   # 长期记忆 adapter（剧本 memoryConfig.provider 选 'mem0' / 'memorax' /
+#   # 'parallel' 时必填对应那套；缺失则 createMemory 抛错。空串等同未设置：
+#   # spec/env.mts 的 emptyToUndefined 会归一化）
+#   MEM0_API_KEY        mem0 云端托管向量检索的 API key
+#   MEMORAX_BASE_URL    self-hosted Memorax 后端 URL，例 http://47.99.179.197
+#   MEMORAX_API_KEY     Memorax 业务 API key（sk_ 开头）
+#   MEMORAX_APP_ID      Memorax app_id 命名空间，默认 ivn-editor
 
 set -euo pipefail
 
@@ -146,12 +154,23 @@ kubectl -n ivn create secret generic ivn-backend \
   --from-literal=S3_SECRET_ACCESS_KEY="$OSS_SK" \
   --from-literal=S3_BUCKET="$OSS_BUCKET" \
   --from-literal=S3_FORCE_PATH_STYLE="false" \
+  `# 长期记忆 adapter env（mem0 / memorax / parallel；缺失等同未配置）` \
+  --from-literal=MEM0_API_KEY="${MEM0_API_KEY:-}" \
+  --from-literal=MEMORAX_BASE_URL="${MEMORAX_BASE_URL:-}" \
+  --from-literal=MEMORAX_API_KEY="${MEMORAX_API_KEY:-}" \
+  --from-literal=MEMORAX_APP_ID="${MEMORAX_APP_ID:-ivn-editor}" \
   >/dev/null
 
 info "  DATABASE_URL    → $IVN_PG_USER@$IVN_PG_HOST:$IVN_PG_PORT/$IVN_DB_NAME"
 info "  S3_BUCKET       → $OSS_BUCKET"
 info "  LANGFUSE_HOST   → cluster-internal service"
 info "  ADMIN_USERS     → admin:$(echo "$IVN_ADMIN_PASSWORD" | cut -c1-4)****"
+# memory adapter env 状态：标 set / (unset)，不打 key 本身
+_redact() { [[ -n "${1:-}" ]] && echo "set" || echo "(unset)"; }
+info "  MEM0_API_KEY    → $(_redact "${MEM0_API_KEY:-}")"
+info "  MEMORAX_BASE_URL → ${MEMORAX_BASE_URL:-(unset)}"
+info "  MEMORAX_API_KEY → $(_redact "${MEMORAX_API_KEY:-}")"
+info "  MEMORAX_APP_ID  → ${MEMORAX_APP_ID:-ivn-editor}"
 
 # ============================================================
 # ACR 拉取凭证
