@@ -280,6 +280,91 @@ describe('CoreEvent history projection', () => {
       expect(all).toContain('turn 4 rewrite 版');
     });
 
+    // 紧急回归（trace cc5a92fe，2026-04-26）：第一版改进 B 用
+    // `reason !== 'rewrite-applied'` 一刀切跳过同 turn 其他 segment——把
+    // step-reasoning（DeepSeek V4 thinking 模式的 reasoning_content 来源）
+    // 也跳了，导致下一轮 main generate 时 DeepSeek API 报 400 "reasoning_content
+    // in thinking mode must be passed back". 修复后跳的是 preflush + generate-complete
+    // 这两类内容性 segment，step-reasoning 必须保留。
+    it('messages-builder: rewrite-applied turn 内 step-reasoning segment 仍被保留（DeepSeek thinking）', () => {
+      const messages = buildMessagesFromCoreEventHistory([
+        // step 0 reasoning（thinking 模式 stub entry，content=''）
+        item(1, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(2),
+          stepId: null,
+          batchId: batchId('batch-2-main'),
+          reason: 'step-reasoning',
+          entry: { role: 'generate', content: '', reasoning: 'step0 思考...' },
+          sceneAfter: emptyScene,
+        }),
+        // step 1 reasoning
+        item(2, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(2),
+          stepId: null,
+          batchId: batchId('batch-2-main'),
+          reason: 'step-reasoning',
+          entry: { role: 'generate', content: '', reasoning: 'step1 思考...' },
+          sceneAfter: emptyScene,
+        }),
+        // 主路径输出 prose 被 preflush 落库
+        item(3, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(2),
+          stepId: null,
+          batchId: batchId('batch-2-main'),
+          reason: 'signal-input-preflush',
+          entry: { role: 'generate', content: '原 prose 段（应被覆盖）' },
+          sceneAfter: emptyScene,
+        }),
+        // rewrite 应用，落 rewrite-applied（reasoning 字段为空，因为 rewrite call 不产 reasoning）
+        item(4, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(2),
+          stepId: null,
+          batchId: batchId('batch-2-main'),
+          reason: 'rewrite-applied',
+          entry: { role: 'generate', content: '<narration>rewrite 版</narration>' },
+          sceneAfter: emptyScene,
+        }),
+      ]);
+      const assistantContent = JSON.stringify(messages[0]?.content ?? '');
+      // narrative：rewrite 版替代 prose 段
+      expect(assistantContent).toContain('rewrite 版');
+      expect(assistantContent).not.toContain('原 prose 段');
+      // **关键**：step 0 / step 1 的 reasoning 必须**仍在** assistant message
+      //（DeepSeek V4 thinking replay 要求）
+      expect(assistantContent).toContain('step0 思考');
+      expect(assistantContent).toContain('step1 思考');
+    });
+
+    it('memory-entries: rewrite-applied turn 内 step-reasoning content="" 被 truthy 过滤不进 memory', () => {
+      const entries = projectCoreEventHistoryToMemoryEntries([
+        item(1, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(2),
+          stepId: null,
+          batchId: batchId('batch-2'),
+          reason: 'step-reasoning',
+          entry: { role: 'generate', content: '', reasoning: 'thinking 内容' },
+          sceneAfter: emptyScene,
+        }),
+        item(2, {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(2),
+          stepId: null,
+          batchId: batchId('batch-2'),
+          reason: 'rewrite-applied',
+          entry: { role: 'generate', content: '<narration>rewrite 版</narration>' },
+          sceneAfter: emptyScene,
+        }),
+      ]);
+      expect(entries.map((e) => e.content)).toEqual([
+        '<narration>rewrite 版</narration>',
+      ]);
+    });
+
     it('turn 没有 rewrite-applied → 所有 reason 段正常累加（向后兼容）', () => {
       const messages = buildMessagesFromCoreEventHistory([
         item(1, {

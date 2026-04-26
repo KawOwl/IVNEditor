@@ -152,10 +152,14 @@ export function projectCoreEventHistoryToMemoryEntries(
   return sorted.flatMap((item): CoreEventMemoryEntry[] => {
     const { event, occurredAt, sequence } = item;
     if (event.type === 'narrative-segment-finalized' && event.entry.content) {
-      // 改进 B：rewrite 替换过的 turn 跳过非 'rewrite-applied' 的 segment
+      // 改进 B（修复版）：跟 buildMessagesFromCoreEventHistory 同款过滤逻辑
+      // —— rewrite 替换的 turn 只跳过 preflush + generate-complete 这两类
+      // 内容性 segment；step-reasoning 段 content='' 被上面 truthy check
+      // 过滤，无需在此白名单。
       if (
         rewriteAppliedTurns.has(event.turnId as unknown as string) &&
-        event.reason !== 'rewrite-applied'
+        (event.reason === 'signal-input-preflush' ||
+          event.reason === 'generate-complete')
       ) {
         return [];
       }
@@ -242,10 +246,21 @@ function groupCoreEventsForMessages(
   let active: AssistantGroup | null = null;
 
   // 改进 B（2026-04-26）：第一遍扫出哪些 turn 被 rewrite 替换过。
-  // 这些 turn 内的 'signal-input-preflush' / 'generate-complete' 等 reason
-  // 的 segment 视为"已废弃"——只用 'rewrite-applied' 那条作为权威 history。
-  // 否则下一轮 LLM 看到 prose（preflush 落库的）+ tagged（rewrite-applied
-  // 落库的）拼接版本，prose 部分会污染 in-context。
+  // 这些 turn 内**只跳过内容性 segment**（'signal-input-preflush' /
+  // 'generate-complete'）—— 这俩 reason 落的 content 已经被 'rewrite-applied'
+  // 整 turn 重写覆盖，进 history 会污染下一轮 in-context。
+  //
+  // **必须保留 'step-reasoning' segment**（DeepSeek V4 thinking 模式硬要求）：
+  // 每个 step 的 reasoning 单独落一条 step-reasoning segment（content=''，
+  // reasoning=该 step 的 thinking 内容）；DeepSeek API 要求所有带 tool_calls
+  // 的 assistant message 必带 reasoning_content，否则 400 报错
+  // "The reasoning_content in the thinking mode must be passed back to the API."
+  // 第一版改进 B 错误地按 reason !== 'rewrite-applied' 过滤，把 step-reasoning
+  // 也跳了 → trace cc5a92fe（turn 3）报错；本次修复改成显式列出要跳的两个 reason。
+  const SKIPPED_REASONS_WHEN_REWRITE_APPLIED: ReadonlySet<string> = new Set([
+    'signal-input-preflush',
+    'generate-complete',
+  ]);
   const rewriteAppliedTurns = new Set<string>();
   for (const item of history) {
     if (
@@ -279,10 +294,12 @@ function groupCoreEventsForMessages(
     const { event, sequence } = item;
     switch (event.type) {
       case 'narrative-segment-finalized': {
-        // 改进 B：rewrite 替换过的 turn，跳过非 'rewrite-applied' 的 segment
+        // 改进 B（修复版）：rewrite 替换过的 turn 仅跳过**内容性** segment
+        // （preflush + generate-complete），保留 step-reasoning 给 DeepSeek
+        // V4 thinking 模式提供 reasoning_content。
         if (
           rewriteAppliedTurns.has(event.turnId as unknown as string) &&
-          event.reason !== 'rewrite-applied'
+          SKIPPED_REASONS_WHEN_REWRITE_APPLIED.has(event.reason)
         ) {
           break;
         }
