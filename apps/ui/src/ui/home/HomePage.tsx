@@ -16,6 +16,7 @@ export function HomePage() {
   const catalog = useAppStore((s) => s.catalog);
   const navigateTo = useAppStore((s) => s.navigateTo);
   const isAdmin = useAuthStore((s) => s.isAdmin);
+  const logout = useAuthStore((s) => s.logout);
 
   // "剧本详情只有 admin 能看"——编辑器入口仅管理员可见
   const canEdit = isAdmin;
@@ -52,12 +53,20 @@ export function HomePage() {
           </div>
           <div className="flex items-center gap-3">
             {canEdit && (
-              <button
-                onClick={() => navigateTo({ name: 'editor' })}
-                className="text-xs px-3 py-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors"
-              >
-                编辑器
-              </button>
+              <>
+                <button
+                  onClick={() => navigateTo({ name: 'editor' })}
+                  className="text-xs px-3 py-1.5 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors"
+                >
+                  编辑器
+                </button>
+                <button
+                  onClick={logout}
+                  className="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  退出
+                </button>
+              </>
             )}
           </div>
         </div>
