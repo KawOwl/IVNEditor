@@ -134,7 +134,7 @@ function renderBody(
       <div aria-label="dialog-player-input" className="space-y-3">
         {precedingSignal && (
           <div className="rounded border border-amber-900/30 bg-amber-950/20 px-3 py-2">
-            <div className="text-[10px] font-semibold text-amber-400/70 mb-1">❓ 询问</div>
+            <div className="text-[10px] font-semibold text-amber-400/70 mb-1">💬 询问</div>
             <div className="text-sm leading-relaxed text-amber-100/80 whitespace-pre-wrap mb-1.5">
               {precedingSignal.hint}
             </div>
