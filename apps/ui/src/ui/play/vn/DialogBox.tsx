@@ -41,16 +41,23 @@ export function DialogBox({ sentence, characters, displayText, hasMore, generati
     <div className="absolute inset-x-0 bottom-0 bg-zinc-950/90 backdrop-blur-sm border-t border-zinc-700/60">
       <div className="relative mx-auto max-w-4xl px-6 py-5 min-h-[8rem]">
         {renderBody(sentence, characters, displayText)}
-        {/* 右下角状态指示：生成中 / 还有内容 / 两者都没有 → 空 */}
+        {/* 右下角状态指示：小齿轮准备 / 还有内容 / 两者都没有 → 空
+         * 主路径流式期间显示——内容是稳定的（按 turn 顺序、不重排），所以
+         * 只在右下角加角标而不遮挡对话框正文。
+         * （rewrite 阶段才会盖住对话框；那是 RewriteOverlay 的事。） */}
         {generating && (
           <div
             className="absolute right-4 bottom-3 text-xs text-zinc-400 flex items-center gap-1"
             aria-label="dialog-generating"
           >
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400 animate-pulse" />
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400 animate-pulse [animation-delay:150ms]" />
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400 animate-pulse [animation-delay:300ms]" />
-            <span className="ml-1">生成中</span>
+            <span
+              className="inline-block text-zinc-300"
+              aria-hidden="true"
+              style={{ animation: 'spin 2.4s linear infinite' }}
+            >
+              ⚙
+            </span>
+            <span className="ml-0.5">小齿轮在准备本轮内容…</span>
           </div>
         )}
         {!generating && hasMore && (
