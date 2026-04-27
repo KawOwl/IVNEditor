@@ -8,7 +8,7 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod/v4';
 import { bugReportService } from '#internal/services/bug-report-service';
-import { requireNonAnonymous, isResponse } from '#internal/auth-identity';
+import { requireAnyIdentity, isResponse } from '#internal/auth-identity';
 
 const DESCRIPTION_MAX_LEN = 5000;
 
@@ -23,7 +23,7 @@ export const bugReportRoutes = new Elysia({ prefix: '/api/bug-reports' })
 
   // POST / — 提交一份 bug 反馈
   .post('/', async ({ body, request }) => {
-    const id = await requireNonAnonymous(request);
+    const id = await requireAnyIdentity(request);
     if (isResponse(id)) return id;
 
     const parsed = bugReportInputSchema.safeParse(body);

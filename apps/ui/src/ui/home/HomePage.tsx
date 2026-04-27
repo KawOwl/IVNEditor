@@ -15,17 +15,10 @@ import { getBackendUrl } from '@/lib/backend-url';
 export function HomePage() {
   const catalog = useAppStore((s) => s.catalog);
   const navigateTo = useAppStore((s) => s.navigateTo);
-  const kind = useAuthStore((s) => s.kind);
   const isAdmin = useAuthStore((s) => s.isAdmin);
-  const email = useAuthStore((s) => s.email);
-  const username = useAuthStore((s) => s.username);
-  const logout = useAuthStore((s) => s.logout);
 
   // "剧本详情只有 admin 能看"——编辑器入口仅管理员可见
   const canEdit = isAdmin;
-  // 匿名用户不能开始游玩——RegistrationGate 已经在 App 顶层全屏拦截，
-  // 这里是 defense-in-depth：万一 modal 被绕过，卡片点击也不放行
-  const canPlay = kind !== 'anonymous';
 
   // 管理员下架剧本
   const handleUnpublish = useCallback(async (scriptId: string) => {
@@ -58,24 +51,6 @@ export function HomePage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {/* 身份徽章（PFB.3）—— anonymous / registered / admin 三态都显示 */}
-            {kind === 'anonymous' ? (
-              <span className="text-[11px] text-amber-400">未注册</span>
-            ) : (
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-emerald-400">
-                  {email ?? username ?? '已登录'}
-                  {isAdmin && <span className="ml-1 text-zinc-500">(admin)</span>}
-                </span>
-                <button
-                  onClick={logout}
-                  className="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
-                >
-                  退出
-                </button>
-              </div>
-            )}
-
             {canEdit && (
               <button
                 onClick={() => navigateTo({ name: 'editor' })}
@@ -105,15 +80,7 @@ export function HomePage() {
                 <ScriptCard
                   key={entry.id}
                   entry={entry}
-                  onClick={() => {
-                    // PFB.3：匿名用户兜底拦截（理论上 RegistrationGate 已经在
-                    // App 顶层挡住，但防御性编程，保证万一 modal 被绕过也不放行）
-                    if (!canPlay) {
-                      alert('请先完成注册再开始游玩');
-                      return;
-                    }
-                    navigateTo({ name: 'play', scriptId: entry.id });
-                  }}
+                  onClick={() => navigateTo({ name: 'play', scriptId: entry.id })}
                   onUnpublish={canEdit ? () => handleUnpublish(entry.id) : undefined}
                 />
               ))}
