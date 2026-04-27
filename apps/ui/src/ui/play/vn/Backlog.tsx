@@ -111,7 +111,7 @@ function BacklogEntry({
     // 📍 signal_input_needed 一次调用（migration 0010 / Step 4）：GM 问 + 选项清单
     return (
       <div className="rounded border border-amber-900/30 bg-amber-950/20 px-3 py-2">
-        <div className="text-[10px] font-semibold text-amber-400/70 mb-1">📍 询问</div>
+        <div className="text-[10px] font-semibold text-amber-400/70 mb-1">❓ 询问</div>
         <div className="text-sm leading-relaxed text-amber-100/80 whitespace-pre-wrap mb-1.5">
           {sentence.hint}
         </div>
