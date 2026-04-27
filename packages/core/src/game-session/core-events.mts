@@ -301,6 +301,53 @@ export type RewriteCoreEvent =
       readonly applied: boolean;
     };
 
+/**
+ * narrative-retry-main 阶段的事件（2026-04-27）。当 rewriter 救不了的 case
+ * （main path 本轮 sentenceCount=0）触发 retry-main——重新跑一遍 GM LLM
+ * 让它把"漏写的本轮正文"补上。
+ *
+ * 跟 RewriteCoreEvent 形态对称（attempted / completed），由 caller（game-session）
+ * 在 finalizeContent pipeline 内根据条件触发：
+ * - sentenceCount === 0 + rawText 非空 → **并行**跑 rewrite + retry-main
+ * - rewrite 救得了（sentenceCount > 0）→ 用 rewrite 输出，retry-main 结果丢弃
+ *   （但 retry-main-attempted/completed 仍 emit，方便 trace 看决策路径）
+ * - rewrite 救不了 → retry-main 输出再过一次 rewrite，最终 finalText 落库
+ *   reason='rewrite-applied'（复用现有投影逻辑，messages-builder 跳过同 turn
+ *   其他 segment）
+ *
+ * 不新增 narrative-segment-finalized.reason='retry-main-applied'——
+ * 'rewrite-applied' 投影语义"整 turn 替换主路径输出"已经包含 retry-main 路径，
+ * 复用更简单。
+ */
+export type RetryMainCoreEvent =
+  | {
+      readonly type: 'retry-main-attempted';
+      readonly turnId: TurnId;
+      readonly rawTextLength: number;
+      /** main path 进入时的 messages 数（不含本轮 LLM 输出 + nudge） */
+      readonly mainPathMessageCount: number;
+    }
+  | {
+      readonly type: 'retry-main-completed';
+      readonly turnId: TurnId;
+      readonly status: 'ok' | 'skipped-empty' | 'skipped-aborted' | 'fallback';
+      readonly fallbackReason: 'api-error' | 'second-parse-failed' | 'still-empty' | 'aborted' | null;
+      readonly attempts: number;
+      readonly latencyMs: number;
+      readonly inputTokens: number;
+      readonly outputTokens: number;
+      readonly model: string | null;
+      readonly outputTextLength: number;
+      /** 二次 parser 校验产出的 sentence 数；skip 时为 null */
+      readonly verifiedSentenceCount: number | null;
+      /**
+       * retry-main 输出是否真的被采用为本轮 finalText（rewrite 没救出 +
+       * retry-main 自己 status='ok'/'fallback' 但 verifiedSentenceCount > 0
+       * 时为 true）。emit 但未被采用时 false（rewrite 救场了）。
+       */
+      readonly adopted: boolean;
+    };
+
 export type CoreEvent =
   | SessionCoreEvent
   | GenerateCoreEvent
@@ -308,6 +355,7 @@ export type CoreEvent =
   | InputCoreEvent
   | MemoryCoreEvent
   | RewriteCoreEvent
+  | RetryMainCoreEvent
   | DiagnosticCoreEvent;
 
 export interface CoreEventEnvelope {

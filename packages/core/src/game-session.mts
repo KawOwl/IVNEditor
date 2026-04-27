@@ -538,6 +538,24 @@ export class GameSession {
           outputTokens: out.outputTokens,
         };
       },
+      // narrative-retry-main invoke（路线 A，2026-04-27）：sentenceCount===0
+      // 并行兜底用。复用 simpleGenerate 的 messages 形态——传完整 messages 序
+      // 列（main path history + assistant raw + nudge），系统层面禁 tools
+      // （simpleGenerate 调用本来就不带 tools）。
+      retryMain: async (opts) => {
+        const out = await llmClient.simpleGenerate({
+          systemPrompt: opts.systemPrompt,
+          messages: opts.messages,
+          abortSignal: opts.abortSignal,
+        });
+        return {
+          text: out.text,
+          finishReason: out.finishReason,
+          model: out.model,
+          inputTokens: out.inputTokens,
+          outputTokens: out.outputTokens,
+        };
+      },
       buildRetrievalQuery: () => this.buildRetrievalQuery(),
       isActive: () => this.active,
       onScenarioEnd: (reason) => {

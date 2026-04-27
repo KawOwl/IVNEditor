@@ -338,9 +338,11 @@ export function reduceCoreEventProtocol(
     case 'rewrite-attempted':
     case 'narrative-turn-reset':
     case 'rewrite-completed':
+    case 'retry-main-attempted':
+    case 'retry-main-completed':
       requireTurn();
-      // rewrite 在 generate 完成 + assistant message 闭合后触发，phase 应当
-      // 是 'generated'。但允许 'generating'（极限情况：rewrite 在 phase
+      // rewrite / retry-main 在 generate 完成 + assistant message 闭合后触发，
+      // phase 应当是 'generated'。但允许 'generating'（极限情况：在 phase
       // 转移之前 emit）以避免误报。
       if (state.phase !== 'generated' && state.phase !== 'generating') {
         errors.push(`${event.type} outside generated/generating phase (${state.phase})`);

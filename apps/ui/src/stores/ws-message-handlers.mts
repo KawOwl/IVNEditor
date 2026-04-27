@@ -54,6 +54,10 @@ const SESSION_MESSAGE_HANDLERS: Record<string, SessionMessageHandler> = {
   'rewrite-attempted': handleRewriteAttemptedMessage,
   'rewrite-completed': handleRewriteCompletedMessage,
   'narrative-turn-reset': handleNarrativeTurnResetMessage,
+  // 路线 A: retry-main 事件 — production UI 不消费，仅记录给 EditorDebugPanel /
+  // 监控 dashboard 看决策路径。这里 noop 避免"unknown message type"误报。
+  'retry-main-attempted': handleRetryMainAttemptedMessage,
+  'retry-main-completed': handleRetryMainCompletedMessage,
 };
 
 export function handleSessionMessage(
@@ -142,6 +146,23 @@ function handleRewriteAttemptedMessage(_msg: WSMessage, { store }: SessionMessag
  */
 function handleRewriteCompletedMessage(_msg: WSMessage, { store }: SessionMessageContext): void {
   store().setRewriting(false);
+}
+
+/**
+ * 路线 A：retry-main 触发——server 端在 sentenceCount=0 case 跑了一次"重新生成
+ * 主路径"。production UI 当前不消费此事件（最终 finalText 由 narrative-batch-emitted
+ * 统一推过来），保留 noop 让 message dispatcher 不报 unknown type。
+ */
+function handleRetryMainAttemptedMessage(_msg: WSMessage, _context: SessionMessageContext): void {
+  // noop
+}
+
+/**
+ * 路线 A：retry-main 完成——同 attempted。production UI 用 status='generating'
+ * + DialogBox 小齿轮覆盖整个 finalize 阶段，不需要单独的 retry-main UI。
+ */
+function handleRetryMainCompletedMessage(_msg: WSMessage, _context: SessionMessageContext): void {
+  // noop
 }
 
 /**

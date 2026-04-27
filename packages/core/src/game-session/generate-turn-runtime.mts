@@ -22,12 +22,12 @@ import { assembleContext, evaluateCondition } from '#internal/context-assembler'
 import { computeFocus, focusEquals } from '#internal/focus';
 import { createTools, getEnabledTools } from '#internal/tool-executor';
 import type { SignalInputOptions } from '#internal/tool-executor';
+import type { ModelMessage } from 'ai';
 import type { GenerateOptions, GenerateResult, LLMClient, StepInfo } from '#internal/llm-client';
 import { extractPlainText } from '#internal/narrative-parser';
 import {
   createParser as createParserV2,
   type DegradeEvent as DegradeEventV2,
-  type NarrativeParser as NarrativeParserV2,
   type ParserManifest,
 } from '#internal/narrative-parser-v2';
 import {
@@ -37,6 +37,11 @@ import {
   type RewriteInvoke,
   type RewriteResult,
 } from '#internal/narrative-rewrite';
+import {
+  retryMainNarrative,
+  type RetryMainInvoke,
+  type RetryMainResult,
+} from '#internal/narrative-retry-main';
 import { serializeMessagesForDebug } from '#internal/messages-builder';
 import { resolveRuntimeProtocolVersion } from '#internal/protocol-version';
 import type { CoreEventSink, RuntimeSentence, StepId, TurnId } from '#internal/game-session/core-events';
@@ -68,19 +73,28 @@ type NarrativeBatch = {
   readonly degrades: ReadonlyArray<DegradeEventV2>;
 };
 
-interface NarrativeRuntime {
-  feedTextChunk(chunk: string): void;
-  finalizeParser(): void;
-}
-
 interface GenerateTurnPrepared {
   readonly context: Awaited<ReturnType<typeof assembleContext>>;
   readonly tools: ReturnType<typeof getEnabledTools>;
   readonly prepareStepSystem: PrepareStepSystem;
 }
 
-interface ActiveGenerateTurn extends GenerateTurnPrepared {
-  readonly narrativeRuntime: NarrativeRuntime;
+/**
+ * 路线 A：parser-v2 整轮 raw 一次性跑完后的解读结果。caller 用 stats 决定
+ * rewrite/retry-main 路径，用 batches 在 finalText 确定后顺序 publish 给 sink。
+ */
+interface TextAnalysis {
+  readonly batches: ReadonlyArray<NarrativeBatch>;
+  readonly sentenceCount: number;
+  readonly scratchCount: number;
+  readonly degrades: ReadonlyArray<DegradeEventV2>;
+  /** sentence 数 0 / 有 degrade / 全 scratch（rewriter looksBroken hint 用） */
+  readonly looksBroken: boolean;
+  /**
+   * 跑完整段 text 后 scene 累积到的最终状态（非 scene_change sentence 的 sceneRef
+   * 为参考）—— playFinalNarrative 用它推进 instance scene。
+   */
+  readonly finalScene: SceneState;
 }
 
 export interface GenerateTurnPendingSignal {
@@ -122,9 +136,15 @@ export interface GenerateTurnRuntimeDeps {
   /**
    * narrative-rewrite invoke。注入此项后，每轮主 LLM 路径完成后会触发 rewrite
    * 把 raw fullText 归一化成符合 IVN XML 协议的 tagged 输出。
-   * PR1：仅记录到 trace + emit core event，不替换 currentNarrativeBuffer。
    */
   readonly rewriter?: RewriteInvoke;
+  /**
+   * narrative-retry-main invoke。**仅当 rewriter 也注入时有效**——retry-main
+   * 是 rewriter 救不了的兜底层（main path sentenceCount=0 时并行触发，rewrite
+   * 救不出正文就用 retry-main 输出再过一次 rewrite）。不注入则降级回旧行为：
+   * sentenceCount=0 时单跑 rewrite，rewrite 失败就 fallback 到 raw。
+   */
+  readonly retryMain?: RetryMainInvoke;
   buildRetrievalQuery(): Promise<string>;
   isActive(): boolean;
   onScenarioEnd(reason?: string): void;
@@ -238,37 +258,83 @@ function verifyParseWithParserV2(
   return { sentenceCount, scratchCount, degrades };
 }
 
-interface DrainBatchContext {
+interface PublishBatchContext {
   readonly initialScene: SceneState;
   readonly publish: (event: Parameters<CoreEventSink['publish']>[0]) => void;
-  readonly traceHandle: GenerateTraceHandle | undefined;
   readonly turnId: TurnId;
-  readonly turn: number;
   /** Closure so the read happens at publish time, not at drain entry. */
   readonly getBatchId: () => string | null;
 }
 
-/**
- * Project a parser-v2 batch into core events + tracing side effects, returning
- * the scene after the last non-`scene_change` sentence (caller assigns it back
- * to its mutable `currentScene`).
- *
- * Side effects emitted in fixed order:
- *   1. per-sentence `narrative-truncation` trace events (dialogue / narration)
- *   2. one aggregated `ir-scratch` event if scratches non-empty
- *   3. per-degrade `ir-degrade:<code>` event
- *   4. one `narrative-batch-emitted` core event if anything was in the batch
- */
-function drainNarrativeBatch(
-  batch: NarrativeBatch,
-  ctx: DrainBatchContext,
-): SceneState {
-  let scene = ctx.initialScene;
+interface BatchTraceContext {
+  readonly traceHandle: GenerateTraceHandle | undefined;
+  readonly turn: number;
+}
 
-  for (const sentence of batch.sentences) {
-    if (sentence.kind !== 'scene_change') {
-      scene = copyScene(sentence.sceneRef);
+/**
+ * 路线 A（2026-04-27）：跑一次 parser-v2 把整段 raw text 分析出 batches +
+ * stats，**不**触发任何 core event / trace 副作用——纯函数。
+ *
+ * caller 用 stats（sentenceCount / degrades / looksBroken）决定 finalizeContent
+ * 路径（rewrite only / 并行 rewrite+retry-main / skip），决定后再调
+ * `playFinalNarrative` 把对应 analysis 的 batches 顺序 publish 给 sink。
+ *
+ * 同一段 text 在 main path 跑一次 + finalize 后可能再跑一次（rewrite 替换 text 时）。
+ * parser-v2 是单调推进 + finalize 的 reducer，反复构造一次性实例没有副作用问题。
+ */
+function analyzeText(
+  text: string,
+  fromScene: SceneState,
+  manifest: ParserManifest,
+  turn: number,
+): TextAnalysis {
+  const parser = createParserV2({
+    manifest,
+    turnNumber: turn,
+    startIndex: 0,
+    initialScene: copyScene(fromScene),
+  });
+  const batches: NarrativeBatch[] = [];
+  let scene = copyScene(fromScene);
+
+  const collect = (batch: NarrativeBatch) => {
+    if (
+      batch.sentences.length === 0 &&
+      batch.scratches.length === 0 &&
+      batch.degrades.length === 0
+    ) return;
+    batches.push(batch);
+    for (const s of batch.sentences) {
+      if (s.kind !== 'scene_change') {
+        scene = copyScene(s.sceneRef);
+      }
     }
+  };
+  collect(parser.feed(text));
+  collect(parser.finalize());
+
+  let sentenceCount = 0;
+  let scratchCount = 0;
+  const degrades: DegradeEventV2[] = [];
+  for (const batch of batches) {
+    sentenceCount += batch.sentences.length;
+    scratchCount += batch.scratches.length;
+    if (batch.degrades.length > 0) degrades.push(...batch.degrades);
+  }
+  const looksBroken =
+    sentenceCount === 0 ||
+    degrades.length > 0 ||
+    (scratchCount > 0 && sentenceCount === 0);
+
+  return { batches, sentenceCount, scratchCount, degrades, looksBroken, finalScene: scene };
+}
+
+/**
+ * Emit single-batch trace side effects (truncation events / ir-scratch /
+ * ir-degrade)。跟 publishBatch 解耦——caller 决定 trace 何时发。
+ */
+function emitBatchTrace(batch: NarrativeBatch, ctx: BatchTraceContext): void {
+  for (const sentence of batch.sentences) {
     if (sentence.kind === 'dialogue' && sentence.truncated) {
       traceNarrativeTruncation(ctx.traceHandle, ctx.turn, {
         kind: 'dialogue',
@@ -301,6 +367,24 @@ function drainNarrativeBatch(
       { turn: ctx.turn },
     );
   }
+}
+
+/**
+ * Publish 一个 batch 的 `narrative-batch-emitted` core event + 推进 scene。
+ * 返回 batch 处理后的新 scene，caller 用作下一次 publishBatch 的 initialScene。
+ *
+ * 不发 trace 事件（emitBatchTrace 单独处理）。
+ */
+function publishNarrativeBatch(
+  batch: NarrativeBatch,
+  ctx: PublishBatchContext,
+): SceneState {
+  let scene = ctx.initialScene;
+  for (const sentence of batch.sentences) {
+    if (sentence.kind !== 'scene_change') {
+      scene = copyScene(sentence.sceneRef);
+    }
+  }
 
   if (
     batch.sentences.length > 0 ||
@@ -317,7 +401,6 @@ function drainNarrativeBatch(
       sceneAfter: copyScene(scene),
     });
   }
-
   return scene;
 }
 
@@ -346,13 +429,11 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   private currentStepId: StepId | null = null;
   private pendingSignal: GenerateTurnPendingSignal | null = null;
   private abortController: AbortController | null = null;
-  /** parser-v2 这一轮 emit 的 Sentence 累计数（含 dialogue/narration/scene_change 等） */
-  private sentenceCountThisTurn = 0;
-  /** parser-v2 这一轮 emit 的 ScratchBlock 累计数 */
-  private scratchCountThisTurn = 0;
-  /** parser-v2 这一轮 emit 的 degrade 累计列表 */
-  private degradesThisTurn: DegradeEventV2[] = [];
-  /** turn 起始时的 scene 快照——rewrite replay 时回滚到这里 */
+  /**
+   * turn 起始时的 scene 快照。路线 A 下：parser-v2 不在 main path 流式跑，
+   * scene 在 main path 阶段不会推进；finalizeContent / playFinalNarrative 从
+   * 这里出发分析 finalText、推进到本轮终态。
+   */
   private turnInitialScene: SceneState = { background: null, sprites: [] };
   /**
    * 整个 turn 累计 raw text（改进 B，2026-04-26）。
@@ -388,14 +469,14 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         traceHandle?.end({ stopped: true });
         return this.snapshotResult(true);
       }
-      const activeTurn = this.beginGenerateTurn(prepared, traceHandle);
+      const activePrepared = this.beginGenerateTurn(prepared);
       const result = await this.runLLMGenerate(
-        activeTurn,
+        activePrepared,
         traceHandle,
         toolCallStack,
         toolInputStack,
       );
-      await this.completeGenerateTurn(activeTurn, result, traceHandle);
+      await this.completeGenerateTurn(activePrepared, result, traceHandle);
     } catch (error) {
       if (!this.deps.isActive()) {
         return this.snapshotResult(true);
@@ -469,29 +550,21 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     };
   }
 
-  private beginGenerateTurn(
-    prepared: GenerateTurnPrepared,
-    traceHandle: GenerateTraceHandle | undefined,
-  ): ActiveGenerateTurn {
+  private beginGenerateTurn(prepared: GenerateTurnPrepared): GenerateTurnPrepared {
     this.abortController = new AbortController();
     this.currentNarrativeBuffer = '';
     this.currentReasoningBuffer = '';
-    this.sentenceCountThisTurn = 0;
-    this.scratchCountThisTurn = 0;
-    this.degradesThisTurn = [];
     this.currentTurnRawText = '';
     this.rewriteAppliedThisTurn = false;
-    // 记 turn 起始 scene；rewrite 替换时 currentScene 要回滚到这里再重 feed parser
+    // 路线 A：parser-v2 整轮一次性跑（不流式）。turn 起始 scene 留作
+    // analyzeText / playFinalNarrative 的回滚锚点。
     this.turnInitialScene = copyScene(this.currentScene);
     this.publish({ type: 'assistant-message-started', turnId: this.turnId });
-
-    const narrativeRuntime = this.createNarrativeRuntime(traceHandle);
-
-    return { ...prepared, narrativeRuntime };
+    return prepared;
   }
 
   private async runLLMGenerate(
-    prepared: ActiveGenerateTurn,
+    prepared: GenerateTurnPrepared,
     traceHandle: GenerateTraceHandle | undefined,
     toolCallStack: Map<string, ToolCallTraceHandle[]>,
     toolInputStack: Map<string, unknown[]>,
@@ -509,6 +582,11 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         // 改进 B：currentTurnRawText 跟 buffer 平行累加，但 preflush 不清空
         // 让 rewrite 看到完整 turn 的 raw（含 preflush 已落库那段）
         this.currentTurnRawText += chunk;
+        // 路线 A：parser-v2 不再流式 feed —— main path 期间 UI 不收
+        // narrative-batch-emitted（DialogBox 显示前一轮 + 小齿轮"小齿轮在
+        // 准备本轮内容…"），完整 turn raw 收齐后在 completeGenerateTurn 一次
+        // 性 analyze + finalize-pipeline + publish。
+        // assistant-text-delta 仍发——EditorDebugPanel 流式预览要用。
         this.publish({
           type: 'assistant-text-delta',
           turnId: this.turnId,
@@ -516,7 +594,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
           batchId: toBatchId(this.currentStepBatchId),
           text: chunk,
         });
-        prepared.narrativeRuntime.feedTextChunk(chunk);
       },
       onReasoningChunk: (chunk) => {
         this.currentReasoningBuffer += chunk;
@@ -569,12 +646,36 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   }
 
   private async completeGenerateTurn(
-    prepared: ActiveGenerateTurn,
+    prepared: GenerateTurnPrepared,
     result: GenerateResult,
     traceHandle: GenerateTraceHandle | undefined,
   ): Promise<void> {
-    this.finalizeNarrativeOutput(prepared, result);
-    await this.runRewriteIfEnabled(result, traceHandle);
+    // 路线 A：assistant streaming 关闭信号（onTextChunk 阶段不再有更新）
+    this.publish({
+      type: 'assistant-message-finalized',
+      turnId: this.turnId,
+      finishReason: result.finishReason,
+    });
+
+    // 完整 turn raw 一次 parse
+    const rawAnalysis = this.deps.parserManifest
+      ? analyzeText(
+          this.currentTurnRawText,
+          this.turnInitialScene,
+          this.deps.parserManifest,
+          this.deps.turn,
+        )
+      : null;
+
+    // finalize-pipeline：决定 finalText + 对应 analysis
+    const { finalText, finalAnalysis } = await this.finalizeContent(
+      rawAnalysis,
+      prepared,
+      traceHandle,
+    );
+
+    this.playFinalNarrative(finalText, finalAnalysis, traceHandle);
+
     await this.persistGenerateResult(result);
     await this.compactMemoryIfNeeded();
     await this.syncGenerateDebugState();
@@ -582,47 +683,46 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   }
 
   /**
-   * narrative-rewrite 阶段。在 parser-v2 第一次跑完之后、persistGenerateResult
-   * 之前触发。
+   * 路线 A 协调器：根据 raw analysis 决定 finalText + 对应 analysis。
    *
-   * - PR1：仅 trace + emit core event，不替换 currentNarrativeBuffer
-   * - PR2：rewrite ok 时**替换** currentNarrativeBuffer，并 emit narrative-turn-reset
-   *   让 UI 清掉本 turn 的旧 sentence；新建 parser-v2 实例 feed rewrite text
-   *   重新 emit narrative-batch-emitted。落库的 narrative-segment-finalized.entry.content
-   *   是 rewrite 后的 tagged 版本
+   * 决策矩阵（全部前提：rawText 非空 + parserManifest 配置 + rewriter 配置）：
+   *
+   *   A. sentenceCount > 0 + 仅 non-actionable degrade → **skip**：finalText=raw, finalAnalysis=raw
+   *   B. sentenceCount > 0 + actionable degrade → **rewrite only**：rewrite ok → 用 rewrite，否则 fallback
+   *   C. sentenceCount === 0 + retryMain 配置 → **并行 rewrite + retry-main**：
+   *        - rewrite 救得了（verifiedSentenceCount > 0）→ 用 rewrite
+   *        - rewrite 救不了 + retry-main verifiedSentenceCount > 0 → 用 retry-main 输出过一次 rewrite
+   *        - 都救不了 → fallback raw（玩家本轮看到空，但至少 UI 不卡）
+   *   D. sentenceCount === 0 + 没配 retryMain → 退化到 rewrite only
+   *   E. raw 空白 / parserManifest 缺失 / rewriter 缺失 → finalText=raw, finalAnalysis=raw
+   *
+   * 标记 `rewriteAppliedThisTurn = true` 当且仅当 finalText 替换了 raw（B 路径
+   * rewrite 成功 / C 路径任一救场成功）—— persistGenerateResult 据此选 reason。
    */
-  private async runRewriteIfEnabled(
-    _result: GenerateResult,
+  private async finalizeContent(
+    rawAnalysis: TextAnalysis | null,
+    prepared: GenerateTurnPrepared,
     traceHandle: GenerateTraceHandle | undefined,
-  ): Promise<void> {
-    const invoke = this.deps.rewriter;
-    if (!invoke) return;
-    if (!this.deps.parserManifest) return;
-    // 改进 B：rewrite 用整 turn 的 raw（含被 preflush 切走的部分），不只用
-    // currentNarrativeBuffer。这样 trace 227cb1d0 那种 prose 在主路径中段
-    // 被 preflush 落库后仍然能进入 rewrite 处理。
+  ): Promise<{ finalText: string; finalAnalysis: TextAnalysis | null }> {
     const rawText = this.currentTurnRawText;
-    if (rawText.trim().length === 0) return;
+    const rewriter = this.deps.rewriter;
+    const parserManifest = this.deps.parserManifest;
 
-    const looksBroken =
-      this.sentenceCountThisTurn === 0 ||
-      this.degradesThisTurn.length > 0 ||
-      (this.scratchCountThisTurn > 0 && this.sentenceCountThisTurn === 0);
+    // E. 提早返回：缺少必要依赖 / raw 空白
+    if (!rewriter || !parserManifest || !rawAnalysis || rawText.trim().length === 0) {
+      return { finalText: rawText, finalAnalysis: rawAnalysis };
+    }
 
-    // 改进 D（2026-04-26，trace f6a68324 触发）：sentenceCount > 0 + 所有
-    // degrade 都 non-actionable（合规 ad-hoc speaker / container-truncated）
-    // → skip rewrite。这种 case rewriter 实际无修可做，调一次只会浪费 LLM
-    // call + 可能引入"主动补 background"这类幻觉副作用。
+    // A. skip：sentenceCount>0 + 仅 non-actionable degrade
     const hasActionableProblem =
-      this.sentenceCountThisTurn === 0 ||
-      this.degradesThisTurn.some(isActionableDegrade);
-
+      rawAnalysis.sentenceCount === 0 ||
+      rawAnalysis.degrades.some(isActionableDegrade);
     if (!hasActionableProblem) {
       this.publish({
         type: 'rewrite-attempted',
         turnId: this.turnId,
         rawTextLength: rawText.length,
-        looksBroken,
+        looksBroken: rawAnalysis.looksBroken,
       });
       this.publish({
         type: 'rewrite-completed',
@@ -638,25 +738,211 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         verifiedSentenceCount: null,
         applied: false,
       });
-      return;
+      return { finalText: rawText, finalAnalysis: rawAnalysis };
     }
+
+    // C. sentenceCount === 0 → 并行 rewrite + retry-main（如 retryMain 注入）
+    if (rawAnalysis.sentenceCount === 0 && this.deps.retryMain) {
+      return await this.runParallelRewriteAndRetryMain(
+        rawText,
+        rawAnalysis,
+        prepared,
+        traceHandle,
+      );
+    }
+
+    // B (sentenceCount>0+actionable) / D (sentenceCount=0 但没配 retryMain)：
+    // rewrite only 路径
+    const rewriteResult = await this.runRewrite(rawText, rawAnalysis, traceHandle);
+    return this.applyRewriteOnlyResult(rewriteResult, rawText, rawAnalysis, parserManifest);
+  }
+
+  /**
+   * 路线 A：sentenceCount===0 时并行触发 rewrite + retry-main，按优先级取结果。
+   *
+   * 优先级：rewrite 救场 > retry-main 救场 > raw fallback。retry-main 输出
+   * 还要再过一次 rewrite 保证格式（GM persona 输出格式合规率不是 100%）。
+   *
+   * trace 视角：
+   * - rewrite-attempted/completed 走原 rewrite path，记录 rewrite 决策
+   * - retry-main-attempted/completed 单独 emit，adopted=true 仅当最终 finalText
+   *   是从 retry-main 链来的
+   */
+  private async runParallelRewriteAndRetryMain(
+    rawText: string,
+    rawAnalysis: TextAnalysis,
+    prepared: GenerateTurnPrepared,
+    traceHandle: GenerateTraceHandle | undefined,
+  ): Promise<{ finalText: string; finalAnalysis: TextAnalysis | null }> {
+    const parserManifest = this.deps.parserManifest!;
 
     this.publish({
       type: 'rewrite-attempted',
       turnId: this.turnId,
       rawTextLength: rawText.length,
-      looksBroken,
+      looksBroken: rawAnalysis.looksBroken,
+    });
+    this.publish({
+      type: 'retry-main-attempted',
+      turnId: this.turnId,
+      rawTextLength: rawText.length,
+      mainPathMessageCount: prepared.context.messages.length,
     });
 
-    const parserManifest = this.deps.parserManifest;
-    const rewriteResult: RewriteResult = await rewriteNarrative(
+    // 并行：max(rewrite, retry-main) latency 而不是串行 sum
+    const [rewriteResult, retryMainResult] = await Promise.all([
+      this.invokeRewrite(rawText, rawAnalysis, traceHandle),
+      this.invokeRetryMain(rawText, prepared, traceHandle),
+    ]);
+
+    // rewrite 是否救场？status='ok' 说明 verifyParse 通过 (sentenceCount>0)
+    if (rewriteResult.status === 'ok' && rewriteResult.text !== rawText) {
+      this.emitRewriteCompletedEvent(rewriteResult, true);
+      this.emitRetryMainCompletedEvent(retryMainResult, false);
+      this.rewriteAppliedThisTurn = true;
+      const finalAnalysis = analyzeText(
+        rewriteResult.text,
+        this.turnInitialScene,
+        parserManifest,
+        this.deps.turn,
+      );
+      return { finalText: rewriteResult.text, finalAnalysis };
+    }
+
+    // rewrite 救不了 → retry-main 输出再过一次 rewrite（如 retry-main 救出正文）
+    if (retryMainResult.status === 'ok' && retryMainResult.text.trim().length > 0) {
+      this.emitRewriteCompletedEvent(rewriteResult, false);
+      // 二次 rewrite：retry-main 输出可能仍有格式问题
+      const retryAnalysis = analyzeText(
+        retryMainResult.text,
+        this.turnInitialScene,
+        parserManifest,
+        this.deps.turn,
+      );
+      const secondRewrite = await this.invokeRewrite(
+        retryMainResult.text,
+        retryAnalysis,
+        traceHandle,
+      );
+      // 决定最终：二次 rewrite ok → 用它；否则用 retry-main 原文
+      if (secondRewrite.status === 'ok' && secondRewrite.text !== retryMainResult.text) {
+        // 二次 rewrite 也走 rewrite-completed event 流（让 trace 看到链路），
+        // 但 applied=true 标记最终用二次 rewrite 输出
+        this.emitRewriteCompletedEvent(secondRewrite, true);
+        this.emitRetryMainCompletedEvent(retryMainResult, true);
+        this.rewriteAppliedThisTurn = true;
+        const finalAnalysis = analyzeText(
+          secondRewrite.text,
+          this.turnInitialScene,
+          parserManifest,
+          this.deps.turn,
+        );
+        return { finalText: secondRewrite.text, finalAnalysis };
+      }
+      // 二次 rewrite 失败：直接用 retry-main 原文
+      this.emitRewriteCompletedEvent(secondRewrite, false);
+      this.emitRetryMainCompletedEvent(retryMainResult, true);
+      this.rewriteAppliedThisTurn = true;
+      return { finalText: retryMainResult.text, finalAnalysis: retryAnalysis };
+    }
+
+    // 都救不了：fallback raw（玩家本轮看到空，但 UI 不卡）
+    this.emitRewriteCompletedEvent(rewriteResult, false);
+    this.emitRetryMainCompletedEvent(retryMainResult, false);
+    return { finalText: rawText, finalAnalysis: rawAnalysis };
+  }
+
+  /**
+   * Rewrite-only 路径（B / D）：跑一次 rewrite，emit completed event，
+   * 决定 finalText。
+   */
+  private async runRewrite(
+    rawText: string,
+    rawAnalysis: TextAnalysis,
+    traceHandle: GenerateTraceHandle | undefined,
+  ): Promise<RewriteResult> {
+    this.publish({
+      type: 'rewrite-attempted',
+      turnId: this.turnId,
+      rawTextLength: rawText.length,
+      looksBroken: rawAnalysis.looksBroken,
+    });
+    return await this.invokeRewrite(rawText, rawAnalysis, traceHandle);
+  }
+
+  private applyRewriteOnlyResult(
+    rewriteResult: RewriteResult,
+    rawText: string,
+    rawAnalysis: TextAnalysis,
+    parserManifest: ParserManifest,
+  ): { finalText: string; finalAnalysis: TextAnalysis | null } {
+    const applied =
+      rewriteResult.status === 'ok' &&
+      rewriteResult.text.trim().length > 0 &&
+      rewriteResult.text !== rawText;
+    this.emitRewriteCompletedEvent(rewriteResult, applied);
+    if (applied) {
+      this.rewriteAppliedThisTurn = true;
+      const finalAnalysis = analyzeText(
+        rewriteResult.text,
+        this.turnInitialScene,
+        parserManifest,
+        this.deps.turn,
+      );
+      return { finalText: rewriteResult.text, finalAnalysis };
+    }
+    return { finalText: rawText, finalAnalysis: rawAnalysis };
+  }
+
+  private emitRewriteCompletedEvent(result: RewriteResult, applied: boolean): void {
+    this.publish({
+      type: 'rewrite-completed',
+      turnId: this.turnId,
+      status: result.status,
+      fallbackReason: result.fallbackReason,
+      attempts: result.attempts,
+      latencyMs: result.latencyMs,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      model: result.model,
+      outputTextLength: result.text.length,
+      verifiedSentenceCount: result.verified?.sentenceCount ?? null,
+      applied,
+    });
+  }
+
+  private emitRetryMainCompletedEvent(result: RetryMainResult, adopted: boolean): void {
+    this.publish({
+      type: 'retry-main-completed',
+      turnId: this.turnId,
+      status: result.status,
+      fallbackReason: result.fallbackReason,
+      attempts: result.attempts,
+      latencyMs: result.latencyMs,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      model: result.model,
+      outputTextLength: result.text.length,
+      verifiedSentenceCount: result.verified?.sentenceCount ?? null,
+      adopted,
+    });
+  }
+
+  private async invokeRewrite(
+    rawText: string,
+    rawAnalysis: TextAnalysis,
+    traceHandle: GenerateTraceHandle | undefined,
+  ): Promise<RewriteResult> {
+    const parserManifest = this.deps.parserManifest!;
+    const invoke = this.deps.rewriter!;
+    return await rewriteNarrative(
       {
         rawText,
         parserView: {
           sentences: [],
-          scratchCount: this.scratchCountThisTurn,
-          degrades: this.degradesThisTurn,
-          looksBroken,
+          scratchCount: rawAnalysis.scratchCount,
+          degrades: rawAnalysis.degrades,
+          looksBroken: rawAnalysis.looksBroken,
         },
         manifest: summarizeManifest(parserManifest),
         turn: this.deps.turn,
@@ -666,18 +952,14 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         invoke,
         verifyParse: (text) => verifyParseWithParserV2(text, parserManifest),
         parserManifest,
-        // PR2：失败重试 1 次（temperature 默认；rewriter 内部不动 temperature）
         maxRetries: 1,
         trace: traceHandle
           ? {
               start: (input) => {
                 const span = traceHandle.startNestedGeneration({
                   name: 'narrative-rewrite',
-                  input: {
-                    system: input.systemPrompt,
-                    user: input.userMessage,
-                  },
-                  metadata: { turn: this.deps.turn, looksBroken },
+                  input: { system: input.systemPrompt, user: input.userMessage },
+                  metadata: { turn: this.deps.turn, looksBroken: rawAnalysis.looksBroken },
                 });
                 return {
                   end: (opts) => {
@@ -698,104 +980,118 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
           : undefined,
       },
     );
+  }
 
-    // 替换决策：仅当 status='ok' + 文本真的不一样才替换
-    let applied = false;
-    if (
-      rewriteResult.status === 'ok' &&
-      rewriteResult.text.trim().length > 0 &&
-      rewriteResult.text !== rawText
-    ) {
-      this.replayWithRewrittenText(rewriteResult.text, traceHandle);
-      applied = true;
-      // 改进 B：标记 turn 已被 rewrite 替换；persistGenerateResult 会落
-      // reason='rewrite-applied' 替代 'generate-complete'，messages-builder
-      // 投影时跳过同 turn 内其他 segment（含 'signal-input-preflush' 那条 prose）
-      this.rewriteAppliedThisTurn = true;
-    }
-
-    this.publish({
-      type: 'rewrite-completed',
-      turnId: this.turnId,
-      status: rewriteResult.status,
-      fallbackReason: rewriteResult.fallbackReason,
-      attempts: rewriteResult.attempts,
-      latencyMs: rewriteResult.latencyMs,
-      inputTokens: rewriteResult.inputTokens,
-      outputTokens: rewriteResult.outputTokens,
-      model: rewriteResult.model,
-      outputTextLength: rewriteResult.text.length,
-      verifiedSentenceCount: rewriteResult.verified?.sentenceCount ?? null,
-      applied,
-    });
+  private async invokeRetryMain(
+    rawText: string,
+    prepared: GenerateTurnPrepared,
+    traceHandle: GenerateTraceHandle | undefined,
+  ): Promise<RetryMainResult> {
+    const parserManifest = this.deps.parserManifest!;
+    const invoke = this.deps.retryMain!;
+    return await retryMainNarrative(
+      {
+        rawText,
+        mainPathSystemPrompt: prepared.context.systemPrompt,
+        mainPathMessages: prepared.context.messages as ReadonlyArray<ModelMessage>,
+        turn: this.deps.turn,
+        abortSignal: this.abortController?.signal,
+      },
+      {
+        invoke,
+        verifyParse: (text) => verifyParseWithParserV2(text, parserManifest),
+        parserManifest,
+        maxRetries: 0,
+        trace: traceHandle
+          ? {
+              start: (input) => {
+                const span = traceHandle.startNestedGeneration({
+                  name: 'narrative-retry-main',
+                  input: {
+                    system: input.systemPrompt,
+                    user: `(messages: ${input.messageCount}, raw: ${input.rawTextLength} chars)`,
+                  },
+                  metadata: { turn: this.deps.turn },
+                });
+                return {
+                  end: (opts) => {
+                    span.end({
+                      text: opts.text,
+                      finishReason: opts.finishReason,
+                      inputTokens: opts.inputTokens,
+                      outputTokens: opts.outputTokens,
+                      error: opts.error,
+                      metadata: opts.fallbackReason
+                        ? { fallbackReason: opts.fallbackReason }
+                        : undefined,
+                    });
+                  },
+                };
+              },
+            }
+          : undefined,
+      },
+    );
   }
 
   /**
-   * 用 rewrite 后的 text 重 feed parser-v2，emit 新一波 narrative-batch-emitted
-   * 给 UI。流程：
-   *   1. 回滚 currentScene 到 turn 起始状态（parser-v2 在 turn 内是单调推进的）
-   *   2. emit narrative-turn-reset → UI 清掉这一 turn 已经渲染的 sentence
-   *   3. 新建 parser-v2 实例 feed rewrite text → finalize → emit batch（自动重 emit）
-   *   4. 替换 currentNarrativeBuffer = rewrittenText
+   * 路线 A：finalizeContent 决策完成后，把 finalText 对应的 batches 顺序
+   * publish 给 sink（UI / recording / etc）。
+   *
+   * Main path 全程 deferred 没 publish 任何 batch，所以这里**不需要** emit
+   * narrative-turn-reset——直接 publish 完整 batch 序列就是 UI 第一次看到
+   * 这一 turn 的 sentence。
+   *
+   * - 当 finalAnalysis 没东西（rawText 全空 / 没 manifest）→ 不 publish，留给
+   *   persistGenerateResult 直接落 buffer
+   * - 当 rewriteAppliedThisTurn=true → 覆盖 currentNarrativeBuffer = finalText
+   *   （persistGenerateResult 用此值落 reason='rewrite-applied'，messages-builder
+   *   投影时跳过同 turn 其他 segment）
+   * - 当 rewriteAppliedThisTurn=false → 保留 currentNarrativeBuffer 的 raw
+   *   remainder（被 preflush 切走的部分以 reason='signal-input-preflush' 已经落库；
+   *   剩余以 reason='generate-complete' 落库；messages-builder 拼起来 = 完整 raw）
    */
-  private replayWithRewrittenText(
-    rewrittenText: string,
+  private playFinalNarrative(
+    finalText: string,
+    finalAnalysis: TextAnalysis | null,
     traceHandle: GenerateTraceHandle | undefined,
   ): void {
-    if (!this.deps.parserManifest) return;
-    // 1. 回滚 scene
+    if (!finalAnalysis || finalText.length === 0) {
+      // 没东西可 publish。currentScene 不动（保持 turnInitialScene）。
+      if (this.rewriteAppliedThisTurn) {
+        this.currentNarrativeBuffer = finalText;
+      }
+      return;
+    }
+
+    // 路线 A：scene 在 main path 阶段没推进过（onTextChunk 不调 parser），所以
+    // currentScene 应该还是 turnInitialScene。这里显式回到 initialScene 让代码
+    // 意图清晰，也防御 future 改动可能误推 scene。
     this.currentScene = copyScene(this.turnInitialScene);
 
-    // 2. 通知 UI 清空 turn 渲染
-    this.publish({
-      type: 'narrative-turn-reset',
+    const traceCtx: BatchTraceContext = { traceHandle, turn: this.deps.turn };
+    const publishCtx: PublishBatchContext = {
+      initialScene: this.currentScene,
+      publish: (event) => this.publish(event),
       turnId: this.turnId,
-      reason: 'rewrite-applied',
-      sceneAfter: copyScene(this.currentScene),
-    });
-
-    // 3. 重置 counters + 新建 parser-v2 + feed
-    this.sentenceCountThisTurn = 0;
-    this.scratchCountThisTurn = 0;
-    this.degradesThisTurn = [];
-
-    const replayParser = createParserV2({
-      manifest: this.deps.parserManifest,
-      turnNumber: this.deps.turn,
-      startIndex: 0,
-      initialScene: copyScene(this.currentScene),
-    });
-
-    const drain = (batch: NarrativeBatch) => {
-      this.currentScene = drainNarrativeBatch(batch, {
-        initialScene: this.currentScene,
-        publish: (event) => this.publish(event),
-        traceHandle,
-        turnId: this.turnId,
-        turn: this.deps.turn,
-        getBatchId: () => this.currentStepBatchId,
-      });
-      this.sentenceCountThisTurn += batch.sentences.length;
-      this.scratchCountThisTurn += batch.scratches.length;
-      if (batch.degrades.length > 0) this.degradesThisTurn.push(...batch.degrades);
+      getBatchId: () => this.currentStepBatchId,
     };
-    drain(replayParser.feed(rewrittenText));
-    drain(replayParser.finalize());
 
-    // 4. 替换 buffer—— persistGenerateResult 用这个值
-    this.currentNarrativeBuffer = rewrittenText;
-  }
+    for (const batch of finalAnalysis.batches) {
+      emitBatchTrace(batch, traceCtx);
+      this.currentScene = publishNarrativeBatch(batch, {
+        ...publishCtx,
+        initialScene: this.currentScene,
+      });
+    }
 
-  private finalizeNarrativeOutput(
-    prepared: ActiveGenerateTurn,
-    result: GenerateResult,
-  ): void {
-    prepared.narrativeRuntime.finalizeParser();
-    this.publish({
-      type: 'assistant-message-finalized',
-      turnId: this.turnId,
-      finishReason: result.finishReason,
-    });
+    // 重新统计 instance counters 以反映 finalText（rawAnalysis 的统计已经先存
+    // 进 instance 给 trace 用，这里不要再加）—— rewrite/retry 决策已结束，
+    // 后续任何 bug 关心 final 状态就读 finalAnalysis。
+
+    if (this.rewriteAppliedThisTurn) {
+      this.currentNarrativeBuffer = finalText;
+    }
   }
 
   private async persistGenerateResult(result: GenerateResult): Promise<void> {
@@ -958,39 +1254,6 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         this.deps.onScenarioEnd(reason);
       },
     });
-  }
-
-  private createNarrativeRuntime(
-    traceHandle: GenerateTraceHandle | undefined,
-  ): NarrativeRuntime {
-    const parserV2: NarrativeParserV2 = createParserV2({
-      manifest: this.deps.parserManifest!,
-      turnNumber: this.deps.turn,
-      startIndex: 0,
-      initialScene: copyScene(this.currentScene),
-    });
-
-    const drain = (batch: NarrativeBatch) => {
-      this.currentScene = drainNarrativeBatch(batch, {
-        initialScene: this.currentScene,
-        publish: (event) => this.publish(event),
-        traceHandle,
-        turnId: this.turnId,
-        turn: this.deps.turn,
-        getBatchId: () => this.currentStepBatchId,
-      });
-      // 累计 parser-v2 这一轮的产出，给 rewrite 阶段当 hint
-      this.sentenceCountThisTurn += batch.sentences.length;
-      this.scratchCountThisTurn += batch.scratches.length;
-      if (batch.degrades.length > 0) {
-        this.degradesThisTurn.push(...batch.degrades);
-      }
-    };
-
-    return {
-      feedTextChunk: (chunk) => drain(parserV2.feed(chunk)),
-      finalizeParser: () => drain(parserV2.finalize()),
-    };
   }
 
   private handleStepStart(info: StepStartInfo): void {

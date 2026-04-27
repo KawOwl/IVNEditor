@@ -877,15 +877,24 @@ export class LLMClient {
   }
 
   /**
-   * 简化版 LLM 调用——单轮 system + user message，无 tools / 无 followup /
-   * 无 step 协议。给辅助任务（typical: narrative-rewrite）用。
+   * 简化版 LLM 调用——单轮 system + user message（或自定义 messages 序列），
+   * 无 tools / 无 followup / 无 step 协议。
+   *
+   * 调用形式：
+   * - **`userMessage`**（rewriter 用法）：单条 user message，内部包成
+   *   `[{ role: 'user', content: userMessage }]`。
+   * - **`messages`**（retry-main 用法）：调用方自带完整 messages 序列
+   *   （含 main path history + assistant raw + nudge user message），messages
+   *   原样透传给 streamText / generateText。
+   * - 两者互斥：传一个；不传 messages 时回退到 userMessage 包装。
    *
    * 跟 generate() 共享 model + config，但路径独立——不影响主路径的 followup
-   * 链。streaming 版本 PR3 加（在 onTextChunk 启用时切到 streamText）。
+   * 链。streaming 版本（onTextChunk）走 streamText；终态版本走 generateText。
    */
   async simpleGenerate(opts: {
     systemPrompt: string;
-    userMessage: string;
+    userMessage?: string;
+    messages?: ReadonlyArray<ModelMessage>;
     abortSignal?: AbortSignal;
     maxOutputTokens?: number;
     onTextChunk?: (chunk: string) => void;
@@ -896,7 +905,15 @@ export class LLMClient {
     outputTokens?: number;
     model: string;
   }> {
-    const messages: ModelMessage[] = [{ role: 'user', content: opts.userMessage }];
+    if (opts.messages !== undefined && opts.userMessage !== undefined) {
+      throw new Error('[LLMClient.simpleGenerate] messages 与 userMessage 互斥，只能传一个');
+    }
+    const messages: ModelMessage[] = opts.messages
+      ? [...opts.messages]
+      : [{ role: 'user', content: opts.userMessage ?? '' }];
+    if (messages.length === 0) {
+      throw new Error('[LLMClient.simpleGenerate] messages 不能为空');
+    }
     const maxOutputTokens = opts.maxOutputTokens ?? this.config.maxOutputTokens;
 
     if (opts.onTextChunk) {

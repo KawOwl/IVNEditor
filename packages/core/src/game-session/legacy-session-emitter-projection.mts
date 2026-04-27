@@ -72,6 +72,8 @@ const projectionHandlers: ProjectionHandlers = {
   // 这俩事件驱动 UI 遮罩 / reveal 状态。
   'rewrite-attempted': ignoreEvent,
   'rewrite-completed': ignoreEvent,
+  'retry-main-attempted': ignoreEvent,
+  'retry-main-completed': ignoreEvent,
   'narrative-turn-reset': ignoreEvent,
   'diagnostics-updated': projectDiagnosticsUpdated,
 };

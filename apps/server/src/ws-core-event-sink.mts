@@ -202,6 +202,26 @@ const websocketCoreEventHandlers: WebSocketCoreEventHandlers = {
     });
   },
 
+  // 路线 A：retry-main 事件转发给 UI（telemetry / debug 看决策路径）。
+  // production UI 不直接消费 retry-main 事件——主路径既然全 deferred，所有
+  // 决策结果都通过单一 narrative-batch-emitted 流过来，retry-main events
+  // 只对 EditorDebugPanel / 监控 dashboard 有用。
+  'retry-main-attempted': (event, context) => {
+    context.emit('retry-main-attempted', {
+      rawTextLength: event.rawTextLength,
+      mainPathMessageCount: event.mainPathMessageCount,
+    });
+  },
+  'retry-main-completed': (event, context) => {
+    context.emit('retry-main-completed', {
+      status: event.status,
+      fallbackReason: event.fallbackReason,
+      attempts: event.attempts,
+      latencyMs: event.latencyMs,
+      adopted: event.adopted,
+    });
+  },
+
   /**
    * ANN.1：把 retrieval 事件原样转发给客户端。client 的 ws-message-handlers
    * 收到后塞进 game-store.memoryRetrievals，MemoryPanel 渲染。
