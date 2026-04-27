@@ -15,6 +15,8 @@
 import type { Sentence, CharacterAsset } from '@ivn/core/types';
 import { resolveSpeakerName } from '#internal/ui/play/vn/speaker-name';
 
+type SignalInputSentence = Extract<Sentence, { kind: 'signal_input' }>;
+
 export interface DialogBoxProps {
   /** 当前要展示的 Sentence；null = 等待叙事中 */
   sentence: Sentence | null;
@@ -34,13 +36,21 @@ export interface DialogBoxProps {
    * 让玩家知道"在写，稍等"而不是误以为已结束。
    */
   generating?: boolean;
+  /**
+   * 当 sentence.kind === 'player_input' 时，调用方可以传入紧邻在前的 signal_input
+   * sentence。DialogBox 会在玩家回答上方先渲染一张询问卡片（hint + choices +
+   * 选中项高亮），让玩家"看到自己是从哪些选项里选的"。
+   * 对自由输入（玩家没点选项），调用方仍可传入 precedingSignal——卡片只是不
+   * 高亮任何一项，与 Backlog 行为一致。
+   */
+  precedingSignal?: SignalInputSentence | null;
 }
 
-export function DialogBox({ sentence, characters, displayText, hasMore, generating }: DialogBoxProps) {
+export function DialogBox({ sentence, characters, displayText, hasMore, generating, precedingSignal }: DialogBoxProps) {
   return (
     <div className="absolute inset-x-0 bottom-0 bg-zinc-950/90 backdrop-blur-sm border-t border-zinc-700/60">
-      <div className="relative mx-auto max-w-4xl px-6 py-5 min-h-[8rem]">
-        {renderBody(sentence, characters, displayText)}
+      <div className="relative mx-auto max-w-4xl px-6 py-5 min-h-[8rem] max-h-[60vh] overflow-y-auto">
+        {renderBody(sentence, characters, displayText, precedingSignal)}
         {/* 右下角状态指示：小齿轮准备 / 还有内容 / 两者都没有 → 空
          * 主路径流式期间显示——内容是稳定的（按 turn 顺序、不重排），所以
          * 只在右下角加角标而不遮挡对话框正文。
@@ -78,6 +88,7 @@ function renderBody(
   sentence: Sentence | null,
   characters: CharacterAsset[],
   displayText: string | undefined,
+  precedingSignal: SignalInputSentence | null | undefined,
 ) {
   if (sentence === null) {
     return (
@@ -114,14 +125,44 @@ function renderBody(
 
   if (sentence.kind === 'player_input') {
     // 玩家的回复——和 Backlog 中 player_input 的样式保持一致：左侧细 border
-    // + 小号"我"标题 + 左对齐文字。原来的右对齐蓝色大标题样式被替换。
+    // + 小号"我"标题 + 左对齐文字。
+    // 如果调用方传了 precedingSignal（紧邻在前的 signal_input），先渲染一张
+    // 询问卡片，让玩家看到"GM 当时给了哪几个选项 + 我选了哪一条"。这跟
+    // Backlog 里 signal_input + player_input 配对展示的形态一致。
+    const selectedIndex = (sentence as { selectedIndex?: number }).selectedIndex;
     return (
-      <div className="border-l-2 border-sky-400/40 pl-3" aria-label="dialog-player-input">
-        <div className="mb-1 text-xs font-semibold text-sky-300/90">我</div>
-        <p className="text-base leading-relaxed text-sky-100/80 whitespace-pre-wrap">
-          {textToShow}
-          {isTyping && <span className="ml-0.5 inline-block h-4 w-[0.5ch] animate-pulse bg-sky-300/60 align-text-bottom" />}
-        </p>
+      <div aria-label="dialog-player-input" className="space-y-3">
+        {precedingSignal && (
+          <div className="rounded border border-amber-900/30 bg-amber-950/20 px-3 py-2">
+            <div className="text-[10px] font-semibold text-amber-400/70 mb-1">📍 询问</div>
+            <div className="text-sm leading-relaxed text-amber-100/80 whitespace-pre-wrap mb-1.5">
+              {precedingSignal.hint}
+            </div>
+            {precedingSignal.choices.length > 0 && (
+              <ol className="text-xs space-y-0.5 mt-1">
+                {precedingSignal.choices.map((c, i) => {
+                  const picked = i === selectedIndex;
+                  return (
+                    <li
+                      key={i}
+                      className={`pl-4 ${picked ? 'text-sky-300 font-medium' : 'text-zinc-500'}`}
+                    >
+                      {picked ? '→ ' : `${i + 1}. `}
+                      {c}
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </div>
+        )}
+        <div className="border-l-2 border-sky-400/40 pl-3">
+          <div className="mb-1 text-xs font-semibold text-sky-300/90">我</div>
+          <p className="text-base leading-relaxed text-sky-100/80 whitespace-pre-wrap">
+            {textToShow}
+            {isTyping && <span className="ml-0.5 inline-block h-4 w-[0.5ch] animate-pulse bg-sky-300/60 align-text-bottom" />}
+          </p>
+        </div>
       </div>
     );
   }

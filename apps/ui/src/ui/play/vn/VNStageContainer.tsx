@@ -17,13 +17,15 @@
  * 用于资产查找和 speaker displayName 解析。
  */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useGameStore } from '@/stores/game-store';
 import { VNStage } from '#internal/ui/play/vn/VNStage';
 import { Backlog } from '#internal/ui/play/vn/Backlog';
 import { useDialogTypewriter } from '#internal/ui/play/vn/useDialogTypewriter';
 import { getTypewriterSpeed } from '#internal/ui/play/typewriter-speed';
 import type { CharacterAsset, BackgroundAsset, Sentence } from '@ivn/core/types';
+
+type SignalInputSentence = Extract<Sentence, { kind: 'signal_input' }>;
 
 export interface VNStageContainerProps {
   characters: CharacterAsset[];
@@ -44,6 +46,22 @@ export function VNStageContainer({ characters, backgrounds }: VNStageContainerPr
   //   - 否则取 parsedSentences[index]
   const sentence: Sentence | null =
     visibleSentenceIndex === null ? null : parsedSentences[visibleSentenceIndex] ?? null;
+
+  // 当前展示的是 player_input 时，向前回找最近的 signal_input（同一轮内）。
+  // DialogBox 收到后会在玩家回答上方渲染询问卡片，让玩家看到自己是从哪几个
+  // 选项里选的。遇到更早一条 player_input 就停（说明已经跨轮，不再是配对的）。
+  const precedingSignal: SignalInputSentence | null = useMemo(() => {
+    if (!sentence || sentence.kind !== 'player_input' || visibleSentenceIndex === null) {
+      return null;
+    }
+    for (let i = visibleSentenceIndex - 1; i >= 0; i--) {
+      const s = parsedSentences[i];
+      if (!s) continue;
+      if (s.kind === 'signal_input') return s;
+      if (s.kind === 'player_input') return null;
+    }
+    return null;
+  }, [sentence, visibleSentenceIndex, parsedSentences]);
 
   // 展示哪个 scene？
   //   - 用当前 Sentence 的 sceneRef（保持"Sentence 说话时的场景"一致）
@@ -140,6 +158,7 @@ export function VNStageContainer({ characters, backgrounds }: VNStageContainerPr
         transition={lastSceneTransition}
         hasMore={hasMore && typewriter.done}
         generating={generating}
+        precedingSignal={precedingSignal}
       />
       {/* Backlog drawer 挂在 stage 之外，避免它的点击被 stage click 吞掉 */}
       <Backlog characters={characters} />

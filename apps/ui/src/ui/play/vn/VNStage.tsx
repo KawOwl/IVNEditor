@@ -22,6 +22,8 @@ import { SceneBackground, type SceneTransition } from '#internal/ui/play/vn/Scen
 import { SpriteLayer } from '#internal/ui/play/vn/SpriteLayer';
 import { DialogBox } from '#internal/ui/play/vn/DialogBox';
 
+type SignalInputSentence = Extract<Sentence, { kind: 'signal_input' }>;
+
 export interface VNStageProps {
   /** 当前场景快照（背景 + 立绘） */
   scene: SceneState;
@@ -40,9 +42,14 @@ export interface VNStageProps {
   hasMore?: boolean;
   /** LLM 正在生成中（玩家应该等待） */
   generating?: boolean;
+  /**
+   * 当 sentence 是 player_input 时，紧邻在前的 signal_input（如果有）。
+   * DialogBox 用它在玩家回答上方显示询问卡片。
+   */
+  precedingSignal?: SignalInputSentence | null;
 }
 
-export function VNStage({ scene, sentence, characters, backgrounds, onClick, displayText, transition, hasMore, generating }: VNStageProps) {
+export function VNStage({ scene, sentence, characters, backgrounds, onClick, displayText, transition, hasMore, generating, precedingSignal }: VNStageProps) {
   return (
     <div
       className="relative h-full w-full overflow-hidden select-none"
@@ -65,6 +72,7 @@ export function VNStage({ scene, sentence, characters, backgrounds, onClick, dis
           displayText={displayText}
           hasMore={hasMore}
           generating={generating}
+          precedingSignal={precedingSignal}
         />
       </div>
     </div>
