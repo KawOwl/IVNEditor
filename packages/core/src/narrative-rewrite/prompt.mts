@@ -134,7 +134,17 @@ function formatParserView(input: RewriteInput): string {
   if (view.degrades.length > 0) {
     lines.push('- degrades:');
     for (const d of view.degrades) {
-      const detail = typeof d.detail === 'string' ? d.detail : JSON.stringify(d.detail);
+      // detail 是 optional（DegradeEvent.detail?: string），undefined 时
+      // JSON.stringify 会返回 undefined（而非 "undefined" 字符串），后续 .length
+      // 会炸——所以先判空。理论上 parser 应该总给 detail 让 rewriter 定位，
+      // 出现 undefined 是上游 degrade 构造遗漏，warn 一下方便排查。
+      let detail: string;
+      if (d.detail === undefined) {
+        console.warn('[narrative-rewrite] degrade missing detail:', d.code);
+        detail = '';
+      } else {
+        detail = d.detail;
+      }
       const truncated = detail.length > 80 ? detail.slice(0, 80) + '...' : detail;
       lines.push(`  · ${d.code}: ${truncated}`);
     }
