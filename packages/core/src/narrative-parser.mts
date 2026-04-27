@@ -28,6 +28,10 @@
  */
 
 import type { ParticipationFrame } from '#internal/types';
+import {
+  createParser as createParserV2,
+  buildParserManifest,
+} from '#internal/narrative-parser-v2';
 
 export interface NarrativeParserCallbacks {
   /** 旁白文本增量。可能同一段被分多次调 callback。 */
@@ -348,33 +352,37 @@ export function parseDialogueAttrs(attrsStr: string): ParticipationFrame {
 }
 
 /**
- * 从 XML-lite 原文提取纯文本 —— 走 NarrativeParser 权威解析，保留 narration
- * 段落文字 + dialogue 内部文字，标签本身被去掉。
+ * 从 v2 协议原文提取纯文本 —— 走 narrative-parser-v2 权威解析，保留 narration
+ * 段落文字 + dialogue 内部文字，标签本身（含 `<scratch>` / `<background/>` /
+ * `<sprite/>` / `<stage/>`）被去掉。
  *
  * 用途：
- *   - playthroughs.preview 字段（避免把 `<d s="jenkins" to="...">` 裸标签带到
+ *   - playthroughs.preview 字段（避免把 `<dialogue speaker="...">` 裸标签带到
  *     UI 游玩记录列表）
  *   - 未来 backlog 搜索 / 诊断面板等需要纯文本视图的场景
  *
- * 复用 parser 的收益（对比 regex）：
- *   - parser 已经处理了未闭合 `<d ...` 截断、属性变体、嵌套降级等 edge case
- *   - XML-lite 语法未来扩展（加新标签）时这里自动跟随，不需要单独维护 regex
- *   - 和运行时 streaming 解析共用同一份语义，不会有偏差
+ * 复用 v2 parser 的收益（对比 regex）：
+ *   - parser 已经处理了未闭合标签截断、属性变体、嵌套降级等 edge case
+ *   - 和运行时 streaming 解析共用同一份语义，协议演进自动跟随
+ *
+ * preview 场景不需要 manifest 校验（不关心 ad-hoc speaker 是否合规），传空
+ * manifest 即可；scratch 块本就不进 sentences，自动被丢弃。
  */
 export function extractPlainText(xmlLite: string): string {
   if (!xmlLite) return '';
-  const parts: string[] = [];
-  const parser = new NarrativeParser({
-    onNarrationChunk: (text) => parts.push(text),
-    onDialogueEnd: (_pf, fullText) => parts.push(fullText),
+  const parser = createParserV2({
+    manifest: buildParserManifest({}),
+    turnNumber: 0,
+    startIndex: 0,
+    initialScene: { background: null, sprites: [] },
   });
-  parser.push(xmlLite);
-  parser.finalize();
-  // 兜底：parser 在 IN_TAG_OPEN / IN_D_ATTRS 状态 finalize 时会把未闭合的
-  // `<d s="..."` buffer 作为 narration 降级保留（保留原文思路），但对 preview
-  // 来说我们要的是干净的人类可读文本，再 regex 剥一次残余标签。
-  return parts
-    .join('')
-    .replace(/<d\b[^>]*(?:>|$)/gi, '')
-    .replace(/<\/d>/gi, '');
+  const batch1 = parser.feed(xmlLite);
+  const batch2 = parser.finalize();
+  const parts: string[] = [];
+  for (const s of [...batch1.sentences, ...batch2.sentences]) {
+    if (s.kind === 'narration' || s.kind === 'dialogue') {
+      parts.push(s.text);
+    }
+  }
+  return parts.join('');
 }

@@ -355,14 +355,18 @@ describe('NarrativeParser · 极端输入', () => {
   });
 });
 
-describe('extractPlainText · D4 preview / 纯文本提取', () => {
-  it('标准 <d> 对话 → 取内部文本', () => {
-    const input = '<d s="alice" to="bob">你好</d>';
+describe('extractPlainText · v2 协议 preview / 纯文本提取', () => {
+  it('标准 <dialogue> 对话 → 取内部文本', () => {
+    const input = '<dialogue speaker="alice" to="bob">你好</dialogue>';
     expect(extractPlainText(input)).toBe('你好');
   });
 
-  it('混合 narration + 多段 dialogue → 连续拼成纯文本', () => {
-    const input = '她说：<d s="alice">你来了。</d>\n\n他点头。<d s="bob">嗯。</d>';
+  it('混合 <narration> + 多段 <dialogue> → 连续拼成纯文本', () => {
+    const input =
+      '<narration>她说：</narration>' +
+      '<dialogue speaker="alice">你来了。</dialogue>' +
+      '<narration>他点头。</narration>' +
+      '<dialogue speaker="bob">嗯。</dialogue>';
     const result = extractPlainText(input);
     expect(result).toContain('她说：');
     expect(result).toContain('你来了。');
@@ -370,23 +374,26 @@ describe('extractPlainText · D4 preview / 纯文本提取', () => {
     expect(result).toContain('嗯。');
   });
 
-  it('无标签的纯旁白原样返回', () => {
-    const input = '黄昏的教室里只剩下她一个人。';
+  it('<scratch> 元思考容器 → 不进 preview', () => {
+    const input =
+      '<scratch>让我先 read_state 看看人物关系</scratch>' +
+      '<narration>黄昏的教室里只剩下她一个人。</narration>';
     expect(extractPlainText(input)).toBe('黄昏的教室里只剩下她一个人。');
   });
 
-  it('截断的 <d ...> 开标签（preview slice 场景）→ narration 部分保留', () => {
-    // LLM 输出被 preview slice 在标签中间砍掉：parser 的 IN_TAG_OPEN/IN_D_ATTRS
-    // 状态在 finalize 时降级，已进入 IN_TAG_OPEN 的 buffer 会被丢弃
-    const input = '你目光落在那扇半掩的木门上，话语里带着好奇。<d s="jenkins" to="';
-    expect(extractPlainText(input)).toBe(
-      '你目光落在那扇半掩的木门上，话语里带着好奇。',
-    );
+  it('视觉子标签 <background/> / <sprite/> 自动剥除', () => {
+    const input =
+      '<narration>' +
+      '<background scene="classroom_evening"/>' +
+      '<sprite char="alice" mood="smile" position="center"/>' +
+      '黄昏的教室里只剩下她一个人。' +
+      '</narration>';
+    expect(extractPlainText(input)).toBe('黄昏的教室里只剩下她一个人。');
   });
 
-  it('未闭合 <d> body（流中途断）→ truncated dialogue 内容仍取出', () => {
-    // parser 在 IN_D_BODY 状态 finalize 会降级 emit dialogue（带 truncated 标记）
-    const input = '旁白。<d s="alice">未说完的话';
+  it('未闭合 <dialogue> body（流中途断）→ truncated dialogue 内容仍取出', () => {
+    const input =
+      '<narration>旁白。</narration><dialogue speaker="alice">未说完的话';
     const result = extractPlainText(input);
     expect(result).toContain('旁白。');
     expect(result).toContain('未说完的话');
