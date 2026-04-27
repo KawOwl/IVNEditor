@@ -584,7 +584,7 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         this.currentTurnRawText += chunk;
         // 路线 A：parser-v2 不再流式 feed —— main path 期间 UI 不收
         // narrative-batch-emitted（DialogBox 显示前一轮 + 小齿轮"小齿轮在
-        // 准备本轮内容…"），完整 turn raw 收齐后在 completeGenerateTurn 一次
+        // 准备下一轮内容…"），完整 turn raw 收齐后在 completeGenerateTurn 一次
         // 性 analyze + finalize-pipeline + publish。
         // assistant-text-delta 仍发——EditorDebugPanel 流式预览要用。
         this.publish({

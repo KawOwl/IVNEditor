@@ -67,7 +67,7 @@ export function DialogBox({ sentence, characters, displayText, hasMore, generati
             >
               ⚙
             </span>
-            <span className="ml-0.5">小齿轮在准备本轮内容…</span>
+            <span className="ml-0.5">小齿轮在准备下一轮内容…</span>
           </div>
         )}
         {!generating && hasMore && (
