@@ -157,6 +157,23 @@ const VISUAL_CHILD_SPEC_V2 =
   `视觉状态是"每单元完整快照"模型，不是增量 diff。写每个单元时只需要问自己"这一单元该看到什么"，不用关心上一单元是什么状态 —— 相同就省略，不同就显式写出来。\n`;
 
 /**
+ * 白名单输入类型 —— `EngineRulesOpts` 的内部投影。
+ * `buildWhitelistSectionV2` / `buildNarrativeFormatV2` 共用，避免三处重复签名。
+ */
+type WhitelistCharacter = {
+  readonly id: string;
+  readonly displayName?: string;
+  readonly sprites?: ReadonlyArray<{
+    readonly id: string;
+    readonly label?: string;
+  }>;
+};
+type WhitelistBackground = {
+  readonly id: string;
+  readonly label?: string;
+};
+
+/**
  * 把 manifest 白名单（角色 id / 场景 id / 每角色情绪）拼成 prompt。
  * - 空数组 → `（剧本未定义任何 X）`，prompt 里是显式信息，不是空字符串
  * - 非空 → 逗号 + 空格分隔 id 列表
@@ -169,14 +186,60 @@ function formatIdList(
 }
 
 /**
+ * id ↔ 中文名对照段（条件输出）。
+ *
+ * 仅当 manifest 里至少存在一个 `displayName` 或 `label` 时才追加这一段——LLM 写
+ * XML 时仍然只能用 id（白名单段已规定），但有了人读对照能避免在多个语义相近的
+ * id 之间瞎选（trace 经验：纯 id 列表如 `dark_s01 / dark_s02 / dark_s03` 缺乏
+ * 语义锚，背景切换最容易出错；角色因 dialogue speaker 自带语境相对好一些）。
+ *
+ * 完全无 displayName / label 时返回空串——保证旧剧本/裸 manifest 输出字节
+ * 不变（snapshot 守门继续守 prompt cache 友好性）。
+ */
+function buildIdGlossarySectionV2(
+  characters: ReadonlyArray<WhitelistCharacter>,
+  backgrounds: ReadonlyArray<WhitelistBackground>,
+): string {
+  const bgLines = backgrounds
+    .filter((b) => b.label !== undefined && b.label.trim().length > 0)
+    .map((b) => `    - ${b.id} → ${b.label}`);
+  const charLines = characters
+    .filter((c) => c.displayName !== undefined && c.displayName.trim().length > 0)
+    .map((c) => `    - ${c.id} → ${c.displayName}`);
+  const moodGroups = characters.flatMap((c) => {
+    const labeledMoods = (c.sprites ?? []).filter(
+      (s) => s.label !== undefined && s.label.trim().length > 0,
+    );
+    if (labeledMoods.length === 0) return [];
+    const head = `    - ${c.id}:`;
+    const items = labeledMoods.map((s) => `      - ${s.id} → ${s.label}`);
+    return [[head, ...items].join('\n')];
+  });
+  if (bgLines.length === 0 && charLines.length === 0 && moodGroups.length === 0) {
+    return '';
+  }
+  const sections: string[] = [];
+  if (bgLines.length > 0) {
+    sections.push(`  - 场景：\n${bgLines.join('\n')}`);
+  }
+  if (charLines.length > 0) {
+    sections.push(`  - 角色：\n${charLines.join('\n')}`);
+  }
+  if (moodGroups.length > 0) {
+    sections.push(`  - 角色情绪：\n${moodGroups.join('\n')}`);
+  }
+  return (
+    `- **id ↔ 中文名（剧本作者人读标注；写 XML 时仍用左边的 id，标注只是帮你判断哪个 id 最贴合当前情境）**：\n` +
+    `${sections.join('\n')}\n`
+  );
+}
+
+/**
  * v2 白名单段：角色 / 场景 / 每角色情绪。依赖 manifest，rewriter 用 compact 版本。
  */
 function buildWhitelistSectionV2(
-  characters: ReadonlyArray<{
-    readonly id: string;
-    readonly sprites?: ReadonlyArray<{ readonly id: string }>;
-  }>,
-  backgrounds: ReadonlyArray<{ readonly id: string }>,
+  characters: ReadonlyArray<WhitelistCharacter>,
+  backgrounds: ReadonlyArray<WhitelistBackground>,
 ): string {
   const charIds = characters.map((c) => c.id);
   const bgIds = backgrounds.map((b) => b.id);
@@ -197,7 +260,8 @@ function buildWhitelistSectionV2(
     `- **场景 id**：${formatIdList(bgIds, '（剧本未定义任何背景）')}\n` +
     `- **角色 id**：${formatIdList(charIds, '（剧本未定义任何角色）')}\n` +
     `- **每角色情绪**：\n${charMoodLines}\n` +
-    `- **立绘位置**：left / center / right（只此三档，别的都非法）\n`
+    `- **立绘位置**：left / center / right（只此三档，别的都非法）\n` +
+    buildIdGlossarySectionV2(characters, backgrounds)
   );
 }
 
@@ -478,11 +542,8 @@ export const ENGINE_RULES_ANTI_EXAMPLES_V2 = ANTI_EXAMPLES_V2;
  * 给 rewriter 用的精简白名单段：跟 main path 同源，只是 caller 决定怎么调。
  */
 export function buildEngineRulesWhitelistV2(
-  characters: ReadonlyArray<{
-    readonly id: string;
-    readonly sprites?: ReadonlyArray<{ readonly id: string }>;
-  }>,
-  backgrounds: ReadonlyArray<{ readonly id: string }>,
+  characters: ReadonlyArray<WhitelistCharacter>,
+  backgrounds: ReadonlyArray<WhitelistBackground>,
 ): string {
   return buildWhitelistSectionV2(characters, backgrounds);
 }
@@ -493,11 +554,8 @@ export function buildEngineRulesWhitelistV2(
 // ============================================================================
 
 function buildNarrativeFormatV2(
-  characters: ReadonlyArray<{
-    readonly id: string;
-    readonly sprites?: ReadonlyArray<{ readonly id: string }>;
-  }>,
-  backgrounds: ReadonlyArray<{ readonly id: string }>,
+  characters: ReadonlyArray<WhitelistCharacter>,
+  backgrounds: ReadonlyArray<WhitelistBackground>,
 ): string {
   return (
     NARRATIVE_INTRO_V2 +
@@ -520,18 +578,26 @@ export interface EngineRulesOpts {
   /**
    * 剧本白名单 —— 角色及其情绪列表。
    * 从 `ScriptManifest.characters` 直接传入即可（`CharacterAsset[]`），
-   * 函数内只读 `id` + `sprites[].id`。
+   * 函数内只读 `id` + `displayName` + `sprites[].id` + `sprites[].label`。
+   * 接口故意放宽到结构子类型，调用方传完整 CharacterAsset / 裁剪过的子集都行。
    */
   readonly characters?: ReadonlyArray<{
     readonly id: string;
-    readonly sprites?: ReadonlyArray<{ readonly id: string }>;
+    readonly displayName?: string;
+    readonly sprites?: ReadonlyArray<{
+      readonly id: string;
+      readonly label?: string;
+    }>;
   }>;
   /**
    * 剧本白名单 —— 背景列表。
    * 从 `ScriptManifest.backgrounds` 直接传入即可（`BackgroundAsset[]`），
-   * 函数内只读 `id`。
+   * 函数内只读 `id` + `label`。
    */
-  readonly backgrounds?: ReadonlyArray<{ readonly id: string }>;
+  readonly backgrounds?: ReadonlyArray<{
+    readonly id: string;
+    readonly label?: string;
+  }>;
 }
 
 /**

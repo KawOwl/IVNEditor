@@ -199,4 +199,108 @@ describe('buildEngineRules', () => {
     expect(b).toContain('bob');
     expect(b).not.toContain('alice');
   });
+
+  // ==========================================================================
+  // id ↔ 中文名对照段（条件输出）
+  // ==========================================================================
+
+  it('manifest 带 displayName / label 时输出 id↔中文名对照段', () => {
+    const text = buildEngineRules({
+      characters: [
+        {
+          id: 'sakuya',
+          displayName: '咲夜',
+          sprites: [
+            { id: 'smiling', label: '微笑' },
+            { id: 'thinking', label: '思考中' },
+          ],
+        },
+      ],
+      backgrounds: [
+        { id: 'dark_s01', label: '暗街01' },
+        { id: 'dark_s02', label: '暗街_夜晚' },
+      ],
+    });
+    // 段落标题
+    expect(text).toContain('id ↔ 中文名');
+    // 场景对照
+    expect(text).toContain('dark_s01 → 暗街01');
+    expect(text).toContain('dark_s02 → 暗街_夜晚');
+    // 角色对照
+    expect(text).toContain('sakuya → 咲夜');
+    // 情绪对照
+    expect(text).toContain('smiling → 微笑');
+    expect(text).toContain('thinking → 思考中');
+  });
+
+  it('manifest 完全无 displayName / label 时不输出对照段（保持字节稳定）', () => {
+    const text = buildEngineRules({
+      characters: [{ id: 'sakuya', sprites: [{ id: 'smiling' }] }],
+      backgrounds: [{ id: 'classroom' }],
+    });
+    // 对照段标题不应出现
+    expect(text).not.toContain('id ↔ 中文名');
+    // 但白名单本身仍正常输出
+    expect(text).toContain('sakuya');
+    expect(text).toContain('classroom');
+  });
+
+  it('对照段只列出有 label 的项，无 label 的项仅出现在白名单段', () => {
+    const text = buildEngineRules({
+      characters: [
+        {
+          id: 'sakuya',
+          displayName: '咲夜',
+          sprites: [
+            { id: 'smiling', label: '微笑' },
+            { id: 'serious' }, // 无 label
+          ],
+        },
+        { id: 'kenji', sprites: [{ id: 'neutral' }] }, // 角色无 displayName
+      ],
+      backgrounds: [
+        { id: 'dark_s01', label: '暗街01' },
+        { id: 'op' }, // 无 label
+      ],
+    });
+    // 对照段出现
+    expect(text).toContain('id ↔ 中文名');
+    // 有 label 的项进对照
+    expect(text).toContain('dark_s01 → 暗街01');
+    expect(text).toContain('sakuya → 咲夜');
+    expect(text).toContain('smiling → 微笑');
+    // 无 label 的项不进对照（但仍在白名单 id 列表里）
+    expect(text).not.toContain('op →');
+    expect(text).not.toContain('kenji →');
+    expect(text).not.toContain('serious →');
+    expect(text).not.toContain('neutral →');
+    // 白名单段还是完整列出所有 id
+    expect(text).toContain('dark_s01, op');
+    expect(text).toContain('sakuya, kenji');
+    expect(text).toContain('- sakuya: smiling, serious');
+    expect(text).toContain('- kenji: neutral');
+  });
+
+  it('v2 with labeled manifest 输出字节稳定 (snapshot hash)', () => {
+    const text = buildEngineRules({
+      characters: [
+        {
+          id: 'sakuya',
+          displayName: '咲夜',
+          sprites: [
+            { id: 'smiling', label: '微笑' },
+            { id: 'thinking', label: '思考中' },
+          ],
+        },
+        { id: 'aonkei', displayName: '昂晴', sprites: [{ id: 'neutral', label: '无表情' }] },
+      ],
+      backgrounds: [
+        { id: 'classroom_evening', label: '教室-傍晚' },
+        { id: 'classroom_night', label: '教室-夜晚' },
+      ],
+    });
+    expect(hash(text)).toBe(
+      '017456309bc0f6284266dbff573278cb9d8152865de38c2b739d402b3c4e469b',
+    );
+  });
 });
