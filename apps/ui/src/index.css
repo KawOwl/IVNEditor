@@ -165,3 +165,59 @@
     background: rgba(113, 113, 122, 0.7);
     }
 }
+
+/*
+ * VN 对话框"正在生成"环境动画：
+ *   - 顶边一条 3px amber 高光条（底色 amber/15 + 横向 shimmer 1.6s 循环）
+ *   - 顶边脉冲发光（box-shadow 向上扩散的暖色辉光，跟 shimmer 同节拍）
+ *   - 整块 breathe（opacity 1 ↔ 0.86），让玩家眼角余光感知到画面在动
+ *
+ * 用于：DialogBox.generating + RewriteOverlay.isRewriting 两态。
+ * 颜色选 amber-300 跟说话人名 / 选项卡片视觉一致；
+ * prefers-reduced-motion 下完全停掉。
+ */
+@keyframes dialog-working-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+@keyframes dialog-working-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.86; }
+}
+@keyframes dialog-working-pulse-glow {
+  0%, 100% { box-shadow: 0 -1px 0 0 rgba(252, 211, 77, 0.45), 0 -10px 22px -6px rgba(252, 211, 77, 0.18); }
+  50%      { box-shadow: 0 -1px 0 0 rgba(252, 211, 77, 0.85), 0 -14px 32px -6px rgba(252, 211, 77, 0.42); }
+}
+.dialog-working-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  overflow: hidden;
+  pointer-events: none;
+  background: rgba(252, 211, 77, 0.16);
+  z-index: 1;
+}
+.dialog-working-bar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(252, 211, 77, 0.95) 50%,
+    transparent 100%
+  );
+  animation: dialog-working-shimmer 1.6s ease-in-out infinite;
+}
+.dialog-working-breathe {
+  animation: dialog-working-breathe 2.4s ease-in-out infinite,
+             dialog-working-pulse-glow 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dialog-working-bar::before,
+  .dialog-working-breathe {
+    animation: none;
+  }
+}

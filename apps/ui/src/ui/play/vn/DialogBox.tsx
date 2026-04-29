@@ -48,7 +48,14 @@ export interface DialogBoxProps {
 
 export function DialogBox({ sentence, characters, displayText, hasMore, generating, precedingSignal }: DialogBoxProps) {
   return (
-    <div className="absolute inset-x-0 bottom-0 bg-zinc-950/90 backdrop-blur-sm border-t border-zinc-700/60">
+    <div
+      className={
+        'absolute inset-x-0 bottom-0 bg-zinc-950/90 backdrop-blur-sm border-t border-zinc-700/60 ' +
+        (generating ? 'dialog-working-breathe' : '')
+      }
+    >
+      {/* 顶边 shimmer 条：流式生成时显示，让整块对话框眼角余光感知到画面在动 */}
+      {generating && <div className="dialog-working-bar" aria-hidden="true" />}
       <div className="relative mx-auto max-w-4xl px-6 py-5 min-h-[8rem] max-h-[60vh] overflow-y-auto">
         {renderBody(sentence, characters, displayText, precedingSignal)}
         {/* 右下角状态指示：小齿轮准备 / 还有内容 / 两者都没有 → 空
@@ -67,7 +74,7 @@ export function DialogBox({ sentence, characters, displayText, hasMore, generati
             >
               ⚙
             </span>
-            <span className="ml-0.5">小齿轮在准备下一轮内容…</span>
+            <span className="ml-0.5">正在准备下一段内容</span>
           </div>
         )}
         {!generating && hasMore && (
