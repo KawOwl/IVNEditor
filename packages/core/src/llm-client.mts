@@ -723,56 +723,75 @@ export class LLMClient {
     // 失败处理：任何 follow-up 异常（provider 错误、模型仍拒绝调工具、abort）
     // 都只 warn/log，不把异常冒上来影响主 generate 的结果。空停兜底到
     // freetext 的老路径比阻塞用户体验好。
-    const hasTerminatingTool = toolCallLog.some(
-      (c) => c.name === 'signal_input_needed' || c.name === 'end_scenario',
-    );
-    const aborted = abortSignal?.aborted ?? false;
+    // ─── post-step signal followup helper（2026-04-29 重构） ─────────────
+    //
+    // 两层 followup 的核心模板共用：构造带 prior-narrative 的 nudge user
+    // message → streamText 限定 tool 白名单 + stopWhen + toolChoice → 跑完检查
+    // toolCallLog 是否拿到终止 tool。差异参数：nudge 文案 / tool 白名单 /
+    // stopWhen 上限 / maxOutputTokens / log 标签。提到外面共享。
+    //
+    // DeepSeek thinking 模式（reasoner family）拒绝任何非默认 tool_choice：
+    // 既不支持 `{type:'tool', toolName:...}` 也不支持 `'required'`，全部
+    // 返回 400 "deepseek-reasoner does not support this tool_choice"。
+    // Fallback：thinking 模式下省略 toolChoice（= 'auto'），靠 trimmed tools
+    // + prompt nudge；非 thinking 模式（默认）用具名强制最确定。
+    const isThinking = this.config.thinkingEnabled === true;
 
-    if (!hasTerminatingTool && !aborted) {
+    /**
+     * 跑一次"补刀 followup"：注入当前 turn 已生成的全部 narrative + nudge
+     * 提示 + 限定 tool 集合 + 强制 toolChoice（非 thinking 模式）。返回是否
+     * 拿到 terminating tool（signal_input_needed / end_scenario）。
+     *
+     * 不 slice fullText：长 narrative 切尾会丢开头剧情，模型基于残缺 context
+     * 生成的 hint 会跟玩家屏幕看到的进度脱节。followup 调用频率低 + LLM
+     * input budget 容得下整段，全量最安全。
+     */
+    const tryFollowupForSignal = async (attempt: {
+      label: string;                         // 'follow-up' / 'final-fallback' —— 仅 log 用
+      nudgeHeader: string;                   // [引擎提示] 开头描述
+      nudgeFooter: string;                   // 收尾指令
+      allowedTools: 'all' | 'signal-and-end' | 'signal-only';
+      stopAtSteps: number;                   // stepCountIs 上限
+      maxOutputTokens: number;
+    }): Promise<boolean> => {
       isFollowupRef.current = true;
       try {
-        // 不 slice：长 narrative（>1500 chars）切尾会丢开头剧情。followup 调用
-        // 频率低 + LLM input budget 容得下，整段塞进去最安全。
-        const priorNarrativeText = fullText;
-        const nudgeMessage: ModelMessage = {
+        const nudge: ModelMessage = {
           role: 'user',
           content:
-            '[引擎提示] 你刚才输出了一段旁白但没有调用 signal_input_needed / end_scenario 来标记本轮结束，玩家端没有收到选项或输入提示。' +
-            (priorNarrativeText
-              ? `\n\n以下是你刚才输出的全部内容，用于回忆上下文：\n---\n${priorNarrativeText}\n---\n\n`
+            attempt.nudgeHeader +
+            (fullText
+              ? `\n\n以下是你刚才输出的全部内容，用于回忆上下文：\n---\n${fullText}\n---\n\n`
               : '\n\n') +
-            '现在立即调用 signal_input_needed：把当前局面总结为 hint（1-2 句），并提供 2-4 个推进选项作为 choices。不要再写任何旁白文本或 <d> 标签。',
+            attempt.nudgeFooter,
         };
-        // DeepSeek thinking 模式（reasoner family）拒绝任何非默认 tool_choice：
-        // 既不支持 `{type:'tool', toolName:...}` 也不支持 `'required'`，全部
-        // 返回 400 "deepseek-reasoner does not support this tool_choice"。
-        //
-        // Fallback：thinking 模式下省略 toolChoice（= 'auto'），把 follow-up
-        // 的 tool set 缩到只剩 signal_input_needed + end_scenario —— 模型能调
-        // 的工具只有这两个 + 出文本，配合 nudge prompt 大概率会调。
-        //
-        // 非 thinking 模式（默认）仍然用具名强制，最确定的协议级保证。
-        const isThinking = this.config.thinkingEnabled === true;
-        const followupTools = isThinking
-          ? Object.fromEntries(
-              Object.entries(aiTools).filter(
-                ([name]) => name === 'signal_input_needed' || name === 'end_scenario',
-              ),
-            )
-          : aiTools;
 
-        const followupStream = streamText({
+        const tools =
+          attempt.allowedTools === 'all'
+            ? aiTools
+            : Object.fromEntries(
+                Object.entries(aiTools).filter(([name]) =>
+                  attempt.allowedTools === 'signal-and-end'
+                    ? name === 'signal_input_needed' || name === 'end_scenario'
+                    : name === 'signal_input_needed',
+                ),
+              );
+
+        const stopWhen =
+          attempt.allowedTools === 'signal-only'
+            ? [hasToolCall('signal_input_needed'), stepCountIs(attempt.stopAtSteps)]
+            : [
+                hasToolCall('signal_input_needed'),
+                hasToolCall('end_scenario'),
+                stepCountIs(attempt.stopAtSteps),
+              ];
+
+        const stream = streamText({
           ...baseStreamArgs,
-          tools: followupTools,
-          messages: [...messages, nudgeMessage],
-          // 硬 cap 2 步：正常情况 step 0 就应该调到 signal/end，留 1 步冗余以
-          // 防 provider 先吐 text 再 tool_call 分步走。
-          stopWhen: [
-            hasToolCall('signal_input_needed'),
-            hasToolCall('end_scenario'),
-            stepCountIs(2),
-          ],
-          maxOutputTokens: 1024,
+          tools,
+          messages: [...messages, nudge],
+          stopWhen,
+          maxOutputTokens: attempt.maxOutputTokens,
           ...(isThinking
             ? {} // thinking: 省略 toolChoice，靠 trimmed tools + prompt nudge
             : { toolChoice: { type: 'tool' as const, toolName: 'signal_input_needed' } }),
@@ -780,109 +799,72 @@ export class LLMClient {
 
         // text-delta / reasoning-delta 不转发也不累加进 fullText —— toolChoice
         // 下偶发的 text 是"我要调工具"这类元说明，写进玩家叙事会跳字。
-        await consumeStream(followupStream, false);
-        const followupFinish = await (await followupStream).finishReason;
-        await addUsage(followupStream);
+        await consumeStream(stream, false);
+        const streamFinish = await (await stream).finishReason;
+        await addUsage(stream);
 
-        // toolCallLog 在 handleToolCallFinish 已经被 follow-up 的
-        // signal_input_needed 追加过，这里重新检查确认补刀成功。
-        const followupGotSignal = toolCallLog.some(
+        const gotSignal = toolCallLog.some(
           (c) => c.name === 'signal_input_needed' || c.name === 'end_scenario',
         );
-        if (followupGotSignal) {
+        if (gotSignal) {
           // 让上游看到正确的 finishReason（主 'stop' → 改成 'tool-calls'）
           // —— tracing 依赖它区分本轮是否正常收尾。
           finishReason = 'tool-calls';
-        } else {
-          console.warn(
-            `[llm-client] follow-up streamText finished without eliciting ` +
-              `signal_input_needed. followupFinish=${String(followupFinish)}, ` +
-              `mainFinish=${String(finishReason)}`,
-          );
+          return true;
         }
+        console.warn(
+          `[llm-client] ${attempt.label} streamText finished without eliciting ` +
+            `signal_input_needed/end_scenario. streamFinish=${String(streamFinish)}, ` +
+            `mainFinish=${String(finishReason)}`,
+        );
+        return false;
       } catch (err) {
-        console.error('[llm-client] follow-up streamText threw:', err);
+        console.error(`[llm-client] ${attempt.label} streamText threw:`, err);
+        return false;
       } finally {
         isFollowupRef.current = false;
       }
+    };
+
+    // 第 1 层：tools 全开（非 thinking）/ signal+end（thinking），hard cap 2 步
+    // —— 正常情况 step 0 就应该调到 signal/end，留 1 步冗余以防 provider
+    // 先吐 text 再 tool_call 分步走。
+    const hasTerminatingTool = toolCallLog.some(
+      (c) => c.name === 'signal_input_needed' || c.name === 'end_scenario',
+    );
+    const aborted = abortSignal?.aborted ?? false;
+    if (!hasTerminatingTool && !aborted) {
+      await tryFollowupForSignal({
+        label: 'follow-up',
+        nudgeHeader:
+          '[引擎提示] 你刚才输出了一段旁白但没有调用 signal_input_needed / end_scenario 来标记本轮结束，玩家端没有收到选项或输入提示。',
+        nudgeFooter:
+          '现在立即调用 signal_input_needed：把当前局面总结为 hint（1-2 句），并提供 2-4 个推进选项作为 choices。不要再写任何旁白文本或 <d> 标签。',
+        allowedTools: isThinking ? 'signal-and-end' : 'all',
+        stopAtSteps: 2,
+        maxOutputTokens: 1024,
+      });
     }
 
-    // ─── post-step signal **final fallback**（2026-04-26）──────────────────
-    //
-    // 第一层 post-step signal followup 跑完后仍然没有 signal_input_needed /
-    // end_scenario 的兜底。这一层比上面的更狭窄：tools 只剩 signal_input_needed
-    // 一个（连 end_scenario 都不允许 —— 既然走到这里说明前面 LLM 已经
-    // 在 signal+end 两选时无法做出选择，再给两个选项只会重复同样的歧义）。
-    //
-    // 强制 toolChoice = signal_input_needed（非 thinking）/ 省略 toolChoice
-    // 但 tools 只剩一个（thinking）—— 模型能选的只有这一个 tool call，
-    // 大概率会调。
-    //
-    // 触发条件：toolCallLog 仍 !hasTerminatingTool。
-    // 失败处理：warn + log，不冒异常 —— 保留 fallback 到 freetext 兜底。
+    // 第 2 层 final fallback（2026-04-26）：第 1 层跑完仍没有 signal/end
+    // 时的兜底。tools 进一步收紧到只剩 signal_input_needed —— 既然走到这里
+    // 说明前面 LLM 在 signal+end 两选时无法做出选择，再给两个选项只会重复
+    // 同样的歧义。模型能选的只有这一个 tool call，大概率会调。
+    // 失败仍 warn + log，不冒异常 —— 保留 fallback 到 freetext 兜底。
     const stillNoTerminatingTool = !toolCallLog.some(
       (c) => c.name === 'signal_input_needed' || c.name === 'end_scenario',
     );
     if (stillNoTerminatingTool && !(abortSignal?.aborted ?? false)) {
-      isFollowupRef.current = true;
-      try {
-        // trace ed22090e（turn 5）暴露的 bug：
-        // - main streamText 已经吐了 962 字 narrative（玩家进咖啡店、拆信、读
-        //   完委托内容、找到钥匙现金），但 tool-call 失败
-        // - 第 1 层 followup 带 tail 但模型没听话调了 read_state
-        // - 第 2 层 followup（"最后一次机会"）原版完全没附 narrative context，
-        //   模型在 final fallback 看不到当前 turn 已生成的 narrative，只能
-        //   基于 turn 开始时的 messages + 玩家最新 action label 猜——结果生成
-        //   prompt_hint='你决定先找一个不被人注意的地方...' 跟玩家屏幕上看到
-        //   的"咖啡店里读完信"剧情进度脱节。
-        //
-        // 不 slice：长 narrative 切尾仍可能丢开头剧情，全文塞最安全。
-        const priorNarrativeText = fullText;
-        const finalNudge: ModelMessage = {
-          role: 'user',
-          content:
-            '[引擎提示] 这是最后一次机会。立即调用 signal_input_needed —— ' +
-            (priorNarrativeText
-              ? `\n\n你刚才输出的全部内容（基于此总结当前局面）：\n---\n${priorNarrativeText}\n---\n\n`
-              : '\n\n') +
-            'hint（1-2 句总结当前局面）+ choices（2-4 个推进选项）。' +
-            '不要写任何文本，只调一次 signal_input_needed。',
-        };
-        const isThinking = this.config.thinkingEnabled === true;
-        const finalTools = Object.fromEntries(
-          Object.entries(aiTools).filter(([name]) => name === 'signal_input_needed'),
-        );
-        const finalStream = streamText({
-          ...baseStreamArgs,
-          tools: finalTools,
-          messages: [...messages, finalNudge],
-          stopWhen: [hasToolCall('signal_input_needed'), stepCountIs(1)],
-          maxOutputTokens: 256,
-          ...(isThinking
-            ? {} // thinking: 省略 toolChoice（reasoner family 不接受），靠 single-tool set 兜底
-            : { toolChoice: { type: 'tool' as const, toolName: 'signal_input_needed' } }),
-        });
-
-        // text-delta 不转发不累加 —— 这一步只为调工具，不出文本
-        await consumeStream(finalStream, false);
-        const finalFinish = await (await finalStream).finishReason;
-        await addUsage(finalStream);
-
-        const finalGotSignal = toolCallLog.some((c) => c.name === 'signal_input_needed');
-        if (finalGotSignal) {
-          finishReason = 'tool-calls';
-        } else {
-          console.warn(
-            `[llm-client] final-fallback signal followup didn't elicit ` +
-              `signal_input_needed either. finalFinish=${String(finalFinish)}. ` +
-              `Player will see no choices; UI fallback to freetext.`,
-          );
-        }
-      } catch (err) {
-        console.error('[llm-client] final-fallback signal followup threw:', err);
-      } finally {
-        isFollowupRef.current = false;
-      }
+      await tryFollowupForSignal({
+        label: 'final-fallback',
+        nudgeHeader:
+          '[引擎提示] 这是最后一次机会。立即调用 signal_input_needed —— ',
+        nudgeFooter:
+          'hint（1-2 句总结当前局面）+ choices（2-4 个推进选项）。不要写任何文本，只调一次 signal_input_needed。',
+        allowedTools: 'signal-only',
+        stopAtSteps: 1,
+        maxOutputTokens: 256,
+      });
     }
 
     return {
