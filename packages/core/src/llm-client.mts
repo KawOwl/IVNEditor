@@ -731,13 +731,15 @@ export class LLMClient {
     if (!hasTerminatingTool && !aborted) {
       isFollowupRef.current = true;
       try {
-        const tailContext = fullText.slice(-1500);
+        // 不 slice：长 narrative（>1500 chars）切尾会丢开头剧情。followup 调用
+        // 频率低 + LLM input budget 容得下，整段塞进去最安全。
+        const priorNarrativeText = fullText;
         const nudgeMessage: ModelMessage = {
           role: 'user',
           content:
             '[引擎提示] 你刚才输出了一段旁白但没有调用 signal_input_needed / end_scenario 来标记本轮结束，玩家端没有收到选项或输入提示。' +
-            (tailContext
-              ? `\n\n以下是你刚才输出的尾部片段，用于回忆上下文：\n---\n${tailContext}\n---\n\n`
+            (priorNarrativeText
+              ? `\n\n以下是你刚才输出的全部内容，用于回忆上下文：\n---\n${priorNarrativeText}\n---\n\n`
               : '\n\n') +
             '现在立即调用 signal_input_needed：把当前局面总结为 hint（1-2 句），并提供 2-4 个推进选项作为 choices。不要再写任何旁白文本或 <d> 标签。',
         };
@@ -824,27 +826,24 @@ export class LLMClient {
     if (stillNoTerminatingTool && !(abortSignal?.aborted ?? false)) {
       isFollowupRef.current = true;
       try {
-        // 跟第一层 followup 同款 tailContext —— 让模型在生成 hint 时基于
-        // 当前 turn 实际进度（不是只看玩家 action label 反推）。
-        //
         // trace ed22090e（turn 5）暴露的 bug：
         // - main streamText 已经吐了 962 字 narrative（玩家进咖啡店、拆信、读
         //   完委托内容、找到钥匙现金），但 tool-call 失败
         // - 第 1 层 followup 带 tail 但模型没听话调了 read_state
-        // - 第 2 层 followup（"最后一次机会"）原版**没附 tail context**，
+        // - 第 2 层 followup（"最后一次机会"）原版完全没附 narrative context，
         //   模型在 final fallback 看不到当前 turn 已生成的 narrative，只能
         //   基于 turn 开始时的 messages + 玩家最新 action label 猜——结果生成
-        //   prompt_hint='你决定先找一个不被人注意的地方...' 完全是 action 起点
-        //   状态，跟玩家屏幕上看到的"咖啡店里读完信"剧情进度脱节。
+        //   prompt_hint='你决定先找一个不被人注意的地方...' 跟玩家屏幕上看到
+        //   的"咖啡店里读完信"剧情进度脱节。
         //
-        // 修复：第 2 层和第 1 层一样附 1500 chars tail，模型基于真实进度收尾。
-        const tailContext = fullText.slice(-1500);
+        // 不 slice：长 narrative 切尾仍可能丢开头剧情，全文塞最安全。
+        const priorNarrativeText = fullText;
         const finalNudge: ModelMessage = {
           role: 'user',
           content:
             '[引擎提示] 这是最后一次机会。立即调用 signal_input_needed —— ' +
-            (tailContext
-              ? `\n\n你刚才输出的尾部片段（基于此总结当前局面）：\n---\n${tailContext}\n---\n\n`
+            (priorNarrativeText
+              ? `\n\n你刚才输出的全部内容（基于此总结当前局面）：\n---\n${priorNarrativeText}\n---\n\n`
               : '\n\n') +
             'hint（1-2 句总结当前局面）+ choices（2-4 个推进选项）。' +
             '不要写任何文本，只调一次 signal_input_needed。',
