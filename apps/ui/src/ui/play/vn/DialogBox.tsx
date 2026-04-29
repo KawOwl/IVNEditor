@@ -175,9 +175,6 @@ function renderBody(
       <p className="text-base leading-relaxed text-zinc-100 whitespace-pre-wrap">
         {textToShow}
         {isTyping && <span className="ml-0.5 inline-block h-4 w-[0.5ch] animate-pulse bg-amber-300/60 align-text-bottom" />}
-        {!isTyping && sentence.truncated && (
-          <span className="ml-1 text-zinc-500" title="LLM 输出被截断">…（截断）</span>
-        )}
       </p>
     </div>
   );

@@ -163,9 +163,6 @@ function BacklogEntry({
       <div className="text-xs font-semibold text-amber-300/90">{speakerName}</div>
       <div className="text-sm leading-relaxed text-zinc-200 whitespace-pre-wrap">
         {sentence.text}
-        {sentence.truncated && (
-          <span className="ml-1 text-zinc-500 text-xs">…（截断）</span>
-        )}
       </div>
     </div>
   );
