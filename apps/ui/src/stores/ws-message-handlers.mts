@@ -35,6 +35,16 @@ const SESSION_STATUSES = new Set<SessionStatus>([
 
 const SPRITE_POSITIONS = new Set<SpritePosition>(['left', 'center', 'right']);
 
+/**
+ * 跟 game-store.advanceSentence / appendSentence 内同名 helper 同源：
+ * scene_change / signal_input 是"跳过型" Sentence —— 不占对话框 click 次数，
+ * DialogBox 不渲染。任何把游标停在这两类上的代码都需要兜底回退到最近的可见
+ * Sentence，否则玩家看到空白。
+ */
+function isSkippableSentence(sentence: Sentence): boolean {
+  return sentence.kind === 'scene_change' || sentence.kind === 'signal_input';
+}
+
 const SESSION_MESSAGE_HANDLERS: Record<string, SessionMessageHandler> = {
   reset: handleResetMessage,
   status: handleStatusMessage,
@@ -245,8 +255,21 @@ function restoreSessionSnapshot(
   if (restoredStatus) store().setStatus(restoredStatus);
 
   const finalizeCursor = () => {
-    const total = store().parsedSentences.length;
-    if (total > 0) store().setVisibleSentenceIndex(total - 1);
+    // 倒着找最后一条**可见** Sentence —— DialogBox 不渲染 skippable
+    // （scene_change / signal_input），如果游标停在 skippable 玩家会看到
+    // 对话框空白（要再点一次才能由 advanceSentence 兜底找回正确位置）。
+    //
+    // S.1（streaming）后，narrative-batch-emitted 在 onTextChunk 期间逐个
+    // publish，signal-input-recorded 在 step 末尾 tool call 时 publish ——
+    // history 投影顺序变成 [n1..nN, signal_input]，绝对末位变成 signal_input
+    // （旧路径下 narrative-batch-emitted 一次性后置 publish，sequence > signal
+    // event，绝对末位是 narration，所以原 `total - 1` 直接就够）。
+    // 这里做兜底，对两条投影路径都正确。
+    const sentences = store().parsedSentences;
+    if (sentences.length === 0) return;
+    let last = sentences.length - 1;
+    while (last >= 0 && isSkippableSentence(sentences[last]!)) last -= 1;
+    if (last >= 0) store().setVisibleSentenceIndex(last);
   };
 
   const playthroughId = readString(msg.playthroughId);
