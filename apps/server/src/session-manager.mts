@@ -14,6 +14,7 @@ import {
   createCoreEventLogSink,
 } from '@ivn/core/game-session';
 import type {
+  CoreEvent,
   CoreEventSink,
   GameSessionConfig,
   RestoreConfig,
@@ -37,6 +38,29 @@ import { createMemoryDeletionFilter, createMemoryRetrievalLogger } from '#intern
 
 /** 断线后 wrapper 在内存中保留的时间 */
 const SESSION_TTL_MS = 10 * 60 * 1000; // 10 分钟
+
+/**
+ * 流式 chunk event 类型——这两类只走 WebSocket sink 推客户端做打字机效果，
+ * **不进 db**。理由：
+ *
+ * 1. rehydrate 路径（projectCoreEventHistoryToSentences）已 ignore 这两类
+ * 2. messages-builder 重建对话历史只用聚合事件（narrative-segment-finalized 等）
+ * 3. eval recording sink 在 evaluation harness 里也是直接接 emit，不读 db
+ * 4. 这两类占 core_event_envelopes 写入的 97%（reasoning_effort=max 时单 turn
+ *    8000+ 行 INSERT），是 server CPU 饱和 + sequence 跳号大让 readRecent
+ *    漏 step-reasoning 导致 DeepSeek 400 的根因
+ *
+ * 详见 2026-04-27 14:05-14:50 压力负载分析.md 的链条 1+2 推导。
+ */
+const STREAMING_DELTA_EVENT_TYPES: ReadonlySet<CoreEvent['type']> = new Set([
+  'assistant-reasoning-delta',
+  'assistant-text-delta',
+]);
+
+/** 决定是否把某个 event 写入 core_event_envelopes 表 */
+export function shouldPersistEventToLog(event: CoreEvent): boolean {
+  return !STREAMING_DELTA_EVENT_TYPES.has(event.type);
+}
 
 /**
  * 从 env 拼 memoraxConfig。三个字段任一缺失就返回 undefined（factory 在
@@ -108,6 +132,12 @@ export class GameSessionWrapper {
         playthroughId: this.playthroughId,
         writer: coreEventLogService.createWriter(),
         initialSequence: lastSequence,
+        // 跳过流式 chunk 持久化：它们已通过 WebSocket sink 推客户端，rehydrate
+        // 路径（projectCoreEventHistoryToSentences）和 messages-builder 也不读
+        // 它们。持久化等于纯成本：97% 写入是这两类，且 sequence 跳号大让
+        // memory adapter 的 readRecent(200) 漏掉关键聚合事件 → DeepSeek 400。
+        // 详见 2026-04-27 压力负载分析。
+        eventFilter: shouldPersistEventToLog,
       }),
       createWebSocketCoreEventSink(ws, {
         enableDebug: this.kind === 'playtest',

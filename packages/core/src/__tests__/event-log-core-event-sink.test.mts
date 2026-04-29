@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  batchId,
   createCoreEventBus,
   createRecordingCoreEventSink,
   replayCoreEventEnvelopes,
+  stepId,
   turnId,
   type CoreEventEnvelope,
   type CoreEventLogWriter,
@@ -74,6 +76,74 @@ describe('CoreEvent log sink', () => {
     expect(recorder.getEvents()).toEqual([
       { type: 'generate-turn-started', turn: 1, turnId: turnId(1) },
       { type: 'assistant-message-started', turnId: turnId(1) },
+    ]);
+  });
+
+  it('skips events when eventFilter returns false and does not consume sequence', async () => {
+    const envelopes: CoreEventEnvelope[] = [];
+    const sink = createCoreEventLogSink({
+      playthroughId: 'pt-filter',
+      writer: createMemoryWriter(envelopes),
+      now: createClock(1000),
+      eventFilter: (event) =>
+        event.type !== 'assistant-text-delta'
+        && event.type !== 'assistant-reasoning-delta',
+    });
+
+    sink.publish({ type: 'generate-turn-started', turn: 1, turnId: turnId(1) });
+    // 这两条该被 filter 跳过
+    sink.publish({
+      type: 'assistant-text-delta',
+      turnId: turnId(1),
+      stepId: stepId(1, 0),
+      batchId: batchId('b1'),
+      text: 'hello',
+    });
+    sink.publish({
+      type: 'assistant-reasoning-delta',
+      turnId: turnId(1),
+      stepId: stepId(1, 0),
+      batchId: batchId('b1'),
+      text: 'thinking',
+    });
+    // 这条该正常持久化，且 sequence 必须是 2（不是 4）—— filter 跳过的不消耗 sequence
+    sink.publish({ type: 'assistant-message-started', turnId: turnId(1) });
+    await sink.flushDurable();
+
+    expect(envelopes.map((e) => ({ sequence: e.sequence, type: e.event.type }))).toEqual([
+      { sequence: 1, type: 'generate-turn-started' },
+      { sequence: 2, type: 'assistant-message-started' },
+    ]);
+  });
+
+  it('without eventFilter (default), persists all event types including deltas', async () => {
+    const envelopes: CoreEventEnvelope[] = [];
+    const sink = createCoreEventLogSink({
+      playthroughId: 'pt-no-filter',
+      writer: createMemoryWriter(envelopes),
+      now: createClock(1000),
+      // 不传 eventFilter
+    });
+
+    sink.publish({
+      type: 'assistant-text-delta',
+      turnId: turnId(1),
+      stepId: stepId(1, 0),
+      batchId: batchId('b1'),
+      text: 'hi',
+    });
+    sink.publish({
+      type: 'assistant-reasoning-delta',
+      turnId: turnId(1),
+      stepId: stepId(1, 0),
+      batchId: batchId('b1'),
+      text: 'th',
+    });
+    await sink.flushDurable();
+
+    expect(envelopes.map((e) => e.event.type)).toEqual([
+      'assistant-text-delta',
+      'assistant-reasoning-delta',
     ]);
   });
 });
