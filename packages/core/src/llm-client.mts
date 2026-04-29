@@ -824,10 +824,28 @@ export class LLMClient {
     if (stillNoTerminatingTool && !(abortSignal?.aborted ?? false)) {
       isFollowupRef.current = true;
       try {
+        // 跟第一层 followup 同款 tailContext —— 让模型在生成 hint 时基于
+        // 当前 turn 实际进度（不是只看玩家 action label 反推）。
+        //
+        // trace ed22090e（turn 5）暴露的 bug：
+        // - main streamText 已经吐了 962 字 narrative（玩家进咖啡店、拆信、读
+        //   完委托内容、找到钥匙现金），但 tool-call 失败
+        // - 第 1 层 followup 带 tail 但模型没听话调了 read_state
+        // - 第 2 层 followup（"最后一次机会"）原版**没附 tail context**，
+        //   模型在 final fallback 看不到当前 turn 已生成的 narrative，只能
+        //   基于 turn 开始时的 messages + 玩家最新 action label 猜——结果生成
+        //   prompt_hint='你决定先找一个不被人注意的地方...' 完全是 action 起点
+        //   状态，跟玩家屏幕上看到的"咖啡店里读完信"剧情进度脱节。
+        //
+        // 修复：第 2 层和第 1 层一样附 1500 chars tail，模型基于真实进度收尾。
+        const tailContext = fullText.slice(-1500);
         const finalNudge: ModelMessage = {
           role: 'user',
           content:
             '[引擎提示] 这是最后一次机会。立即调用 signal_input_needed —— ' +
+            (tailContext
+              ? `\n\n你刚才输出的尾部片段（基于此总结当前局面）：\n---\n${tailContext}\n---\n\n`
+              : '\n\n') +
             'hint（1-2 句总结当前局面）+ choices（2-4 个推进选项）。' +
             '不要写任何文本，只调一次 signal_input_needed。',
         };
