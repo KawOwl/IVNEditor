@@ -458,14 +458,56 @@ describe('reduce · 段落切分（\\n\\n）', () => {
     expect(state.nextIndex).toBe(0);
   });
 
-  it('单段（无 \\n\\n）仍是 1 条 Sentence（向后兼容）', () => {
+  it('单换行（\\n）也切——每个非空行 1 条 Sentence', () => {
+    // 设计变更（2026-04-29，narration split fix）：旧规则只切 \n\n，但 GM 偶发
+    // 把多段叙事写在一个 narration 容器里用单换行隔开。新规则按任意换行切，
+    // 每个非空行 = 1 条 Sentence。
     const { state, outputs } = run([
       { type: 'opentag', name: 'narration', attrs: {} },
       { type: 'text', data: '只有一段，没有空行。包含单个 \\n 也不切。\n就还是这一段。' },
       { type: 'closetag', name: 'narration' },
     ]);
-    expect(outputs.sentences).toHaveLength(1);
-    expect(state.nextIndex).toBe(1);
+    expect(outputs.sentences).toHaveLength(2);
+    expect(outputs.sentences[0].kind).toBe('narration');
+    if (outputs.sentences[0].kind === 'narration') {
+      expect(outputs.sentences[0].text).toBe('只有一段，没有空行。包含单个 \\n 也不切。');
+    }
+    if (outputs.sentences[1].kind === 'narration') {
+      expect(outputs.sentences[1].text).toBe('就还是这一段。');
+    }
+    expect(state.nextIndex).toBe(2);
+  });
+
+  it('GM 把多段叙事塞同一 <narration> + 行首 prompt 缩进 → 切+trim', () => {
+    // 回归测试：trace 75728aba turn 2 的实际场景（截图）
+    // GM 输出：
+    //   <narration>
+    //     人群在你身边流动。…
+    //     你的目光越过她们，落在广场边缘那条阴凉的巷口。
+    //     那里没有彩纸。没有人流。那里的空气，像是静止的。
+    //   </narration>
+    // 期望：3 条 Sentence，每条行首 2-空格缩进已 trim。
+    const { state, outputs } = run([
+      { type: 'opentag', name: 'narration', attrs: {} },
+      {
+        type: 'text',
+        data: '\n  人群在你身边流动。一个穿白裙的小女孩从你身侧跑过。\n  你的目光越过她们，落在广场边缘那条阴凉的巷口。\n  那里没有彩纸。没有人流。那里的空气，像是静止的。\n',
+      },
+      { type: 'closetag', name: 'narration' },
+    ]);
+    expect(outputs.sentences).toHaveLength(3);
+    const texts = outputs.sentences.map((s) =>
+      s.kind === 'narration' ? s.text : '',
+    );
+    expect(texts[0]).toBe('人群在你身边流动。一个穿白裙的小女孩从你身侧跑过。');
+    expect(texts[1]).toBe('你的目光越过她们，落在广场边缘那条阴凉的巷口。');
+    expect(texts[2]).toBe('那里没有彩纸。没有人流。那里的空气，像是静止的。');
+    // 每条都没有内部 \n、没有行首空格
+    for (const t of texts) {
+      expect(t.includes('\n')).toBe(false);
+      expect(t.startsWith(' ')).toBe(false);
+    }
+    expect(state.nextIndex).toBe(3);
   });
 });
 

@@ -674,17 +674,26 @@ function buildSentences(
 }
 
 /**
- * 按 `\n\s*\n+`（空行，允许中间有空白字符）切段，每段 trim 并过滤空段。
+ * 按**任意换行 `\n+`**（一个或多个换行，含空行）切段，**每行单独 trim**
+ * 并过滤空行。
  *
  * - 0 段（全空白）→ 返回 `[]`
- * - 无 `\n\n` → 返回 1 段（整段 trim）
- * - N 段 → 返回 N 段
+ * - 无 `\n` → 返回 1 段（整段 trim）
+ * - 单换行 `\n` → 切（每个非空行 = 一段 Sentence）
+ * - 双换行 `\n\n` / 多换行 → 仍切（连续换行算一个分隔符）
+ * - 行首 prompt 缩进（`  text`）→ 通过 per-line trim 自动剥掉
  *
- * 空行分段是 v1 `findNarrationCut` 的第一优先级切分信号，这里和 v1 对齐语义，
- * 让 `<narration>` / `<dialogue>` 内部的自然段节奏能对应到多条 Sentence。
+ * 设计变更（2026-04-29，narration split fix）：
+ * 旧规则只切 `\n\n`，让 GM 偶发"3 段写在一个 `<narration>` 里用单换行隔开"
+ * 的输出渲染成单个 Sentence + 内部缩进保留 → UI 变成一坨连排有内缩进的文本。
+ * 新规则按任意换行切 + per-line trim → 3 段叙事自然成 3 条 Sentence，行首 prompt
+ * 缩进消失。
+ *
+ * 唯一可能误伤：作者故意用单换行把一句话 wrap 成多行（罕见——system prompt
+ * 例子里 narration 总是一行写完）。退化成多一次点击，不破坏剧情语义。
  */
 function splitParagraphs(buf: string): string[] {
-  const parts = buf.split(/\n[ \t]*\n+/);
+  const parts = buf.split(/\n+/);
   const out: string[] = [];
   for (const p of parts) {
     const t = p.trim();
