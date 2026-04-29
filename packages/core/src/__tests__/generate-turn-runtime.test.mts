@@ -362,6 +362,214 @@ describe('GenerateTurnRuntime', () => {
       onScenarioEnd: () => {},
     })).toThrow(/legacy-readable only/);
   });
+
+  // ==========================================================================
+  // S.1 streaming：onTextChunk 直接 feed parser-v2 + 立即 publish batch
+  //
+  // 关键不变量：玩家不需要等到整个 step 流完才看到第一个 sentence。把
+  // narrative 拆成多个 chunk，断言：
+  //   1. chunk 1 之后 narrative-batch-emitted ≥ 1 条
+  //   2. 后续 chunk 持续追加 batch
+  //   3. completeGenerateTurn 跑 skipped-streamed 分支（rewriter 不被触发）
+  // ==========================================================================
+  it('S.1：onTextChunk 产生的 narrative-batch-emitted 在 step 完成前已发出', async () => {
+    const stateStore = new StateStore(emptyStateSchema);
+    stateStore.setTurn(1);
+    const memory = createMemoryDouble();
+    const persistence = createPersistenceDouble();
+    const recording = createRecordingSessionOutputSink();
+    const coreEvents: CoreEvent[] = [];
+    const coreEventSink = createTestCoreEventSink(recording, persistence, coreEvents);
+
+    let batchEventsAfterChunk1 = 0;
+    let batchEventsAfterChunk2 = 0;
+
+    const fullText = '<narration>雨停了。</narration><narration>风也住了。</narration>';
+
+    const llmClient = createLLMDouble(async (options) => {
+      options.onStepStart?.({ stepNumber: 0, batchId: 'batch-1', isFollowup: false });
+
+      options.onTextChunk?.('<narration>雨停了。</narration>');
+      batchEventsAfterChunk1 = coreEvents.filter((e) => e.type === 'narrative-batch-emitted').length;
+
+      options.onTextChunk?.('<narration>风也住了。</narration>');
+      batchEventsAfterChunk2 = coreEvents.filter((e) => e.type === 'narrative-batch-emitted').length;
+
+      options.onStep?.(stepInfo({
+        batchId: 'batch-1',
+        text: fullText,
+        partKinds: ['text'],
+      }));
+      return { text: fullText, toolCalls: [], finishReason: 'stop' };
+    });
+
+    await createGenerateTurnRuntime({
+      turn: 2,
+      stateStore,
+      memory,
+      llmClient,
+      segments: [],
+      enabledTools: [],
+      tokenBudget: 12000,
+      coreEventSink,
+      ...runtimeProtocolConfig(),
+      characters: [],
+      backgrounds: [],
+      currentScene: { background: null, sprites: [] },
+      buildRetrievalQuery: async () => '',
+      isActive: () => true,
+      onScenarioEnd: () => {},
+    }).run();
+    await coreEventSink.flushDurable();
+
+    // 关键：streaming 行为——chunk 1 处理完已经至少 publish 了 1 条 batch
+    expect(batchEventsAfterChunk1).toBeGreaterThanOrEqual(1);
+    expect(batchEventsAfterChunk2).toBeGreaterThan(batchEventsAfterChunk1);
+
+    // 总共 2 条 batch（两个独立 narration）
+    const allBatchEvents = coreEvents.filter(
+      (e): e is Extract<CoreEvent, { type: 'narrative-batch-emitted' }> =>
+        e.type === 'narrative-batch-emitted',
+    );
+    expect(allBatchEvents.length).toBe(2);
+    expect(allBatchEvents.flatMap((e) => e.sentences.map((s) => s.text))).toEqual([
+      '雨停了。', '风也住了。',
+    ]);
+
+    // rewrite-completed 走 skipped-streamed 路径
+    const rewriteCompleted = coreEvents.find(
+      (e): e is Extract<CoreEvent, { type: 'rewrite-completed' }> =>
+        e.type === 'rewrite-completed',
+    );
+    expect(rewriteCompleted).toBeDefined();
+    expect(rewriteCompleted!.status).toBe('skipped-streamed');
+    expect(rewriteCompleted!.verifiedSentenceCount).toBe(2);
+    expect(rewriteCompleted!.applied).toBe(false);
+
+    // recording 仍然拿到两个 sentence
+    expect(recording.getSnapshot().sentences.map((s) => s.text)).toEqual([
+      '雨停了。', '风也住了。',
+    ]);
+  });
+
+  it('S.1：tag 跨 chunk 边界劈开仍能解析（htmlparser2 streaming buffer）', async () => {
+    // 故意把 `<narrat` 和 `ion>...` 劈到两个 chunk，断言 sentence 仍然
+    // 正确产出——这是 streaming 路径的鲁棒性底线。
+    const stateStore = new StateStore(emptyStateSchema);
+    stateStore.setTurn(1);
+    const memory = createMemoryDouble();
+    const recording = createRecordingSessionOutputSink();
+    const coreEvents: CoreEvent[] = [];
+    const coreEventSink = createTestCoreEventSink(recording, createPersistenceDouble(), coreEvents);
+
+    const fullText = '<narration>跨 chunk 边界。</narration>';
+
+    const llmClient = createLLMDouble(async (options) => {
+      options.onStepStart?.({ stepNumber: 0, batchId: 'batch-1', isFollowup: false });
+
+      // 在 tag 中间劈开：'<narr' + 'ation>跨 chunk 边界。</narrat' + 'ion>'
+      options.onTextChunk?.('<narr');
+      options.onTextChunk?.('ation>跨 chunk 边界。</narrat');
+      options.onTextChunk?.('ion>');
+
+      options.onStep?.(stepInfo({
+        batchId: 'batch-1',
+        text: fullText,
+        partKinds: ['text'],
+      }));
+      return { text: fullText, toolCalls: [], finishReason: 'stop' };
+    });
+
+    await createGenerateTurnRuntime({
+      turn: 1,
+      stateStore,
+      memory,
+      llmClient,
+      segments: [],
+      enabledTools: [],
+      tokenBudget: 12000,
+      coreEventSink,
+      ...runtimeProtocolConfig(),
+      characters: [],
+      backgrounds: [],
+      currentScene: { background: null, sprites: [] },
+      buildRetrievalQuery: async () => '',
+      isActive: () => true,
+      onScenarioEnd: () => {},
+    }).run();
+    await coreEventSink.flushDurable();
+
+    const allBatchEvents = coreEvents.filter(
+      (e): e is Extract<CoreEvent, { type: 'narrative-batch-emitted' }> =>
+        e.type === 'narrative-batch-emitted',
+    );
+    const sentences = allBatchEvents.flatMap((e) => e.sentences);
+    expect(sentences.length).toBe(1);
+    expect(sentences[0].kind).toBe('narration');
+    if (sentences[0].kind === 'narration') {
+      expect(sentences[0].text).toBe('跨 chunk 边界。');
+    }
+  });
+
+  it('S.1 fallback：streaming 没产出 sentence 时仍走原 finalizeContent 路径', async () => {
+    // GM 输出全是 scratch / 空白——streaming pass sentenceCount = 0；不应进
+    // skipped-streamed 分支，而是 fall back 到 finalizeContent（rewriter 在
+    // sentenceCount === 0 时仍可能救场；本 test 没注入 rewriter，所以走
+    // E 路径 finalText=raw, finalAnalysis=null，narrative-batch-emitted 数为
+    // streaming pass 已 publish 的 scratch-only batches）。
+    const stateStore = new StateStore(emptyStateSchema);
+    stateStore.setTurn(1);
+    const memory = createMemoryDouble();
+    const recording = createRecordingSessionOutputSink();
+    const coreEvents: CoreEvent[] = [];
+    const coreEventSink = createTestCoreEventSink(recording, createPersistenceDouble(), coreEvents);
+
+    const llmClient = createLLMDouble(async (options) => {
+      options.onStepStart?.({ stepNumber: 0, batchId: 'batch-1', isFollowup: false });
+      options.onTextChunk?.('<scratch>仅模型可见的元思考</scratch>');
+      options.onStep?.(stepInfo({
+        batchId: 'batch-1',
+        text: '<scratch>仅模型可见的元思考</scratch>',
+        partKinds: ['text'],
+      }));
+      return {
+        text: '<scratch>仅模型可见的元思考</scratch>',
+        toolCalls: [],
+        finishReason: 'stop',
+      };
+    });
+
+    await createGenerateTurnRuntime({
+      turn: 1,
+      stateStore,
+      memory,
+      llmClient,
+      segments: [],
+      enabledTools: [],
+      tokenBudget: 12000,
+      coreEventSink,
+      ...runtimeProtocolConfig(),
+      characters: [],
+      backgrounds: [],
+      currentScene: { background: null, sprites: [] },
+      buildRetrievalQuery: async () => '',
+      isActive: () => true,
+      onScenarioEnd: () => {},
+    }).run();
+    await coreEventSink.flushDurable();
+
+    // streaming 没产出 sentence —— rewrite-completed **不应**该是 'skipped-streamed'。
+    // 没注入 rewriter（runtimeProtocolConfig 不带 rewriter），finalizeContent 走
+    // E 路径直接返回 raw，不发任何 rewrite-* 事件。
+    const rewriteCompleted = coreEvents.find(
+      (e): e is Extract<CoreEvent, { type: 'rewrite-completed' }> =>
+        e.type === 'rewrite-completed',
+    );
+    expect(rewriteCompleted).toBeUndefined();
+
+    // recording 没有 narrative sentence，但 scratch 仍然被 streaming pass publish 了
+    expect(recording.getSnapshot().sentences).toEqual([]);
+  });
 });
 
 const emptyStateSchema: StateSchema = { variables: [] };

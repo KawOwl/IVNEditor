@@ -9,7 +9,15 @@
 
 ## 当前任务
 
-**PFB.3 Bug 反馈 tab + 首页身份徽章 + 后端拒匿名（in-progress）**
+**S.1 GM 叙事流式直发（in-progress）**
+- 类型：实现（e2e，含浏览器 streaming 验证）
+- 来源：用户临时插入。staging Langfuse trace 观察发现 step-1 长 narration 19s 流出 774 tokens 期间玩家完全等不到内容；rewriter 阻塞（5.6s）+ buffer-then-emit 是 latency 的主因
+- 目标：把 onTextChunk 从"buffer 完整 turn → 一次 finalize → 一次性 emit batches" 改成"每个 chunk 立即 feed parser-v2 → 立即 publish narrative-batch-emitted"。前端 game-store.appendSentence 已支持 incremental append，零改动。rewriter fallback **保留**（仅 sentenceCount=0 兜底场景触发，不阻塞 streaming），先看 staging 数据再决定是否进一步删
+- 进展：HTML + data-attr 协议替代方案 design doc 落 docs/html-data-attr-protocol-proposal.md（提案，未实施，等 S.1 落地后看数据再评估）；feature_list.json 加 S.1 entry。streaming 实现待开工
+- 关键设计依据：parser-v2 (`packages/core/src/narrative-parser-v2/index.mts`) 早就有 `feed(chunk)` / `finalize()` streaming API；当前 generate-turn-runtime.mts:585-588 注释明确选择"路线 A：parser-v2 不再流式 feed"是为了等 rewriter 决策。但 staging trace 观察发现 rewriter 在 sentenceCount > 0 时改的几乎都是 parser-v2 已经处理过的事（剥 zh-CN inline tag、补 truncated 关闭、ad-hoc speaker 降级），rewriter 真正救场只在 sentenceCount === 0 一种场景
+- 不在本次范围（用户决策"后续再讨论"）：terminal tool synthesis（伪 `<signal_input_needed/>` 自动合成真 tool call，30s trace 那种 followup 链路的修复）；Levenshtein close-tag 模糊匹配（`</narring>` 现在归到 container-truncated，功能上能 work，trace 标签不准）；HTML + data-attr 协议迁移
+
+**PFB.3 Bug 反馈 tab + 首页身份徽章 + 后端拒匿名（暂停，S.1 完了再回来）**
 - 类型：实现（产品 feature，e2e）
 - 来源：用户临时插入。PFB.2 完工后澄清需求 + 加新维度
 - 目标：(1) FeedbackModal 加 tab 切换：默认"问卷"+"Bug 反馈"（独立表 bug_reports，自由文本，跟 playthroughId+turn 配对，靠 trace 重放定位）；(2) HomePage 右上角显示身份徽章（anonymous→未注册 / registered→email / admin→email+admin）；(3) 后端 /api/feedback + /api/bug-reports 都改 requireNonAnonymous 拒匿名（前端 RegistrationGate 已拦，后端 defense-in-depth）

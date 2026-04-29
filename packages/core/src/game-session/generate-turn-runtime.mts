@@ -28,6 +28,7 @@ import { extractPlainText } from '#internal/narrative-parser';
 import {
   createParser as createParserV2,
   type DegradeEvent as DegradeEventV2,
+  type NarrativeParser,
   type ParserManifest,
 } from '#internal/narrative-parser-v2';
 import {
@@ -447,6 +448,21 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
   private currentTurnRawText = '';
   /** rewrite 是否已应用（用于 persistGenerateResult 选择 reason） */
   private rewriteAppliedThisTurn = false;
+  /**
+   * S.1 streaming：onTextChunk 收到 chunk 时实时 feed parser-v2，让 batch 在
+   * stream 期间立即 publish。null = 本轮不走 streaming（缺 parserManifest 时；
+   * 当前 createGenerateTurnRuntime 强制 require parserManifest，所以实际不会 null，
+   * 但保留 nullable 以便防御 / 未来 protocol 演进）。
+   *
+   * 跟 finalizeContent 决策耦合：streamingSentenceCount > 0 → 已经把 batches
+   * publish 给 UI，跳过 rewriter / playFinalNarrative；
+   * streamingSentenceCount === 0 → fall back 到 analyzeText + finalizeContent +
+   * playFinalNarrative 的兜底路径，rewriter 仍可能救场。
+   */
+  private streamingParser: NarrativeParser | null = null;
+  private streamingSentenceCount = 0;
+  private streamingScratchCount = 0;
+  private streamingDegrades: DegradeEventV2[] = [];
 
   constructor(private readonly deps: GenerateTurnRuntimeDeps) {
     this.turnId = toTurnId(deps.turn);
@@ -486,6 +502,9 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
       this.currentStepBatchId = null;
       this.currentStepId = null;
       this.abortController = null;
+      // S.1：streamingParser 在 completeGenerateTurn 已置 null，这里给错误 / abort
+      // 路径兜底（completeGenerateTurn 抛异常 / runtime crash 时仍然清理）。
+      this.streamingParser = null;
     }
 
     return this.snapshotResult(false);
@@ -556,9 +575,25 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     this.currentReasoningBuffer = '';
     this.currentTurnRawText = '';
     this.rewriteAppliedThisTurn = false;
-    // 路线 A：parser-v2 整轮一次性跑（不流式）。turn 起始 scene 留作
-    // analyzeText / playFinalNarrative 的回滚锚点。
+    // turn 起始 scene 留作 analyzeText / playFinalNarrative 的回滚锚点。
+    // S.1 后：scene 在 streaming pass 中会被 processStreamingBatch 推进；
+    // 但如果 streaming 一个 sentence 都没产出（fallback 路径），currentScene
+    // 不会被推进，仍等于 turnInitialScene，让 playFinalNarrative 从这里 replay。
     this.turnInitialScene = copyScene(this.currentScene);
+    // S.1：创建跨 chunk 的 streaming parser 实例，turnInitialScene 作为初始 scene。
+    if (this.deps.parserManifest) {
+      this.streamingParser = createParserV2({
+        manifest: this.deps.parserManifest,
+        turnNumber: this.deps.turn,
+        startIndex: 0,
+        initialScene: copyScene(this.turnInitialScene),
+      });
+    } else {
+      this.streamingParser = null;
+    }
+    this.streamingSentenceCount = 0;
+    this.streamingScratchCount = 0;
+    this.streamingDegrades = [];
     this.publish({ type: 'assistant-message-started', turnId: this.turnId });
     return prepared;
   }
@@ -582,10 +617,15 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
         // 改进 B：currentTurnRawText 跟 buffer 平行累加，但 preflush 不清空
         // 让 rewrite 看到完整 turn 的 raw（含 preflush 已落库那段）
         this.currentTurnRawText += chunk;
-        // 路线 A：parser-v2 不再流式 feed —— main path 期间 UI 不收
-        // narrative-batch-emitted（DialogBox 显示前一轮 + 小齿轮"小齿轮在
-        // 准备下一轮内容…"），完整 turn raw 收齐后在 completeGenerateTurn 一次
-        // 性 analyze + finalize-pipeline + publish。
+        // S.1：流式 feed parser-v2，把 chunk 解析出的 batches 立即 publish 给
+        // sink。玩家在 step-1 长 narration（典型 19s 流出 774 tokens）期间就能
+        // 看到 sentences 增量到达，而不是等到 completeGenerateTurn。
+        // 注意：tag 跨 chunk 边界劈开是 OK 的——htmlparser2 内部维护 streaming
+        // buffer，open/close tag event 只在完整 tag 拼齐后才触发。
+        if (this.streamingParser) {
+          const batch = this.streamingParser.feed(chunk);
+          this.processStreamingBatch(batch, traceHandle);
+        }
         // assistant-text-delta 仍发——EditorDebugPanel 流式预览要用。
         this.publish({
           type: 'assistant-text-delta',
@@ -645,36 +685,126 @@ class DefaultGenerateTurnRuntime implements GenerateTurnRuntime {
     });
   }
 
+  /**
+   * S.1 streaming：onTextChunk 喂出来的 batch 立即处理——发 trace 事件、
+   * publish narrative-batch-emitted、推进 currentScene、累计统计。
+   *
+   * 跟 playFinalNarrative 走的是同一对 helper（emitBatchTrace +
+   * publishNarrativeBatch），保证 streaming pass 跟 fallback replay 的事件序列
+   * 形态完全一致——下游消费方（recording / WS / persistence）不需要区分两种
+   * 来源。
+   */
+  private processStreamingBatch(
+    batch: NarrativeBatch,
+    traceHandle: GenerateTraceHandle | undefined,
+  ): void {
+    if (
+      batch.sentences.length === 0 &&
+      batch.scratches.length === 0 &&
+      batch.degrades.length === 0
+    ) return;
+
+    emitBatchTrace(batch, { traceHandle, turn: this.deps.turn });
+
+    const sceneAfter = publishNarrativeBatch(batch, {
+      initialScene: this.currentScene,
+      publish: (event) => this.publish(event),
+      turnId: this.turnId,
+      getBatchId: () => this.currentStepBatchId,
+    });
+    this.currentScene = sceneAfter;
+
+    this.streamingSentenceCount += batch.sentences.length;
+    this.streamingScratchCount += batch.scratches.length;
+    if (batch.degrades.length > 0) {
+      this.streamingDegrades = [...this.streamingDegrades, ...batch.degrades];
+    }
+  }
+
   private async completeGenerateTurn(
     prepared: GenerateTurnPrepared,
     result: GenerateResult,
     traceHandle: GenerateTraceHandle | undefined,
   ): Promise<void> {
-    // 路线 A：assistant streaming 关闭信号（onTextChunk 阶段不再有更新）
+    // assistant streaming 关闭信号（onTextChunk 阶段不再有更新）
     this.publish({
       type: 'assistant-message-finalized',
       turnId: this.turnId,
       finishReason: result.finishReason,
     });
 
-    // 完整 turn raw 一次 parse
-    const rawAnalysis = this.deps.parserManifest
-      ? analyzeText(
-          this.currentTurnRawText,
-          this.turnInitialScene,
-          this.deps.parserManifest,
-          this.deps.turn,
-        )
-      : null;
+    // S.1：drain streaming parser 尾批——处理流末未闭合的容器（truncated:true）。
+    if (this.streamingParser) {
+      const tail = this.streamingParser.finalize();
+      this.processStreamingBatch(tail, traceHandle);
+      this.streamingParser = null;
+    }
 
-    // finalize-pipeline：决定 finalText + 对应 analysis
-    const { finalText, finalAnalysis } = await this.finalizeContent(
-      rawAnalysis,
-      prepared,
-      traceHandle,
-    );
+    if (this.streamingSentenceCount > 0) {
+      // S.1 主路径：streaming pass 已经 publish 了所有 batches，跳过 rewriter
+      // / playFinalNarrative。rewriter 只在 streaming sentenceCount === 0 时
+      // 救场（保留原 fallback 行为）。
+      //
+      // 与原 finalizeContent 决策矩阵对比：
+      //  - 原 path A（sentenceCount>0 + 仅 non-actionable degrade）：skip → 等价
+      //  - 原 path B（sentenceCount>0 + actionable degrade）：rewrite-only —
+      //    新行为下也跳过；trade-off 是已 publish 的 sentences 不再被 rewriter
+      //    cosmetic 修正（典型修正：剥 zh-CN 内联 tag、删 hear="__npc__空气"
+      //    属性、补 truncated container）—— parser-v2 自身已经 robustness 处理
+      //    了大多数这些场景，rewriter 改动玩家几乎察觉不到。详见
+      //    docs/html-data-attr-protocol-proposal.md 关于 protocol-noise 的讨论。
+      const looksBrokenStreamed =
+        this.streamingDegrades.length > 0 ||
+        (this.streamingScratchCount > 0 && this.streamingSentenceCount === 0);
+      this.publish({
+        type: 'rewrite-attempted',
+        turnId: this.turnId,
+        rawTextLength: this.currentTurnRawText.length,
+        looksBroken: looksBrokenStreamed,
+      });
+      this.publish({
+        type: 'rewrite-completed',
+        turnId: this.turnId,
+        status: 'skipped-streamed',
+        fallbackReason: null,
+        attempts: 0,
+        latencyMs: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        model: null,
+        outputTextLength: this.currentTurnRawText.length,
+        verifiedSentenceCount: this.streamingSentenceCount,
+        applied: false,
+      });
+    } else {
+      // S.1 fallback：streaming pass 一个 sentence 都没产出——可能是 GM 输出
+      // 完全无效（parser-v2 抽不出任何 narration / dialogue），或 raw 全是
+      // scratch / 装饰性内容。这种 case 跑原 finalizeContent 路径，让 rewriter
+      // / retry-main 兜底。currentScene 在 streaming pass 没被推进过（无 sentence
+      // 推进），仍等于 turnInitialScene，playFinalNarrative 从这里 replay。
+      const rawAnalysis = this.deps.parserManifest
+        ? analyzeText(
+            this.currentTurnRawText,
+            this.turnInitialScene,
+            this.deps.parserManifest,
+            this.deps.turn,
+          )
+        : null;
 
-    this.playFinalNarrative(finalText, finalAnalysis, traceHandle);
+      const { finalText, finalAnalysis } = await this.finalizeContent(
+        rawAnalysis,
+        prepared,
+        traceHandle,
+      );
+
+      // 防止 scratch-only batches 双发：如果 finalText 仍等于 rawText（rewrite /
+      // retry-main 都没救成功，fallback 回 raw），streaming pass 已经把那些
+      // scratch / degrade 批 publish 过了，别再 playFinalNarrative replay 一遍。
+      // 只有 finalText 是新内容（rewrite / retry-main 救场成功）才需要 replay。
+      if (finalText !== this.currentTurnRawText) {
+        this.playFinalNarrative(finalText, finalAnalysis, traceHandle);
+      }
+    }
 
     await this.persistGenerateResult(result);
     await this.compactMemoryIfNeeded();

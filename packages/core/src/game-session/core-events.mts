@@ -286,7 +286,13 @@ export type RewriteCoreEvent =
   | {
       readonly type: 'rewrite-completed';
       readonly turnId: TurnId;
-      readonly status: 'ok' | 'skipped-empty' | 'skipped-aborted' | 'skipped-non-actionable' | 'fallback';
+      /**
+       * - `skipped-streamed`（S.1）：streaming pass 已经产出 ≥ 1 sentence，
+       *   batches 在 onTextChunk 期间就已经 publish 给 UI，不再过 rewriter。
+       *   等同于 sentenceCount > 0 时 rewriter 的 no-op 运行；rewriter 真正救场
+       *   只在 streamingSentenceCount === 0 时触发。
+       */
+      readonly status: 'ok' | 'skipped-empty' | 'skipped-aborted' | 'skipped-non-actionable' | 'skipped-streamed' | 'fallback';
       readonly fallbackReason: 'api-error' | 'second-parse-failed' | 'rewrite-still-empty' | 'aborted' | null;
       readonly attempts: number;
       readonly latencyMs: number;
