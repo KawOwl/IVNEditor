@@ -402,4 +402,21 @@ describe('extractPlainText · v2 协议 preview / 纯文本提取', () => {
   it('空字符串', () => {
     expect(extractPlainText('')).toBe('');
   });
+
+  it('老 v1 envelope（`<d>` + 裸文本）走 fallback 路径，剥 scratch 块 + 标签留内文', () => {
+    const input =
+      '<scratch>GM 内部思考：推进指数升到 3</scratch>' +
+      '<d s="alice">你来了。</d>' +
+      '黄昏的教室里只剩下她一个人。';
+    const result = extractPlainText(input);
+    expect(result).not.toContain('GM 内部思考');
+    expect(result).not.toContain('推进指数');
+    expect(result).toContain('你来了。');
+    expect(result).toContain('黄昏的教室里只剩下她一个人。');
+  });
+
+  it('老 v1 envelope 纯裸文本 → 原样返回（fallback 不丢字）', () => {
+    const input = '玩家走向暗街入口。';
+    expect(extractPlainText(input)).toBe('玩家走向暗街入口。');
+  });
 });

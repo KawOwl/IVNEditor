@@ -7,6 +7,7 @@
 
 import { eq, and, desc, sql, inArray, isNull } from 'drizzle-orm';
 import { db, schema } from '#internal/db';
+import { extractPlainText } from '@ivn/core/narrative-parser';
 
 const defined = <T,>(value: T | undefined): value is T => value !== undefined;
 
@@ -145,7 +146,77 @@ export class PlaythroughService {
       .orderBy(desc(schema.playthroughs.updatedAt))
       .limit(100);
 
-    return rows;
+    if (rows.length === 0) return rows;
+
+    const derived = await this.derivePreviewsFromCoreEvents(rows.map((r) => r.id));
+    return rows.map((row) => ({
+      ...row,
+      preview: derived.get(row.id) ?? row.preview,
+    }));
+  }
+
+  /**
+   * 从 core_event_envelopes 派生 preview：每个 playthrough 取最新一条
+   * `narrative-segment-finalized.entry.content`，跑 extractPlainText 现算。
+   *
+   * 这样跟游戏中渲染同源 —— 同一份 v2 parser 既给 DialogBox 出 sentence、
+   * 也给存档列表出 preview，scratch 块 / 视觉子标签统一被剥掉，老 preview
+   * column 里的污染数据不再回流到 UI。派生空字符串（无事件 / 全 scratch /
+   * 完全无法解析）时不写入 map，调用方 fallback 到 DB column 的现有值。
+   *
+   * SQL 形态：内查 max(sequence) per playthroughId（限定 event.type =
+   * narrative-segment-finalized），外层 self-join 拿事件 jsonb。list 接口
+   * 本身有 limit 100 + 每 playthrough 一条命中行，扇出可控。
+   */
+  private async derivePreviewsFromCoreEvents(
+    playthroughIds: string[],
+  ): Promise<Map<string, string>> {
+    if (playthroughIds.length === 0) return new Map();
+
+    const latestSeq = db
+      .select({
+        playthroughId: schema.coreEventEnvelopes.playthroughId,
+        seq: sql<number>`max(${schema.coreEventEnvelopes.sequence})`.as('seq'),
+      })
+      .from(schema.coreEventEnvelopes)
+      .where(
+        and(
+          inArray(schema.coreEventEnvelopes.playthroughId, playthroughIds),
+          sql`${schema.coreEventEnvelopes.event}->>'type' = 'narrative-segment-finalized'`,
+        ),
+      )
+      .groupBy(schema.coreEventEnvelopes.playthroughId)
+      .as('latest_seq');
+
+    const events = await db
+      .select({
+        playthroughId: schema.coreEventEnvelopes.playthroughId,
+        event: schema.coreEventEnvelopes.event,
+      })
+      .from(schema.coreEventEnvelopes)
+      .innerJoin(
+        latestSeq,
+        and(
+          eq(schema.coreEventEnvelopes.playthroughId, latestSeq.playthroughId),
+          eq(schema.coreEventEnvelopes.sequence, latestSeq.seq),
+        ),
+      );
+
+    const map = new Map<string, string>();
+    for (const row of events) {
+      const event = row.event;
+      if (event.type !== 'narrative-segment-finalized') continue;
+      const content = event.entry.content;
+      if (!content) continue;
+      const preview = extractPlainText(content)
+        .slice(0, 80)
+        .replace(/\n/g, ' ')
+        .trim();
+      if (preview.length > 0) {
+        map.set(row.playthroughId, preview);
+      }
+    }
+    return map;
   }
 
   /**

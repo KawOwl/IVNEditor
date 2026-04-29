@@ -352,7 +352,7 @@ export function parseDialogueAttrs(attrsStr: string): ParticipationFrame {
 }
 
 /**
- * 从 v2 协议原文提取纯文本 —— 走 narrative-parser-v2 权威解析，保留 narration
+ * 从协议原文提取纯文本 —— 走 narrative-parser-v2 权威解析，保留 narration
  * 段落文字 + dialogue 内部文字，标签本身（含 `<scratch>` / `<background/>` /
  * `<sprite/>` / `<stage/>`）被去掉。
  *
@@ -367,6 +367,12 @@ export function parseDialogueAttrs(attrsStr: string): ParticipationFrame {
  *
  * preview 场景不需要 manifest 校验（不关心 ad-hoc speaker 是否合规），传空
  * manifest 即可；scratch 块本就不进 sentences，自动被丢弃。
+ *
+ * 老 v1 envelope 兜底：v2 parser 把 `<d>` / 裸文本当未知顶层标签或
+ * `bare-text-outside-container` degrade 静默吞掉，输出空字符串。这种情况下
+ * 落到 regex fallback：剥 `<scratch>...</scratch>` 块（含内容）+ 剥剩余标签
+ * 但保留内文。结果对老 v1 envelope 仍可读、对 v2 envelope 因为 v2 path 已
+ * 命中所以不会执行——两个协议共用同一函数。
  */
 export function extractPlainText(xmlLite: string): string {
   if (!xmlLite) return '';
@@ -384,5 +390,10 @@ export function extractPlainText(xmlLite: string): string {
       parts.push(s.text);
     }
   }
-  return parts.join('');
+  const v2Joined = parts.join('');
+  if (v2Joined.length > 0) return v2Joined;
+
+  return xmlLite
+    .replace(/<scratch\b[^>]*>[\s\S]*?<\/scratch\s*>/gi, '')
+    .replace(/<[^>]+>/g, '');
 }

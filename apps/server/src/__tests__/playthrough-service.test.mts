@@ -11,6 +11,7 @@ import { PlaythroughService } from '#internal/services/playthrough-service';
 import { db, schema } from '#internal/db';
 import { assertTestDatabase } from '#internal/__tests__/_db-guard';
 import type { ScriptManifest } from '@ivn/core/types';
+import { turnId, type CoreEvent } from '@ivn/core/game-session';
 
 const service = new PlaythroughService();
 const TEST_CHAPTER_ID = 'ch1';
@@ -232,5 +233,99 @@ describe('PlaythroughService', () => {
       sprites: [{ id: 'luna', emotion: 'calm', position: 'center' }],
     });
     expect(detail!.sentenceIndex).toBe(12);
+  });
+
+  it('list 派生 preview：用最新 narrative-segment-finalized 现算，剥掉 scratch', async () => {
+    const pt = await createTestPlaythrough({ title: 'derived' });
+
+    await db.insert(schema.coreEventEnvelopes).values({
+      id: crypto.randomUUID(),
+      playthroughId: pt.id,
+      schemaVersion: 1,
+      sequence: 1,
+      occurredAt: Date.now(),
+      event: {
+        type: 'narrative-segment-finalized',
+        turnId: turnId(1),
+        stepId: null,
+        batchId: null,
+        reason: 'generate-complete',
+        entry: {
+          role: 'generate',
+          content:
+            '<scratch>GM 内部思考：推进指数升到 3</scratch>' +
+            '<narration>黄昏的教室里只剩下她一个人。</narration>',
+          finishReason: 'stop',
+        },
+        sceneAfter: { background: null, sprites: [] },
+      } satisfies CoreEvent,
+    });
+
+    // 模拟 DB column 里残留的污染 preview，验证被派生值覆盖
+    await service.updateState(pt.id, { preview: 'GM 思考：推进指数升到 3...' });
+
+    const list = await service.list({ userId: pt.userId });
+    expect(list).toHaveLength(1);
+    expect(list[0]!.preview).toBe('黄昏的教室里只剩下她一个人。');
+  });
+
+  it('list 派生 preview：无 narrative event → fallback 到 DB column', async () => {
+    const pt = await createTestPlaythrough({ title: 'fallback' });
+    await service.updateState(pt.id, { preview: 'legacy preview text' });
+
+    const list = await service.list({ userId: pt.userId });
+    expect(list).toHaveLength(1);
+    expect(list[0]!.preview).toBe('legacy preview text');
+  });
+
+  it('list 派生 preview：多 turn 取最新 sequence 的 segment', async () => {
+    const pt = await createTestPlaythrough({ title: 'multi-turn' });
+
+    await db.insert(schema.coreEventEnvelopes).values([
+      {
+        id: crypto.randomUUID(),
+        playthroughId: pt.id,
+        schemaVersion: 1,
+        sequence: 1,
+        occurredAt: Date.now(),
+        event: {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(1),
+          stepId: null,
+          batchId: null,
+          reason: 'generate-complete',
+          entry: {
+            role: 'generate',
+            content: '<narration>第一轮的旧叙事。</narration>',
+            finishReason: 'stop',
+          },
+          sceneAfter: { background: null, sprites: [] },
+        } satisfies CoreEvent,
+      },
+      {
+        id: crypto.randomUUID(),
+        playthroughId: pt.id,
+        schemaVersion: 1,
+        sequence: 2,
+        occurredAt: Date.now() + 1,
+        event: {
+          type: 'narrative-segment-finalized',
+          turnId: turnId(2),
+          stepId: null,
+          batchId: null,
+          reason: 'generate-complete',
+          entry: {
+            role: 'generate',
+            content: '<narration>第二轮最新叙事。</narration>',
+            finishReason: 'stop',
+          },
+          sceneAfter: { background: null, sprites: [] },
+        } satisfies CoreEvent,
+      },
+    ]);
+
+    const list = await service.list({ userId: pt.userId });
+    expect(list).toHaveLength(1);
+    expect(list[0]!.preview).toBe('第二轮最新叙事。');
   });
 });
