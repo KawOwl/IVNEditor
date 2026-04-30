@@ -14,7 +14,35 @@
  * 详见 .claude/plans/turn-bounded-generate.md 和 .claude/plans/messages-model.md。
  */
 
-import { streamText, generateText, stepCountIs, hasToolCall, tool, zodSchema, type ToolSet, type ModelMessage } from 'ai';
+import { streamText, generateText, stepCountIs, tool, zodSchema, type StopCondition, type ToolSet, type ModelMessage } from 'ai';
+
+/**
+ * Stop-condition 谓词：上一 step 的 `toolResults`（**仅成功执行**）含 `toolName`
+ * 才返回 true。
+ *
+ * 跟 ai SDK 自带的 `hasToolCall` 区别（ai@6.0.168 source line 3848）：
+ * - `hasToolCall(name)` 检查 `step.toolCalls` —— 模型的 tool-call **尝试**，
+ *   不区分成功 / zod 校验失败 / execute 抛错。
+ * - 我们 stopWhen 用 hasToolCall 时，模型只要 attempt 了 signal_input_needed
+ *   （即使 args 坏被 zod 拒）就触发 stopWhen → main loop 立即终止 → 我们
+ *   自己的 toolCallLog（onToolCallFinish 回调，仅成功才记）没拿到 → 触发
+ *   followup。staging 数据：300 trace 里 195 (65%) 主路径有 tool-error，
+ *   100% 触发了 followup —— 这正是这个 SDK usage bug 的命中。
+ *
+ * 用 hasSuccessfulToolCall 替换后：
+ * - 模型 attempt + 失败 → toolResults 不含 → loop 继续 → 模型在下一 step 看到
+ *   tool-error 在 history 里，自己更正 args 重试 → 通常 1-2 step 内成功。
+ * - 模型 attempt + 成功 → toolResults 含 → stopWhen 命中 → 干净结束。
+ *
+ * 比"main 终止 + 起 followup 重头开始"省 1 次 LLM 调用 + context 不丢。
+ */
+function hasSuccessfulToolCall(toolName: string): StopCondition<ToolSet> {
+  return ({ steps }) => {
+    const last = steps[steps.length - 1];
+    if (!last) return false;
+    return last.toolResults.some((tr) => tr.toolName === toolName);
+  };
+}
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import type { ToolHandler } from '#internal/tool-executor';
@@ -505,8 +533,8 @@ export class LLMClient {
     const model = this.getModel();
     const turnEndStop = [
       stepCountIs(maxSteps),
-      hasToolCall('signal_input_needed'),
-      hasToolCall('end_scenario'),
+      hasSuccessfulToolCall('signal_input_needed'),
+      hasSuccessfulToolCall('end_scenario'),
     ];
     const baseStreamArgs = {
       model,
@@ -777,12 +805,18 @@ export class LLMClient {
                 ),
               );
 
+        // 跟 main 同款 hasSuccessfulToolCall（不是 hasToolCall）：模型在
+        // followup 里 attempt 但 args 错时 loop 继续而不是终止 —— 同一 stream
+        // 内重试比起 fallback chain 重起省一次完整 LLM 初始化 + 保留 context。
         const stopWhen =
           attempt.allowedTools === 'signal-only'
-            ? [hasToolCall('signal_input_needed'), stepCountIs(attempt.stopAtSteps)]
+            ? [
+                hasSuccessfulToolCall('signal_input_needed'),
+                stepCountIs(attempt.stopAtSteps),
+              ]
             : [
-                hasToolCall('signal_input_needed'),
-                hasToolCall('end_scenario'),
+                hasSuccessfulToolCall('signal_input_needed'),
+                hasSuccessfulToolCall('end_scenario'),
                 stepCountIs(attempt.stopAtSteps),
               ];
 
