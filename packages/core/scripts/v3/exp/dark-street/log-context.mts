@@ -39,37 +39,50 @@ export const buildSnapshot = (
   };
 };
 
-const basename = (p: string): string => {
-  const idx = p.lastIndexOf('/');
-  const name = idx >= 0 ? p.slice(idx + 1) : p;
-  return name.replace(/\.md$/, '');
-};
-
 const fmtSize = (chars: number, tokens: number): string =>
   `${(chars / 1000).toFixed(1)}K chars / ~${(tokens / 1000).toFixed(1)}K tok`;
 
+// 完整列表 + 增/删标记。多行输出，caller 直接 stderr 写。
+//   [turn N] ctx: 47 files, 43K chars / ~32K tok (+3 -1 vs prev)
+//     00_引擎/00-0_引擎规则_引言.md
+//     00_引擎/00-1_执行铁律.md
+//   + 02_角色/12-1_角色_卡尔_基础设定.md
+//     02_角色/10-1_角色_主角_预设帕兹.md
+//     ...
+//   - removed: 03_第一章/21-1_第一章结局_共犯.md
 export const formatTurnLog = (
   turn: number,
   curr: ContextSnapshot,
   prev: ContextSnapshot | null,
 ): string => {
   const sizeStr = fmtSize(curr.chars, curr.tokens);
+  const lines: string[] = [];
+
   if (prev === null) {
-    return `[turn ${turn}] ctx: ${curr.files.length} files, ${sizeStr}`;
+    lines.push(`[turn ${turn}] ctx: ${curr.files.length} files, ${sizeStr}`);
+    for (const f of curr.files) lines.push(`    ${f}`);
+    return lines.join('\n');
   }
+
   const prevSet = new Set(prev.files);
   const currSet = new Set(curr.files);
   const added = curr.files.filter((f) => !prevSet.has(f));
   const removed = prev.files.filter((f) => !currSet.has(f));
-  if (added.length === 0 && removed.length === 0) {
-    return `[turn ${turn}] ctx: ${curr.files.length} files, ${sizeStr} (unchanged)`;
+
+  const diffStr =
+    added.length === 0 && removed.length === 0
+      ? '(unchanged)'
+      : `(+${added.length} -${removed.length} vs prev)`;
+  lines.push(
+    `[turn ${turn}] ctx: ${curr.files.length} files, ${sizeStr} ${diffStr}`,
+  );
+
+  for (const f of curr.files) {
+    lines.push(prevSet.has(f) ? `    ${f}` : `  + ${f}`);
   }
-  const parts: string[] = [];
-  if (added.length > 0) {
-    parts.push(`+${added.length} [${added.map(basename).join(', ')}]`);
+  for (const f of removed) {
+    lines.push(`  - ${f} (removed)`);
   }
-  if (removed.length > 0) {
-    parts.push(`-${removed.length} [${removed.map(basename).join(', ')}]`);
-  }
-  return `[turn ${turn}] ctx: ${curr.files.length} files, ${sizeStr} ${parts.join(' ')}`;
+
+  return lines.join('\n');
 };
