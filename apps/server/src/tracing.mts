@@ -164,6 +164,22 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
     outputTokens?: number;
     model?: string;
     partKinds: string[];
+    /**
+     * 该 step 模型尝试的所有 tool calls（成功 + 失败都在）。
+     * 写进 Langfuse generation metadata，诊断 "tool-error 时模型给的是什么 args"。
+     */
+    toolCalls?: Array<{ name: string; args: unknown }>;
+    /**
+     * 该 step 里 zod 校验失败 / execute 抛错的 tool 调用尝试 + error 文本。
+     * tool-error 不进 step.toolCalls / step.toolResults，只在 step.content 里
+     * 以 'tool-error' part 形式出现，llm-client 的 handleStepFinish 已经把它
+     * 抠出来了。
+     *
+     * 用途：聚合 "哪些 args 形态最常 fail zod" 决定 schema 放宽还是 prompt
+     * 改例。staging 数据观察：300 trace / 195 含 tool-error，绝大部分集中
+     * 在 narrative+tool 步——下次抓样要直接看 args 形态。
+     */
+    toolErrors?: Array<{ name: string; args: unknown; errorMessage: string }>;
     responseTimestamp?: Date;
     stepStartAt?: Date;
     stepInputMessages?: Array<{ role: string; content: string }>;
@@ -244,6 +260,14 @@ class LangfuseGenerateTraceHandle implements GenerateTraceHandle {
           hasToolCall,
           messageCount: step.stepInputMessages?.length ?? 0,
           isFollowup: step.isFollowup === true,
+          // 模型 attempt 的 tool calls + 失败详情。空时不展开 metadata key 减
+          // Langfuse 视图噪音；后端聚合按 toolCalls/toolErrors 字段存在性 filter。
+          ...(step.toolCalls && step.toolCalls.length > 0
+            ? { toolCalls: step.toolCalls }
+            : {}),
+          ...(step.toolErrors && step.toolErrors.length > 0
+            ? { toolErrors: step.toolErrors }
+            : {}),
         },
       });
       gen.end({

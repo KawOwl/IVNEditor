@@ -63,6 +63,16 @@ export interface GenerateTraceHandle {
     outputTokens?: number;
     model?: string;
     partKinds: string[];
+    /**
+     * 该 step 模型尝试的所有 tool calls（成功 + 失败都在）。诊断
+     * "tool-error 时模型给的是什么 args" 用这个。
+     */
+    toolCalls?: Array<{ name: string; args: unknown }>;
+    /**
+     * 该 step 里 zod 校验失败 / execute 抛错的 tool 调用尝试。
+     * 比 toolCalls 更精：只含失败的 + 带 error 文本。
+     */
+    toolErrors?: Array<{ name: string; args: unknown; errorMessage: string }>;
     responseTimestamp?: Date;
     stepStartAt?: Date;
     stepInputMessages?: Array<{ role: string; content: string }>;

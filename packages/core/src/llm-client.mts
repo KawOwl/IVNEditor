@@ -86,6 +86,19 @@ export interface StepInfo {
   inputTokens?: number;
   outputTokens?: number;
   toolCalls: Array<{ name: string; args: unknown }>;
+  /**
+   * 该 step 里 zod 校验失败 / execute 抛错的 tool 调用尝试。AI SDK 把这些
+   * 投在 step.content 的 'tool-error' parts 里（不进 toolCalls / toolResults）。
+   *
+   * 用于诊断"模型 attempt tool 但 args 不对"的失败模式：每条带模型实际给的
+   * args + zod / execute 抛的 error message。tracing 层会写进 Langfuse 的
+   * generation metadata，方便事后聚合 "哪些 args 形态最常 fail zod" 的统计。
+   *
+   * 一条 toolCalls 同名的项会同时出现在 toolErrors 里——意思是 attempt 了但
+   * 失败。也可能 toolCalls 含成功执行的 + toolErrors 含同 step 失败的（混合
+   * 情况，例如同 step 里 update_state 成功 + signal_input_needed 失败）。
+   */
+  toolErrors?: Array<{ name: string; args: unknown; errorMessage: string }>;
   model?: string;
   /**
    * 此 step 中 LLM 输出 content 里存在的 part 类型集合（去重）。
@@ -489,9 +502,26 @@ export class LLMClient {
     }) => {
       if (!onStep) return;
       try {
-        const partKinds = Array.from(
-          new Set(((step.content ?? []) as ReadonlyArray<{ type: string }>).map((p) => p.type)),
-        );
+        const content = (step.content ?? []) as ReadonlyArray<{ type: string }>;
+        const partKinds = Array.from(new Set(content.map((p) => p.type)));
+        // 从 step.content 抽 'tool-error' parts —— AI SDK ContentPart 类型里
+        // tool-error 是单独 type，含 toolName / input（args） / error，**不进**
+        // step.toolCalls / step.toolResults。诊断 "args 不过 zod 的具体形态"
+        // 必须看这里。
+        const toolErrors = content
+          .filter((p): p is { type: 'tool-error'; toolName?: string; input?: unknown; error?: unknown } =>
+            p.type === 'tool-error',
+          )
+          .map((p) => ({
+            name: p.toolName ?? '',
+            args: p.input,
+            errorMessage:
+              p.error instanceof Error
+                ? p.error.message
+                : typeof p.error === 'string'
+                  ? p.error
+                  : JSON.stringify(p.error),
+          }));
         onStep({
           stepNumber: step.stepNumber,
           text: step.text,
@@ -503,6 +533,7 @@ export class LLMClient {
             name: tc.toolName,
             args: tc.input,
           })),
+          ...(toolErrors.length > 0 ? { toolErrors } : {}),
           model: step.model?.modelId,
           partKinds,
           responseTimestamp: step.response?.timestamp,

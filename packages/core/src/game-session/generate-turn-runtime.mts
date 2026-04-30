@@ -160,6 +160,11 @@ const TRACE_STEP_FIELDS = [
   'outputTokens',
   'model',
   'partKinds',
+  // 模型 tool-call 尝试 + 失败详情 —— 诊断 "tool-error 的具体 args 形态"
+  // 用。staging 数据观察：300 trace / 195 含 tool-error，全部触发 followup
+  // chain。recordStep 增强后下次抓样能直接看哪种 args 不过 zod。
+  'toolCalls',
+  'toolErrors',
   'responseTimestamp',
   'stepStartAt',
   'stepInputMessages',
