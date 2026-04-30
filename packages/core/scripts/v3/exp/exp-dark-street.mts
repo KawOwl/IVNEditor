@@ -10,6 +10,7 @@
 //   MAX_TURNS=20 bun --env-file=apps/server/.env packages/core/scripts/v3/exp/exp-dark-street.mts
 
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type { ModelMessage } from 'ai';
 
@@ -25,7 +26,7 @@ import {
   type State as LoaderState,
 } from './dark-street/loader.mts';
 
-const ROOT = path.join(import.meta.dir, 'dark-street');
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dark-street');
 const MANIFEST: Manifest = loadManifest(path.join(ROOT, 'manifest.json'));
 
 // 宽松 state：必备字段（loader 路由用）+ 业务字段（LLM 自主维护）
