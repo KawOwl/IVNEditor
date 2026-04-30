@@ -17,8 +17,6 @@
 
 import * as readline from 'node:readline/promises';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { stdin, stdout, stderr } from 'node:process';
 
 import type { ModelMessage } from 'ai';
 
@@ -36,9 +34,8 @@ import {
   type State as LoaderState,
 } from './dark-street/loader.mts';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const ROOT = path.join(__dirname, 'dark-street');
+const { stdin, stdout, stderr } = process;
+const ROOT = path.join(import.meta.dir, 'dark-street');
 const MANIFEST: Manifest = loadManifest(path.join(ROOT, 'manifest.json'));
 
 let state: Record<string, unknown> = {

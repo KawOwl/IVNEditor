@@ -1,6 +1,7 @@
 import * as readline from 'node:readline/promises';
-import { stdin, stdout, stderr } from 'node:process';
 import type { LanguageModel, ModelMessage } from 'ai';
+
+const { stdin, stdout, stderr } = process;
 
 import { run } from '#internal/v3/kernel/driver';
 import type { TokenUsage, ToolSet } from '#internal/v3/kernel/types';
