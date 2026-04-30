@@ -30,14 +30,21 @@ import { buildModelFromEnv } from '../_model.mts';
 import { parseHtmlProtocol } from './protocol-html/parser.mts';
 import { buildSystemPrompt as buildV3HtmlHeader } from './protocol-html/system-prompt.mts';
 import {
-  assembleContext,
   loadManifest,
   type Manifest,
   type State as LoaderState,
 } from './dark-street/loader.mts';
+import {
+  buildSnapshot,
+  formatTurnLog,
+  type ContextSnapshot,
+} from './dark-street/log-context.mts';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dark-street');
 const MANIFEST: Manifest = loadManifest(path.join(ROOT, 'manifest.json'));
+
+let prevSnapshot: ContextSnapshot | null = null;
+let buildTurn = 0;
 
 let state: Record<string, unknown> = {
   chapter: 1,
@@ -55,18 +62,21 @@ let state: Record<string, unknown> = {
 const buildSections = (
   _messages: readonly ModelMessage[],
 ): AssembleInput => {
+  buildTurn += 1;
   const v3Header = buildV3HtmlHeader(state);
-  const darkStreetCtx = assembleContext(
+  const snap = buildSnapshot(
     ROOT,
     MANIFEST,
     state as unknown as LoaderState,
   );
+  stderr.write(`\x1b[2m${formatTurnLog(buildTurn, snap, prevSnapshot)}\x1b[0m\n`);
+  prevSnapshot = snap;
   return {
     systemSections: [
       { id: 'v3-protocol', content: v3Header, priority: 1, tag: 'protocol' },
       {
         id: 'dark-street-context',
-        content: darkStreetCtx,
+        content: snap.content,
         priority: 2,
         tag: 'scenario',
       },

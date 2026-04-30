@@ -20,14 +20,21 @@ import { buildModelFromEnv } from '../_model.mts';
 import { parseHtmlProtocol } from './protocol-html/parser.mts';
 import { buildSystemPrompt as buildV3HtmlHeader } from './protocol-html/system-prompt.mts';
 import {
-  assembleContext,
   loadManifest,
   type Manifest,
   type State as LoaderState,
 } from './dark-street/loader.mts';
+import {
+  buildSnapshot,
+  formatTurnLog,
+  type ContextSnapshot,
+} from './dark-street/log-context.mts';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dark-street');
 const MANIFEST: Manifest = loadManifest(path.join(ROOT, 'manifest.json'));
+
+let prevSnapshot: ContextSnapshot | null = null;
+let buildTurn = 0;
 
 // 宽松 state：必备字段（loader 路由用）+ 业务字段（LLM 自主维护）
 // state 整体 JSON inject 到 v3 协议头的"当前 state"段，LLM 看到全字段并自主更新
@@ -52,19 +59,21 @@ let lastChoices: readonly string[] = [];
 const buildSections = (_ctx: {
   messages: readonly ModelMessage[];
 }): AssembleInput => {
+  buildTurn += 1;
   const v3Header = buildV3HtmlHeader(state);
-  // loader 类型严格，state 走宽松 Record 来；运行时投影必备字段（chapter/phase）
-  const darkStreetCtx = assembleContext(
+  const snap = buildSnapshot(
     ROOT,
     MANIFEST,
     state as unknown as LoaderState,
   );
+  console.error(`\x1b[2m${formatTurnLog(buildTurn, snap, prevSnapshot)}\x1b[0m`);
+  prevSnapshot = snap;
   return {
     systemSections: [
       { id: 'v3-protocol', content: v3Header, priority: 1, tag: 'protocol' },
       {
         id: 'dark-street-context',
-        content: darkStreetCtx,
+        content: snap.content,
         priority: 2,
         tag: 'scenario',
       },
