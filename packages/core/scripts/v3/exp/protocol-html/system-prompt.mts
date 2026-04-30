@@ -21,12 +21,12 @@ export const buildSystemPrompt = (state: Readonly<Record<string, unknown>>): str
 - \`data-hear="a,b,c"\`  在场旁听者（已认可的 overhearers / witnesses）
 - \`data-eavesdroppers="x,y"\`  偷听者（隐藏的 unintended overhearers）
 
-视觉切换（每帧可选；data-cg 与 data-bg/data-sprite 同帧不可并存）：
-- \`data-bg="背景id"\`  切背景
-- \`data-sprite="角色id/情绪/位置"\`  切立绘（情绪 / 位置可省）
-- \`data-cg="cg id"\`  切 CG（清空 bg + sprite，仅显示 CG）
+视觉切换（事件语义；每帧可选；data-cg 与 data-bg/data-sprite 同帧不可并存）：
+- \`data-bg="背景id"\`  切到新背景（替换当前 bg；若当前显示 CG，CG 隐藏）
+- \`data-sprite="角色id/情绪/位置"\`  切到新立绘（情绪 / 位置可省；若当前显示 CG，CG 隐藏）
+- \`data-cg="cg id"\`  显示 CG（遮挡 bg + sprite；玩家看到 CG 直到下一次视觉切换）
 
-不写视觉属性 → 继承上一帧的视觉状态（bg / sprite / cg 保持不变）。
+**想切就 emit；不切则不写**。不写视觉属性时引擎自动保持当前画面，不需重复声明。
 
 # 元思考（玩家不可见，不算帧）
 
@@ -98,9 +98,8 @@ ${JSON.stringify(state, null, 2)}
 
 要点：
 - 每个 \`<p>\` 是一帧，按出现顺序播放
-- 视觉切换（bg → sprite → cg）按帧粒度，玩家逐帧看到过渡
+- 视觉切换是**事件**：每帧 emit 的 data-bg / data-sprite / data-cg 表达"在这一帧切换"。不切换不写，引擎保持当前画面
 - 对话帧用 data-speaker 标记，可附 data-to / data-hear / data-eavesdroppers
   描述听众层次（影响下游 memory / perception 决策）
-- CG 出现后清空 bg + sprite；下帧若无新 bg/sprite/cg 则 cg 持续；下帧
-  若有 bg → 切回 bg 模式（cg 隐藏）
+- CG 显示后遮挡 bg + sprite；持续到下次任意视觉切换（新 bg / sprite / cg）才会被替换
 `;
