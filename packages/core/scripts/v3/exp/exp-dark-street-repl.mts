@@ -39,6 +39,7 @@ import {
   formatTurnLog,
   type ContextSnapshot,
 } from './dark-street/log-context.mts';
+import { STATE_SCHEMA_PROMPT } from './dark-street/state-schema-prompt.mts';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dark-street');
 const MANIFEST: Manifest = loadManifest(path.join(ROOT, 'manifest.json'));
@@ -74,6 +75,12 @@ const buildSections = (
   return {
     systemSections: [
       { id: 'v3-protocol', content: v3Header, priority: 1, tag: 'protocol' },
+      {
+        id: 'state-schema',
+        content: STATE_SCHEMA_PROMPT,
+        priority: 1.5,
+        tag: 'protocol',
+      },
       {
         id: 'dark-street-context',
         content: snap.content,
