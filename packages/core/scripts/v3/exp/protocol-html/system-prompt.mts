@@ -81,6 +81,9 @@ ${JSON.stringify(state, null, 2)}
 <p data-sprite="elf/curious/center">一个精灵从树后探头，好奇地打量着你。</p>
 <p data-speaker="elf" data-to="player" data-hear="rabbit">"凡人，你来这做什么？"</p>
 <p>她身后的兔子也转头瞪着你，耳朵警觉地立起。</p>
+<p data-speaker="elf" data-to="player" data-hear="rabbit" data-eavesdroppers="hidden_watcher">
+  她忽然压低声音："小声些 —— 最近林子深处，有不该出现的眼睛。"
+</p>
 
 <p data-cg="oath_circle">空气一阵涌动，光线在你们之间汇聚成符印。</p>
 <p>那符印在眼前缓缓旋转，每一笔都像活物。</p>
