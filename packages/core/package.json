@@ -12,6 +12,10 @@
     "#internal/narrative-rewrite/*": "./src/narrative-rewrite/*.mts",
     "#internal/narrative-retry-main": "./src/narrative-retry-main/index.mts",
     "#internal/narrative-retry-main/*": "./src/narrative-retry-main/*.mts",
+    "#internal/v3": "./src/v3/index.mts",
+    "#internal/v3/*": "./src/v3/*.mts",
+    "#internal/v3/kernel": "./src/v3/kernel/index.mts",
+    "#internal/v3/kernel/*": "./src/v3/kernel/*.mts",
     "#internal/*": "./src/*.mts"
   },
   "exports": {
@@ -54,6 +58,26 @@
       "types": "./src/evaluation/*.mts",
       "import": "./src/evaluation/*.mts",
       "default": "./src/evaluation/*.mts"
+    },
+    "./v3": {
+      "types": "./src/v3/index.mts",
+      "import": "./src/v3/index.mts",
+      "default": "./src/v3/index.mts"
+    },
+    "./v3/*": {
+      "types": "./src/v3/*.mts",
+      "import": "./src/v3/*.mts",
+      "default": "./src/v3/*.mts"
+    },
+    "./v3/kernel": {
+      "types": "./src/v3/kernel/index.mts",
+      "import": "./src/v3/kernel/index.mts",
+      "default": "./src/v3/kernel/index.mts"
+    },
+    "./v3/kernel/*": {
+      "types": "./src/v3/kernel/*.mts",
+      "import": "./src/v3/kernel/*.mts",
+      "default": "./src/v3/kernel/*.mts"
     },
     "./*": {
       "types": "./src/*.mts",
