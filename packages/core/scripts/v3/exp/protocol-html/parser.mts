@@ -4,8 +4,10 @@ import { isTag } from 'domhandler';
 
 import type {
   ChoicesBlock,
-  NarrativeUnit,
+  Frame,
   ParseResult,
+  ParticipationFrame,
+  SpriteSpec,
   StateUpdate,
 } from './types.mts';
 
@@ -26,6 +28,63 @@ const textOf = (el: Element): string => {
 const attribOf = (el: Element, key: string): string | undefined =>
   el.attribs[key];
 
+const splitCsv = (s: string | undefined): readonly string[] | undefined => {
+  if (s === undefined) return undefined;
+  const items = s
+    .split(',')
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0);
+  return items.length > 0 ? items : undefined;
+};
+
+const parseSprite = (s: string): SpriteSpec => {
+  const segs = s.split('/');
+  const char = segs[0] ?? s;
+  return {
+    char,
+    ...(segs[1] !== undefined ? { mood: segs[1] } : {}),
+    ...(segs[2] !== undefined ? { position: segs[2] } : {}),
+  };
+};
+
+const buildPF = (
+  speaker: string,
+  el: Element,
+): ParticipationFrame => {
+  const to = attribOf(el, 'data-to');
+  const hear = splitCsv(attribOf(el, 'data-hear'));
+  const eavesdroppers = splitCsv(attribOf(el, 'data-eavesdroppers'));
+  return {
+    speaker,
+    ...(to !== undefined && to !== '' ? { to } : {}),
+    ...(hear !== undefined ? { hear } : {}),
+    ...(eavesdroppers !== undefined ? { eavesdroppers } : {}),
+  };
+};
+
+const parseVisuals = (
+  el: Element,
+  warnings: string[],
+): { bg?: string; sprite?: SpriteSpec; cg?: string } => {
+  const bg = attribOf(el, 'data-bg');
+  const spriteRaw = attribOf(el, 'data-sprite');
+  const cg = attribOf(el, 'data-cg');
+  const sprite = spriteRaw !== undefined ? parseSprite(spriteRaw) : undefined;
+
+  if (cg !== undefined && (bg !== undefined || sprite !== undefined)) {
+    warnings.push(
+      `<p>: data-cg 与 data-bg/data-sprite 不可同帧，仅取 data-cg`,
+    );
+    return { cg };
+  }
+
+  const result: { bg?: string; sprite?: SpriteSpec; cg?: string } = {};
+  if (bg !== undefined) result.bg = bg;
+  if (sprite !== undefined) result.sprite = sprite;
+  if (cg !== undefined) result.cg = cg;
+  return result;
+};
+
 const LEGACY_TAGS: ReadonlySet<string> = new Set([
   'narration',
   'dialogue',
@@ -39,7 +98,8 @@ const LEGACY_TAGS: ReadonlySet<string> = new Set([
 // htmlparser2 lenient mode（默认），未闭合 / 异常嵌套不会抛错。
 export const parseHtmlProtocol = (html: string): ParseResult => {
   const doc = parseDocument(html);
-  const units: NarrativeUnit[] = [];
+  const frames: Frame[] = [];
+  const scratches: string[] = [];
   const warnings: string[] = [];
   let choices: ChoicesBlock | null = null;
   let stateUpdate: StateUpdate | null = null;
@@ -50,31 +110,35 @@ export const parseHtmlProtocol = (html: string): ParseResult => {
       const name = n.name.toLowerCase();
 
       if (name === 'p') {
-        const speaker = attribOf(n, 'data-speaker');
         const text = textOf(n);
         if (text.length === 0) continue;
-        units.push(
-          speaker
-            ? { kind: 'dialogue', speaker, text }
-            : { kind: 'narration', text },
-        );
+        const speaker = attribOf(n, 'data-speaker');
+        const visuals = parseVisuals(n, warnings);
+        if (speaker !== undefined && speaker !== '') {
+          frames.push({
+            kind: 'dialogue',
+            pf: buildPF(speaker, n),
+            text,
+            ...visuals,
+          });
+        } else {
+          frames.push({ kind: 'narration', text, ...visuals });
+        }
       } else if (name === 'div') {
         const kind = attribOf(n, 'data-kind');
-        const bg = attribOf(n, 'data-bg');
-        const sprite = attribOf(n, 'data-sprite');
         if (kind === 'scratch') {
           const text = textOf(n);
-          if (text.length > 0) units.push({ kind: 'scratch', text });
-        } else if (bg !== undefined) {
-          units.push({ kind: 'background', bg, text: textOf(n) });
-        } else if (sprite !== undefined) {
-          const segs = sprite.split('/');
-          const char = segs[0] ?? sprite;
-          const mood = segs[1];
-          const position = segs[2];
-          units.push({ kind: 'sprite', char, mood, position, text: textOf(n) });
+          if (text.length > 0) scratches.push(text);
         } else {
-          // 裸 <div> 当容器，递归子节点继续抽
+          if (
+            attribOf(n, 'data-bg') !== undefined ||
+            attribOf(n, 'data-sprite') !== undefined ||
+            attribOf(n, 'data-cg') !== undefined
+          ) {
+            warnings.push(
+              `<div data-bg/sprite/cg> 已废弃 —— 视觉切换属性须挂在 <p> 上。当前递归子节点继续抽`,
+            );
+          }
           walk(n.children as ChildNode[]);
         }
       } else if (name === 'ul' && attribOf(n, 'data-input') === 'choices') {
@@ -101,7 +165,11 @@ export const parseHtmlProtocol = (html: string): ParseResult => {
         } else {
           try {
             const parsed = JSON.parse(text);
-            if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            if (
+              parsed === null ||
+              typeof parsed !== 'object' ||
+              Array.isArray(parsed)
+            ) {
               warnings.push(
                 `<script application/x-state> 内容必须是对象，得到 ${typeof parsed}`,
               );
@@ -116,13 +184,13 @@ export const parseHtmlProtocol = (html: string): ParseResult => {
         }
       } else if (LEGACY_TAGS.has(name)) {
         warnings.push(
-          `legacy IVN tag <${name}> 出现 —— 应换 HTML 形态（<p data-speaker> / <aside data-kind="scratch"> / <figure data-bg|data-sprite>）`,
+          `legacy IVN tag <${name}> 出现 —— 应换 HTML 形态（<p data-speaker> / <div data-kind="scratch"> / <p data-bg|sprite|cg>）`,
         );
       }
-      // 其他未知 tag 静默吞，不进 warnings（避免 LLM 偶发装饰性 <span> / <em> 噪音）
+      // 其他未知 tag 静默吞，避免 LLM 偶发装饰性 <span> / <em> 噪音
     }
   };
 
   walk(doc.children as ChildNode[]);
-  return { units, choices, stateUpdate, warnings };
+  return { frames, scratches, choices, stateUpdate, warnings };
 };
